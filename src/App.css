@@ -1,3 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Optional: You can keep custom styles below if needed, or remove them if not used */
 .App {
   text-align: center;
 }
