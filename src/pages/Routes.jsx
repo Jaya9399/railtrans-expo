@@ -1,46 +1,53 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import AdminPanel from "./AdminPanel";
-import Visitors from "./Visitors"; 
+import { Routes, Route, Navigate } from "react-router-dom";
+import DashboardContent from "./DashboardContent";
+import Visitors from "./Visitors";
 import Exhibitors from "./Exhibitors";
 import Partners from "./Partners";
 import Speakers from "./Speakers";
 import Awardees from "./Awardees";
+import AdminExhibitors from "./AdminExhibitor"; 
+import VisitorsAdmin from "./VisitorsAdmin";
+import ExhibitorsAdmin from "./ExhibitorsAdmin";
+import PartnersAdmin from "./PartnersAdmin";
+import SpeakersAdmin from "./SpeakersAdmin";
+import AwardeesAdmin from "./AwardeesAdmin";  
+import AdminPartners from "./AdminPartner";
+import AdminTopbarSettings from "./AdminTopbarSettings";
 
-// Example placeholder pages for registration and others
-function VisitorRegistration() {
-  return <div className="p-8">Visitor Registration Page</div>;
-}
-function ExhibitorRegistration() {
-  return <div className="p-8">Exhibitor Registration Page</div>;
-}
-function PartnerRegistration() {
-  return <div className="p-8">Partner Registration Page</div>;
-}
-function SpeakerRegistration() {
-  return <div className="p-8">Speaker Registration Page</div>;
-}
-function AwardeeRegistration() {
-  return <div className="p-8">Awardee Registration Page</div>;
-}
+// Simple placeholders (if you need them)
+function Registrations() { return <div className="p-8">Registrations</div>; }
+function Documents() { return <div className="p-8">Documents</div>; }
 
 export default function AppRoutes() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<AdminPanel />} />
-        <Route path="/visitors" element={<Visitors />} /> {/* Added Visitors page route */}
-        <Route path="/visitor-registration" element={<VisitorRegistration />} />
-        <Route path="/exhibitor-registration" element={<ExhibitorRegistration />} />
-        <Route path="/partner-registration" element={<PartnerRegistration />} />
-        <Route path="/speaker-registration" element={<SpeakerRegistration />} />
-        <Route path="/awardee-registration" element={<AwardeeRegistration />} />
-        <Route path="/Exhibitors" element={<Exhibitors />} /> {/* Added Visitors page route */}
-        <Route path="/Partners" element={<Partners />} /> {/* Added Visitors page route */}
-        <Route path="/Speakers" element={<Speakers />} /> {/* Added Visitors page route */}
-        <Route path="/Awardees" element={<Awardees />} /> {/* Added Visitors page route */}
-        {/* Add more routes as needed */}
-      </Routes>
-    </Router>
+    <Routes>
+      {/* Root -> dashboard */}
+      <Route path="/" element={<DashboardContent />} />
+
+      {/* Direct root-level admin pages (no /admin prefix) */}
+      <Route path="/visitors" element={<Visitors />} />
+      <Route path="/exhibitors" element={<Exhibitors />} />
+      <Route path="/partners" element={<Partners />} />
+      <Route path="/speakers" element={<Speakers />} />
+      <Route path="/awardees" element={<Awardees />} />
+      <Route path="/VisitorsAdmin" element={<VisitorsAdmin />} />
+      <Route path="/ExhibitorsAdmin" element={<ExhibitorsAdmin />} />
+      <Route path="/PartnersAdmin" element={<PartnersAdmin />} />
+      <Route path="/SpeakersAdmin" element={<SpeakersAdmin />} />
+      <Route path="/AwardeesAdmin" element={<AwardeesAdmin />} />
+      <Route path="/admin/topbar-settings" element={<AdminTopbarSettings />} />
+      
+
+      {/* Exhibitors - Data admin page */}
+      <Route path="/exhibitors-data" element={<AdminExhibitors />} />
+      <Route path="/partners-data" element={<AdminPartners />} />
+      {/* Other pages */}
+      <Route path="/registrations" element={<Registrations />} />
+      <Route path="/documents" element={<Documents />} />
+
+      {/* fallback */}
+      <Route path="*" element={<div className="p-8">404 — Page not found</div>} />
+    </Routes>
   );
 }

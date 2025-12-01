@@ -22,44 +22,43 @@ import {
   HiOutlineCog
 } from "react-icons/hi";
 
-// Add all your registration pages here!
+// menu with path entries for router navigation
 const menuSections = [
   {
     title: "MAIN",
     items: [
-      { label: "Dashboard", icon: HiOutlineViewGrid },
-      { label: "Visitors", icon: HiOutlineUserGroup },
-      { label: "Exhibitors", icon: HiOutlineBriefcase },
-      { label: "Partners", icon: HiOutlineHand },
-      { label: "Speakers", icon: HiOutlineSpeakerphone },
-      { label: "Awardees", icon: HiOutlineUserCircle },
-      { label: "Registrations", icon: HiOutlineClipboardList },
-      { label: "Events Calendar", icon: HiOutlineCalendar },
-      { label: "Documents", icon: HiOutlineDocumentText },
-      { label: "Reports", icon: HiOutlineTable },
-      { label: "Pages", icon: HiOutlineFolderOpen },
+      { label: "Dashboard", icon: HiOutlineViewGrid, path: "/" },
+      { label: "Visitors", icon: HiOutlineUserGroup, path: "/VisitorsAdmin" },
+      { label: "Exhibitors", icon: HiOutlineBriefcase, path: "/ExhibitorsAdmin" },
+      { label: "Partners", icon: HiOutlineHand, path: "/PartnersAdmin" },
+      { label: "Speakers", icon: HiOutlineSpeakerphone, path: "/SpeakersAdmin" },
+      { label: "Awardees", icon: HiOutlineUserCircle, path: "/AwardeesAdmin" },
+      { label: "Registrations", icon: HiOutlineClipboardList, path: "/registrations" },
+      { label: "Topbar Settings", icon: HiOutlineDocumentText, path: "/admin/topbar-settings" },
+      { label: "Reports", icon: HiOutlineTable, path: "/reports" },
+      { label: "Pages", icon: HiOutlineFolderOpen, path: "/pages" },
     ],
   },
   {
     title: "COMMUNICATION",
     items: [
-      { label: "Chat", icon: HiOutlineChatAlt },
-      { label: "Support Tickets", icon: HiOutlineSupport },
-      { label: "Emails", icon: HiOutlineMail },
+      { label: "Chat", icon: HiOutlineChatAlt, path: "/chat" },
+      { label: "Support Tickets", icon: HiOutlineSupport, path: "/support" },
+      { label: "Emails", icon: HiOutlineMail, path: "/emails" },
     ],
   },
   {
     title: "ANALYTICS",
     items: [
-      { label: "Charts", icon: HiOutlineChartBar },
-      { label: "Statistics", icon: HiOutlineCube },
+      { label: "Charts", icon: HiOutlineChartBar, path: "/charts" },
+      { label: "Statistics", icon: HiOutlineCube, path: "/stats" },
     ],
   },
   {
     title: "SETTINGS",
     items: [
-      { label: "Authentication", icon: HiOutlineLockClosed },
-      { label: "Admin Settings", icon: HiOutlineCog },
+      { label: "Authentication", icon: HiOutlineLockClosed, path: "/auth" },
+      { label: "Admin Settings", icon: HiOutlineCog, path: "/settings" },
     ],
   },
 ];
@@ -67,24 +66,25 @@ const menuSections = [
 function SidebarMenuItem({ item, selected, onSelect }) {
   const [open, setOpen] = useState(false);
   const hasChildren = item.children && item.children.length > 0;
+
+  function handleClick() {
+    if (hasChildren) {
+      setOpen((o) => !o);
+      return;
+    }
+    if (typeof onSelect === "function") onSelect(item.path || item.label);
+  }
+
   return (
     <div>
       <button
         className={`flex items-center w-full px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition ${
-          selected === item.label ? "bg-gray-100 font-semibold" : ""
+          selected === (item.path || item.label) ? "bg-gray-100 font-semibold" : ""
         }`}
-        onClick={() => {
-          if (hasChildren) setOpen((o) => !o);
-          else onSelect(item.label);
-        }}
+        onClick={handleClick}
       >
         <item.icon className="mr-3 text-xl" />
         <span className="flex-1 text-left">{item.label}</span>
-        {item.badge && (
-          <span className="ml-2 text-xs bg-green-100 text-green-600 rounded px-2 py-0.5 font-bold">
-            {item.badge}
-          </span>
-        )}
         {hasChildren &&
           (open ? (
             <HiOutlineChevronDown className="ml-2 text-sm" />
@@ -92,13 +92,14 @@ function SidebarMenuItem({ item, selected, onSelect }) {
             <HiOutlineChevronRight className="ml-2 text-sm" />
           ))}
       </button>
+
       {hasChildren && open && (
         <div className="ml-8 mt-1 space-y-1">
           {item.children.map((child) => (
             <button
               key={child.label}
               className={`w-full text-left px-2 py-1 rounded hover:bg-gray-50 text-gray-600 text-sm`}
-              onClick={() => onSelect(child.label)}
+              onClick={() => onSelect(child.path || child.label)}
             >
               {child.label}
             </button>
@@ -109,9 +110,23 @@ function SidebarMenuItem({ item, selected, onSelect }) {
   );
 }
 
-export default function Sidebar({ selected, onSelect }) {
+/**
+ * Sidebar
+ * Props:
+ * - selected: current path/selection
+ * - onSelect: function(pathOrLabel)
+ * - fixed: boolean (default: false) — if true, positions the sidebar fixed on the left
+ *
+ * Default changed to non-fixed so Topbar can span full width. If you want the previous behavior
+ * (sidebar fixed on left and content offset with ml-64), pass fixed={true}.
+ */
+export default function Sidebar({ selected, onSelect, fixed = false }) {
+  const baseClass = fixed
+    ? "bg-white w-64 min-h-screen border-r flex flex-col fixed left-0 z-30 pt-0"
+    : "bg-white w-64 min-h-screen border-r flex flex-col";
+
   return (
-    <aside className="bg-white w-64 min-h-screen border-r flex flex-col fixed left-0 z-30 pt-0">
+    <aside className={baseClass}>
       <nav className="flex-1 overflow-y-auto mt-8">
         <div className="py-4">
           {menuSections.map((section) => (

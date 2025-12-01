@@ -1,21 +1,104 @@
 import React, { useEffect, useState } from "react";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
 
-function clone(obj) {
-  return JSON.parse(JSON.stringify(obj));
-}
+function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
 
-async function uploadFile(file) {
+// Use REACT_APP_API_BASE or default to backend on port 5000
+const API_BASE = (process.env.REACT_APP_API_BASE || "http://localhost:5000").replace(/\/$/, "");
+
+/**
+ * Upload helper: sends 'file' field to the backend upload endpoint.
+ * Uses absolute URL to ensure requests go to backend (not dev server).
+ */
+async function uploadFileToServer(file, endpoint = "/api/upload-asset") {
+  const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch("http://localhost:5000/api/upload-image", {
-    method: "POST",
-    body: formData,
-  });
-  if (!res.ok) throw new Error("Upload failed");
+  const res = await fetch(url, { method: "POST", body: formData });
+  if (!res.ok) {
+    let txt = "";
+    try { txt = await res.text(); } catch {}
+    throw new Error(`Upload failed (${res.status}) ${txt}`);
+  }
   const data = await res.json();
-  return data.imageUrl;
+  return data.imageUrl || data.fileUrl || data.url || data.path || "";
 }
+
+/**
+ * Default visitor registration fields to ensure they exist in the config.
+ * All are set visible:true and required:true per the user's request.
+ */
+const DEFAULT_VISITOR_FIELDS = [
+  {
+    name: "surname",
+    label: "Surname",
+    type: "radio",
+    options: ["Mr.", "Ms.", "Dr."],
+    required: true,
+    visible: true,
+  },
+  {
+    name: "name",
+    label: "Name",
+    type: "text",
+    required: true,
+    visible: true,
+  },
+  {
+    name: "mobile",
+    label: "Mobile No.",
+    type: "number",
+    required: true,
+    visible: true,
+    // marking OTP intent so other parts of app can use it if supported
+    meta: { useOtp: true },
+  },
+  {
+    name: "email",
+    label: "Email ID",
+    type: "email",
+    required: true,
+    visible: true,
+    meta: { useOtp: true },
+  },
+  {
+    name: "designation",
+    label: "Designation",
+    type: "text",
+    required: true,
+    visible: true,
+  },
+  {
+    name: "company_or_other",
+    label: "Company / Other",
+    type: "radio",
+    options: ["Company", "Other"],
+    required: true,
+    visible: true,
+  },
+  // follow-up fields (both present and visible/required for now as requested)
+  {
+    name: "company_text",
+    label: "Company (if selected)",
+    type: "text",
+    required: true,
+    visible: true,
+  },
+  {
+    name: "other_details",
+    label: "Other (if selected)",
+    type: "textarea",
+    required: true,
+    visible: true,
+  },
+  {
+    name: "purpose",
+    label: "Purpose of Visit",
+    type: "textarea",
+    required: true,
+    visible: true,
+  },
+];
 
 export default function VisitorsAdmin() {
   const [config, setConfig] = useState(null);
@@ -26,167 +109,164 @@ export default function VisitorsAdmin() {
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    fetch("http://localhost:5000/api/visitor-config")
-      .then(res => res.json())
-      .then(cfg => {
-        console.log("Fetched config (Admin):", cfg); // DEBUG LOG
-        cfg.fields = Array.isArray(cfg.fields) ? cfg.fields : [];
-        cfg.images = Array.isArray(cfg.images) ? cfg.images : [];
-        cfg.eventDetails = typeof cfg.eventDetails === "object" && cfg.eventDetails !== null ? cfg.eventDetails : {};
-        cfg.banner = cfg.banner || "";
-        cfg.backgroundVideo = cfg.backgroundVideo || "";
-        cfg.hostedByLogo = cfg.hostedByLogo || "";
-        // Add options array to select/radio fields if missing
-        cfg.fields = cfg.fields.map(f =>
-          ["select", "radio"].includes(f.type)
-            ? { ...f, options: Array.isArray(f.options) ? f.options : [""] }
-            : { ...f, options: [] }
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/visitor-config`);
+        if (!res.ok) throw new Error("Failed to fetch config");
+        const cfg = await res.json();
+        if (!mounted) return;
+        const normalized = {
+          ...cfg,
+          fields: Array.isArray(cfg.fields) ? cfg.fields : [],
+          images: Array.isArray(cfg.images) ? cfg.images : [],
+          eventDetails: typeof cfg.eventDetails === "object" && cfg.eventDetails ? cfg.eventDetails : {},
+          backgroundMedia: cfg.backgroundMedia || { type: "image", url: "" },
+          termsUrl: cfg.termsUrl || "",
+          termsLabel: cfg.termsLabel || "Terms & Conditions",
+          termsRequired: !!cfg.termsRequired,
+          backgroundColor: cfg.backgroundColor || "#ffffff",
+        };
+        normalized.fields = normalized.fields.map(f =>
+          ["select","radio"].includes(f.type) ? { ...f, options: Array.isArray(f.options) ? f.options : [""] } : { ...f, options: Array.isArray(f.options) ? f.options : [] }
         );
-        setConfig(cfg);
-        setLoading(false);
-      })
-      .catch(() => {
-        setError("Error loading config from backend."); setLoading(false);
-      });
+
+        // Ensure the default visitor registration fields exist (visible + required)
+        const existingNames = new Set(normalized.fields.map(f => f.name));
+        DEFAULT_VISITOR_FIELDS.forEach(def => {
+          if (!existingNames.has(def.name)) normalized.fields.push(clone(def));
+        });
+
+        setConfig(normalized);
+      } catch (e) {
+        console.error("VisitorsAdmin load config error:", e && (e.stack || e));
+        setError("Error loading config from backend. See server logs.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => (mounted = false);
   }, []);
 
+  if (loading) return <div>Loading...</div>;
+  if (error) return <div className="text-red-600 p-4">{error}</div>;
+  if (!config) return <div className="text-red-600 p-4">No config found.</div>;
+
+  // Field helpers (kept minimal)
   function updateField(idx, updates) {
-    const newConfig = clone(config);
-    if (updates.type && ["select", "radio"].includes(updates.type)) {
-      updates.options = Array.isArray(newConfig.fields[idx].options) && newConfig.fields[idx].options.length
-        ? newConfig.fields[idx].options
-        : [""];
-    }
-    if (updates.type && !["select", "radio"].includes(updates.type)) {
-      updates.options = [];
-    }
-    Object.assign(newConfig.fields[idx], updates);
-    setConfig(newConfig);
-  }
-  function deleteField(idx) {
-    const newConfig = clone(config);
-    newConfig.fields.splice(idx, 1);
-    setConfig(newConfig);
-  }
-  function addField() {
-    const newConfig = clone(config);
-    newConfig.fields.push({
-      name: "",
-      label: "",
-      type: "text",
-      required: false,
-      visible: true,
-      options: [],
+    setConfig(prev => {
+      const cfg = clone(prev);
+      const prevField = cfg.fields[idx] || {};
+      const merged = { ...prevField, ...updates };
+      if (updates.type && ["select","radio"].includes(updates.type) && !Array.isArray(merged.options)) merged.options = [""];
+      if (updates.type && !["select","radio"].includes(updates.type)) merged.options = [];
+      cfg.fields[idx] = merged;
+      return cfg;
     });
-    setConfig(newConfig);
   }
-  function updateImage(idx, value) {
-    const newConfig = clone(config);
-    newConfig.images[idx] = value;
-    setConfig(newConfig);
-  }
-  function deleteImage(idx) {
-    const newConfig = clone(config);
-    newConfig.images.splice(idx, 1);
-    setConfig(newConfig);
-  }
-  function addImage() {
-    const newConfig = clone(config);
-    newConfig.images.push("");
-    setConfig(newConfig);
-  }
-  function updateEventDetail(key, value) {
-    const newConfig = clone(config);
-    newConfig.eventDetails[key] = value;
-    setConfig(newConfig);
-  }
-  async function handleAssetUpload(e, key, idx = null) {
-    const file = e.target.files[0];
+  function deleteField(idx) { setConfig(prev => { const cfg = clone(prev); cfg.fields.splice(idx,1); return cfg; }); }
+  function addField() { setConfig(prev => { const cfg = clone(prev); cfg.fields.push({ name: `f${Date.now()}`, label: "New Field", type: "text", required:false, visible:true, options: [] }); return cfg; }); }
+  function addCheckboxField() { setConfig(prev => { const cfg = clone(prev); cfg.fields.push({ name: `cb${Date.now()}`, label: "Checkbox", type: "checkbox", required:false, visible:true, options: [] }); return cfg; }); }
+
+  function updateImage(idx, value) { setConfig(prev => { const cfg = clone(prev); cfg.images[idx] = value; return cfg; }); }
+  function deleteImage(idx) { setConfig(prev => { const cfg = clone(prev); cfg.images.splice(idx,1); return cfg; }); }
+  function addImage() { setConfig(prev => { const cfg = clone(prev); cfg.images.push(""); return cfg; }); }
+  function updateEventDetail(key, value) { setConfig(prev => { const cfg = clone(prev); cfg.eventDetails = cfg.eventDetails || {}; cfg.eventDetails[key] = value; return cfg; }); }
+
+  async function handleAssetUpload(e, key, idx = null, mediaType = "image") {
+    const file = e.target.files && e.target.files[0];
     if (!file) return;
     setUploading(true);
+    setMsg("");
+    setError(null);
     try {
-      const url = await uploadFile(file);
-      const newConfig = clone(config);
-      if (key === "images" && idx !== null) {
-        newConfig.images[idx] = url;
-      } else {
-        newConfig[key] = url;
-      }
-      setConfig(newConfig);
-      setMsg("Asset uploaded!");
-    } catch {
-      setMsg("Failed to upload.");
-    }
-    setUploading(false);
-  }
-  async function saveConfig() {
-    setMsg("Saving...");
-    try {
-      const res = await fetch("http://localhost:5000/api/visitor-config/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config)
+      const endpoint = key === "termsUrl" ? "/api/upload-file" : "/api/upload-asset";
+      const url = await uploadFileToServer(file, endpoint);
+      setConfig(prev => {
+        const cfg = clone(prev);
+        if (key === "images" && idx !== null) cfg.images[idx] = url;
+        else if (key === "termsUrl") cfg.termsUrl = url;
+        else if (key === "backgroundMedia") cfg.backgroundMedia = { type: mediaType, url };
+        else cfg[key] = url;
+        return cfg;
       });
-      if (res.ok) setMsg("Saved!");
-      else setMsg("Failed to save.");
-    } catch {
-      setMsg("Error saving.");
+      setMsg("Asset uploaded!");
+    } catch (err) {
+      console.error("asset upload failed:", err && (err.stack || err));
+      setError("Upload failed: " + (err && err.message ? err.message : ""));
+      setMsg("");
+    } finally {
+      setUploading(false);
     }
   }
-  if (loading) return <div>Loading...</div>;
-  if (error) return <div className="text-red-500">{error}</div>;
-  if (!config) return <div className="text-red-500">No config found.</div>;
+
+  function removeTermsFile() {
+    setConfig(prev => ({ ...clone(prev), termsUrl: "" }));
+    setMsg("Terms file cleared (save to persist).");
+  }
+
+  async function saveConfig() {
+    setMsg("");
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/visitor-config/config`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config) });
+      if (!res.ok) {
+        const txt = await res.text().catch(()=>"");
+        throw new Error(txt || `HTTP ${res.status}`);
+      }
+      setMsg("Saved!");
+    } catch (e) {
+      console.error("saveConfig error:", e && (e.stack || e));
+      setError("Error saving: " + (e && e.message ? e.message : ""));
+    }
+  }
 
   return (
     <div className="p-8">
       <h2 className="text-2xl font-bold mb-4">Visitors Admin Config</h2>
-      {/* Banner Section */}
-      <h3 className="font-bold mb-2">Banner</h3>
-      {config.banner && (
-        <div className="mb-2">
-          <img src={config.banner} alt="Banner" style={{ maxWidth: 400 }} />
-        </div>
-      )}
-      <input type="file" accept="image/*" onChange={e => handleAssetUpload(e, "banner")} disabled={uploading} /><br />
 
-      {/* Background Video Section */}
-      <h3 className="font-bold mb-2 mt-8">Background Video (Desktop only)</h3>
-      {config.backgroundVideo && (
-        <div className="mb-2">
-          <video src={config.backgroundVideo} controls style={{ maxWidth: 400 }} />
-        </div>
-      )}
-      <input type="file" accept="video/*" onChange={e => handleAssetUpload(e, "backgroundVideo")} disabled={uploading} /><br />
+      {/* Appearance */}
+      <div className="mb-6">
+        <h3 className="font-bold mb-2">Registration Page Appearance</h3>
+        <label className="block mb-2">Background Color</label>
+        <input type="color" value={config.backgroundColor || "#ffffff"} onChange={(e) => setConfig(clone({ ...config, backgroundColor: e.target.value }))} className="w-16 h-10 p-0 border" />
+        <input value={config.backgroundColor || ""} onChange={(e) => setConfig(clone({ ...config, backgroundColor: e.target.value }))} className="border px-2 ml-2" placeholder="#ffffff" />
+      </div>
 
-      {/* Hosted By Logo */}
-      <h3 className="font-bold mb-2 mt-8">Hosted By Logo (Urban Infra Group)</h3>
-      {config.hostedByLogo && (
-        <div className="mb-2">
-          <img src={config.hostedByLogo} alt="Hosted By Logo" style={{ maxWidth: 200 }} />
-        </div>
-      )}
-      <input type="file" accept="image/*" onChange={e => handleAssetUpload(e, "hostedByLogo")} disabled={uploading} /><br />
+      {/* Background Media */}
+      <h3 className="font-bold mb-2 mt-6">Background Media (image or video)</h3>
+      <div className="mb-2">
+        <label className="mr-3">Current:</label>
+        {config.backgroundMedia?.url ? (
+          config.backgroundMedia.type === "video" ? <video src={config.backgroundMedia.url} controls style={{ maxWidth: 400 }} /> : <img src={config.backgroundMedia.url} alt="Background" style={{ maxWidth: 400 }} />
+        ) : <span className="text-sm text-gray-500">No background media set</span>}
+      </div>
+      <div className="flex gap-3 items-center mb-3">
+        <input type="file" accept="image/*" onChange={(e) => handleAssetUpload(e, "backgroundMedia", null, "image")} disabled={uploading} />
+        <input type="file" accept="video/*" onChange={(e) => handleAssetUpload(e, "backgroundMedia", null, "video")} disabled={uploading} />
+        <button onClick={() => setConfig(clone({ ...config, backgroundMedia: { type: "image", url: "" } }))} className="px-3 py-1 border">Clear Background</button>
+      </div>
 
-      {/* Images Section (Gallery) */}
-      <h3 className="font-bold mb-2 mt-8">Gallery Images</h3>
+      {/* Legacy Images */}
+      <h3 className="font-bold mb-2 mt-8">Additional Images (legacy)</h3>
       {(config.images || []).map((img, idx) => (
         <div key={idx} className="flex items-center gap-2 mb-2">
           {img && <img src={img} alt={"img-" + idx} style={{ maxHeight: 60, marginRight: 8 }} />}
-          <input type="text" value={img} onChange={e => updateImage(idx, e.target.value)} placeholder="Image URL" className="border px-2" />
-          <input type="file" accept="image/*" onChange={e => handleAssetUpload(e, "images", idx)} disabled={uploading} />
+          <input type="text" value={img} onChange={(e) => updateImage(idx, e.target.value)} placeholder="Image URL" className="border px-2" />
+          <input type="file" accept="image/*" onChange={(e) => handleAssetUpload(e, "images", idx, "image")} disabled={uploading} />
           <button onClick={() => deleteImage(idx)} className="text-red-500">Delete</button>
         </div>
       ))}
-      <button onClick={addImage} className="mt-2 px-4 py-2 bg-blue-100">Add Gallery Image</button>
+      <button onClick={addImage} className="mt-2 px-4 py-2 bg-blue-100">Add Legacy Image</button>
 
-      {/* Fields Section */}
+      {/* Fields */}
       <h3 className="font-bold mb-2 mt-8">Fields</h3>
       {(config.fields || []).map((field, idx) => (
         <div key={idx} className="flex flex-col gap-1 mb-2 border-b pb-2">
           <div className="flex gap-2 items-center">
-            <input value={field.label} onChange={e => updateField(idx, { label: e.target.value })} placeholder="Label" className="border px-2" />
-            <input value={field.name} onChange={e => updateField(idx, { name: e.target.value })} placeholder="Name" className="border px-2" />
-            <select value={field.type} onChange={e => updateField(idx, { type: e.target.value })} className="border">
+            <input value={field.label} onChange={(e) => updateField(idx, { label: e.target.value })} placeholder="Label" className="border px-2" />
+            <input value={field.name} onChange={(e) => updateField(idx, { name: e.target.value })} placeholder="Name" className="border px-2" />
+            <select value={field.type} onChange={(e) => updateField(idx, { type: e.target.value })} className="border">
               <option value="text">Text</option>
               <option value="email">Email</option>
               <option value="select">Select</option>
@@ -195,62 +275,59 @@ export default function VisitorsAdmin() {
               <option value="textarea">Textarea</option>
               <option value="number">Number</option>
             </select>
-            <label>
-              <input type="checkbox" checked={field.required} onChange={() => updateField(idx, { required: !field.required })} /> Required
-            </label>
-            <label>
-              <input type="checkbox" checked={field.visible} onChange={() => updateField(idx, { visible: !field.visible })} /> Visible
-            </label>
+            <label><input type="checkbox" checked={!!field.required} onChange={() => updateField(idx, { required: !field.required })} /> Required</label>
+            <label><input type="checkbox" checked={!!field.visible} onChange={() => updateField(idx, { visible: !field.visible })} /> Visible</label>
             <button onClick={() => deleteField(idx)} className="text-red-500">Delete</button>
           </div>
-          {/* Options editor for select/radio */}
-          {["select", "radio"].includes(field.type) && (
+
+          {["select","radio"].includes(field.type) && (
             <div className="flex gap-1 items-center mt-1 flex-wrap">
               {(field.options || []).map((opt, oidx) => (
-                <span key={oidx}>
-                  <input
-                    type="text"
-                    value={opt}
-                    onChange={e => {
-                      const newOptions = [...(field.options || [])];
-                      newOptions[oidx] = e.target.value;
-                      updateField(idx, { options: newOptions });
-                    }}
-                    className="border px-1"
-                    placeholder="Option"
-                  />
-                  <button
-                    onClick={() => {
-                      const newOptions = [...(field.options || [])];
-                      newOptions.splice(oidx, 1);
-                      updateField(idx, { options: newOptions });
-                    }}
-                    className="text-red-500"
-                  >x</button>
-                </span>
+                <div key={oidx} className="flex items-center gap-1">
+                  <input type="text" value={opt} onChange={e => {
+                    const newOptions = [...(field.options || [])]; newOptions[oidx] = e.target.value; updateField(idx, { options: newOptions });
+                  }} className="border px-1" placeholder="Option label" />
+                  <button onClick={() => { const newOptions = [...(field.options || [])]; newOptions.splice(oidx,1); updateField(idx, { options: newOptions }); }} className="text-red-500">x</button>
+                </div>
               ))}
-              <button
-                onClick={() => {
-                  const newOptions = [...(field.options || []), ""];
-                  updateField(idx, { options: newOptions });
-                }}
-                className="text-green-600"
-              >+ Option</button>
+              <button onClick={() => { const newOptions = [...(field.options || []), ""]; updateField(idx, { options: newOptions }); }} className="text-green-600">+ Option</button>
             </div>
           )}
         </div>
       ))}
-      <button onClick={addField} className="mt-2 px-4 py-2 bg-blue-100">Add Field</button>
 
-      {/* Event Details Section */}
+      <div className="flex gap-2 mt-2">
+        <button onClick={addField} className="px-4 py-2 bg-blue-100">Add Field</button>
+        <button onClick={addCheckboxField} className="px-4 py-2 bg-yellow-100">Add Checkbox Field</button>
+      </div>
+
+      {/* Terms */}
+      <h3 className="font-bold mb-2 mt-8">Terms &amp; Conditions (appears at end of form)</h3>
+      <div className="mb-2">
+        <label className="block mb-1">Label shown to users</label>
+        <input type="text" value={config.termsLabel || "Terms & Conditions"} onChange={(e) => setConfig(clone({ ...config, termsLabel: e.target.value }))} className="border px-2 w-full mb-2" />
+        <label className="block mb-1">Link to Terms (paste URL)</label>
+        <input type="text" placeholder="https://..." value={config.termsUrl || ""} onChange={(e) => setConfig(clone({ ...config, termsUrl: e.target.value }))} className="border px-2 w-full mb-2" />
+        <div className="flex items-center gap-3 mb-2">
+          <input type="file" accept=".pdf,.txt,.doc,.docx" onChange={(e) => handleAssetUpload(e, "termsUrl")} disabled={uploading} />
+          <button type="button" onClick={removeTermsFile} className="px-3 py-1 border">Remove Terms File</button>
+          <label className="ml-2"><input type="checkbox" checked={!!config.termsRequired} onChange={(e) => setConfig(clone({ ...config, termsRequired: e.target.checked }))} /><span className="ml-2">Require acceptance on registration</span></label>
+        </div>
+        {config.termsUrl ? (<div className="mb-2"><a href={config.termsUrl} target="_blank" rel="noreferrer" className="text-indigo-700 underline">{config.termsUrl}</a></div>) : null}
+      </div>
+
+      {/* Event Details */}
       <h3 className="font-bold mb-2 mt-8">Event Details</h3>
       <input value={config.eventDetails?.name || ""} onChange={e => updateEventDetail("name", e.target.value)} placeholder="Event Name" className="border px-2 mb-2 block" />
       <input value={config.eventDetails?.date || ""} onChange={e => updateEventDetail("date", e.target.value)} placeholder="Date" className="border px-2 mb-2 block" />
       <input value={config.eventDetails?.venue || ""} onChange={e => updateEventDetail("venue", e.target.value)} placeholder="Venue/Address" className="border px-2 mb-2 block" />
       <input value={config.eventDetails?.tagline || ""} onChange={e => updateEventDetail("tagline", e.target.value)} placeholder="Tagline" className="border px-2 mb-2 block" />
 
-      <button onClick={saveConfig} className="mt-6 px-6 py-3 bg-blue-600 text-white font-bold rounded" disabled={uploading}>Save Changes</button>
-      {msg && <div className="mt-2 text-green-600 font-bold">{msg}</div>}
+      <div className="mt-6">
+        <button onClick={saveConfig} className="px-6 py-3 bg-blue-600 text-white font-bold rounded" disabled={uploading}>Save Changes</button>
+        {msg && <div className="mt-2 text-green-600 font-bold">{msg}</div>}
+      </div>
+
       <hr className="my-10" />
       <h3 className="font-bold mb-4">Live Form Preview</h3>
       <DynamicRegistrationForm config={config} form={form} setForm={setForm} onSubmit={() => alert("Submitted!")} />

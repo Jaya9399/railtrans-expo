@@ -6,16 +6,7 @@ import ExhibitorsAdmin from "./ExhibitorsAdmin";
 import PartnersAdmin from "./PartnersAdmin";
 import SpeakersAdmin from "./SpeakersAdmin";
 import AwardeesAdmin from "./AwardeesAdmin";
-
-// Dummy Dashboard content (unchanged, you can customize more)
-function DashboardContent() {
-  return (
-    <div className="p-8">
-      <div className="text-2xl font-bold mb-4">Welcome to Admin Dashboard</div>
-      <div className="text-gray-600">Select a section from the sidebar to manage pages and registrations.</div>
-    </div>
-  );
-}
+import DashboardContent from "./DashboardContent"; // <-- Import the dashboard
 
 export default function AdminPanel() {
   const [selected, setSelected] = useState("Dashboard");
