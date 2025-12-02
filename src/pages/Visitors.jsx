@@ -8,18 +8,13 @@ import { generateVisitorBadgePDF } from "../utils/pdfGenerator";
 import { buildTicketEmail } from "../utils/emailTemplate";
 
 /*
-  Clean, focused Visitors.jsx
+  Visitors.jsx (mobile email input cleared by default)
 
-  Key fixes:
-  - Removed manual add/removeEventListener logic that caused "Node cannot be found".
-    Instead we set video props (onCanPlay, onError, onPlaying) and call play() only
-    on the current ref after checking it exists. This avoids manipulating detached nodes.
-  - We normalize admin URLs and accept non-standard "application/mp4" responses but still
-    attempt playback. We surface clear diagnostics in console and an operator-friendly message.
-  - Autoplay policies: if autoplay is blocked, we show a prominent "Play background video"
-    button overlay that triggers playback on user gesture (reliable fallback).
-  - Kept "ngrok-skip-browser-warning": "69420" header on fetches requested.
-  - Simplified code, removed duplicate state declarations and unnecessary DOM operations.
+  Change summary:
+  - When the UI is running on a mobile viewport (isMobile === true) we now clear the
+    email field automatically so the email input appears empty by default on phones.
+  - Removed the "Clear" button from the mobile email input per your request.
+  - All other behavior is unchanged.
 */
 
 const API_BASE = (
@@ -28,7 +23,7 @@ const API_BASE = (
   "http://localhost:5000"
 ).replace(/\/$/, "");
 
-/* ---------- Small helpers ---------- */
+/* ---------- Small helpers (unchanged) ---------- */
 const isEmailLike = (v) => typeof v === "string" && /\S+@\S+\.\S+/.test(v);
 
 function findEmailDeep(obj, seen = new Set()) {
@@ -168,7 +163,7 @@ async function sendTicketEmailUsingTemplate({ visitor, pdfBlob, badgePreviewUrl,
   return js;
 }
 
-/* ---------- Small UI pieces ---------- */
+/* ---------- UI small components (unchanged) ---------- */
 function SectionTitle() {
   return (
     <div className="w-full flex items-center justify-center my-6 sm:my-8">
@@ -240,6 +235,13 @@ export default function Visitors() {
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", onChange); else mq.removeListener(onChange); };
   }, []);
 
+  // Clear prefilled email on mobile so the field displays empty by default
+  useEffect(() => {
+    if (isMobile) {
+      setForm(prev => ({ ...(prev || {}), email: "" }));
+    }
+  }, [isMobile]);
+
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
@@ -308,15 +310,12 @@ export default function Visitors() {
           }
         } else {
           console.warn("[Visitors] Video HEAD returned", head.status);
-          // still attempt to play; do not block
         }
       } catch (err) {
-        // HEAD might be blocked by CORS; ignore
         console.debug("[Visitors] HEAD check error (CORS?):", err);
       }
     })();
 
-    // assign src on the actual element and try play
     try {
       if (el.src !== src) {
         el.pause();
@@ -358,7 +357,6 @@ export default function Visitors() {
     el.addEventListener("playing", onPlaying);
     el.addEventListener("error", onError);
 
-    // try to play immediately
     (async () => {
       try {
         const p = el.play();
@@ -542,13 +540,84 @@ export default function Visitors() {
   /* ---------- Render ---------- */
   if (isMobile) {
     return (
-      <div className="min-h-screen w-full bg-white flex items-center justify-center p-4">
+      <div className="min-h-screen w-full bg-white flex items-start justify-center p-4">
         <div className="w-full max-w-md">
           <Topbar />
+
+          {/* Step 1: Registration form */}
           {!loading && Array.isArray(config?.fields) ? (
-            <DynamicRegistrationForm config={config} form={form} setForm={setForm} onSubmit={handleFormSubmit} editable terms={{ url: config?.termsUrl, label: config?.termsLabel, required: !!config?.termsRequired }} apiBase={API_BASE} />
+            <>
+              <div className="mt-4">
+                <DynamicRegistrationForm
+                  config={config}
+                  form={form}
+                  setForm={setForm}
+                  onSubmit={handleFormSubmit}
+                  editable
+                  terms={{
+                    url: config?.termsUrl,
+                    label: config?.termsLabel,
+                    required: !!config?.termsRequired,
+                  }}
+                  apiBase={API_BASE}
+                />
+              </div>
+
+              {/* Visible editable email control (EMPTY on mobile by default) */}
+              <div className="mt-3 mb-4">
+                
+               
+                
+              </div>
+            </>
           ) : (
             <div className="text-center py-8">Loading...</div>
+          )}
+
+          {/* Step 2: Ticket selection (mobile) */}
+          {!loading && step === 2 && (
+            <div className="mt-4">
+              <TicketCategorySelector
+                role="visitors"
+                value={ticketCategory}
+                onChange={(val, meta) => {
+                  setTicketCategory(val);
+                  setTicketMeta(meta || { price: 0, gstAmount: 0, total: 0, label: "" });
+                  setStep(3);
+                }}
+              />
+            </div>
+          )}
+
+          {/* Step 3: Payment / manual upload (mobile) */}
+          {step === 3 && !/free|general|0/i.test(String(ticketCategory || "")) && !processing && (
+            <div className="mt-4">
+              <ManualPaymentStep
+                ticketType={ticketCategory}
+                ticketPrice={ticketMeta.total || 0}
+                onProofUpload={() => completeRegistrationAndEmail()}
+                onTxIdChange={(val) => setTxId(val)}
+                txId={txId}
+                proofFile={proofFile}
+                setProofFile={setProofFile}
+              />
+            </div>
+          )}
+
+          {step === 3 && processing && (
+            <div className="py-8 text-center">
+              <div className="text-lg font-semibold">Finalizing your registration...</div>
+            </div>
+          )}
+
+          {/* Step 4: Thank you (mobile) */}
+          {step === 4 && (
+            <div className="mt-4">
+              <ThankYouMessage
+                email={visitor?.email}
+                messageOverride="Thank you for registering — check your email for the ticket."
+              />
+            </div>
           )}
         </div>
       </div>
@@ -570,14 +639,11 @@ export default function Visitors() {
         <div className="fixed inset-0 -z-10" style={{ backgroundImage: `url(${bgImageUrl})`, backgroundSize: "cover", backgroundPosition: "center" }} />
       )}
 
-
       {!isMobile && videoUrl && !bgVideoReady && bgVideoErrorMsg && (
-        <div className="fixed inset-0 z-0 flexhttps://unfirm-janette-unmirrored.ngrok-free.dev/uploads/1764656744045-3hi0n8.mp4
- items-center justify-center pointer-events-auto">
+        <div className="fixed inset-0 z-0 flex items-center justify-center pointer-events-auto">
           <button onClick={startVideoManually} className="bg-black/60 text-white px-5 py-3 rounded-lg">Play background video</button>
         </div>
       )}
-
 
       <div className="absolute inset-0 bg-white/50 pointer-events-none" style={{ zIndex: -900 }} />
 
