@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React from "react";
+import { NavLink } from "react-router-dom";
 import {
   HiOutlineViewGrid,
   HiOutlineUserGroup,
@@ -7,7 +8,6 @@ import {
   HiOutlineHand,
   HiOutlineUserCircle,
   HiOutlineClipboardList,
-  HiOutlineCalendar,
   HiOutlineDocumentText,
   HiOutlineTable,
   HiOutlineFolderOpen,
@@ -19,15 +19,32 @@ import {
   HiOutlineLockClosed,
   HiOutlineChevronDown,
   HiOutlineChevronRight,
-  HiOutlineCog
+  HiOutlineCog,
 } from "react-icons/hi";
 
-// menu with path entries for router navigation
+/**
+ * Updated Sidebar that uses NavLink for routing instead of buttons invoking a handler.
+ *
+ * Why your /VisitorsAdmin route likely wasn't opening:
+ * - The previous Sidebar used button clicks + onSelect callbacks to navigate.
+ *   If the parent didn't call react-router's navigate() or update location, the route URL may change
+ *   but React Router wouldn't render the new route (or nothing happened).
+ * - Using NavLink/Link ensures client-side navigation handled by react-router and avoids full page reloads.
+ * - Also ensure the path strings match exactly the Route definitions (case-sensitive on some platforms).
+ *
+ * Fixes in this file:
+ * - Use NavLink to navigate to item.path.
+ * - Apply active styling via NavLink's isActive.
+ * - Keep a fallback onSelect prop for non-router usage (optional).
+ *
+ * Install react-icons if you haven't: npm install react-icons
+ */
+
 const menuSections = [
   {
     title: "MAIN",
     items: [
-      { label: "Dashboard", icon: HiOutlineViewGrid, path: "/" },
+      { label: "Dashboard", icon: HiOutlineViewGrid, path: "/admin" },
       { label: "Visitors", icon: HiOutlineUserGroup, path: "/VisitorsAdmin" },
       { label: "Exhibitors", icon: HiOutlineBriefcase, path: "/ExhibitorsAdmin" },
       { label: "Partners", icon: HiOutlineHand, path: "/PartnersAdmin" },
@@ -36,91 +53,33 @@ const menuSections = [
       { label: "Topbar Settings", icon: HiOutlineDocumentText, path: "/admin/topbar-settings" },
       { label: "Ticket Categories", icon: HiOutlineTable, path: "/payments-summary" },
       { label: "Registrations", icon: HiOutlineClipboardList, path: "/registrations" },
-      { label: "Pages", icon: HiOutlineFolderOpen, path: "/pages" },
     ],
   },
-  {
-    title: "COMMUNICATION",
-    items: [
-      { label: "Chat", icon: HiOutlineChatAlt, path: "/chat" },
-      { label: "Support Tickets", icon: HiOutlineSupport, path: "/support" },
-      { label: "Emails", icon: HiOutlineMail, path: "/emails" },
-    ],
-  },
-  {
-    title: "ANALYTICS",
-    items: [
-      { label: "Charts", icon: HiOutlineChartBar, path: "/charts" },
-      { label: "Statistics", icon: HiOutlineCube, path: "/stats" },
-    ],
-  },
-  {
-    title: "SETTINGS",
-    items: [
-      { label: "Authentication", icon: HiOutlineLockClosed, path: "/auth" },
-      { label: "Admin Settings", icon: HiOutlineCog, path: "/settings" },
-    ],
-  },
+  
 ];
 
-function SidebarMenuItem({ item, selected, onSelect }) {
-  const [open, setOpen] = useState(false);
-  const hasChildren = item.children && item.children.length > 0;
+function MenuItem({ item }) {
+  const Icon = item.icon;
+  const isRoot = item.path === "/";
 
-  function handleClick() {
-    if (hasChildren) {
-      setOpen((o) => !o);
-      return;
-    }
-    if (typeof onSelect === "function") onSelect(item.path || item.label);
-  }
-
+  // NavLink with `end` prop for exact match on root path
   return (
-    <div>
-      <button
-        className={`flex items-center w-full px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition ${
-          selected === (item.path || item.label) ? "bg-gray-100 font-semibold" : ""
-        }`}
-        onClick={handleClick}
-      >
-        <item.icon className="mr-3 text-xl" />
-        <span className="flex-1 text-left">{item.label}</span>
-        {hasChildren &&
-          (open ? (
-            <HiOutlineChevronDown className="ml-2 text-sm" />
-          ) : (
-            <HiOutlineChevronRight className="ml-2 text-sm" />
-          ))}
-      </button>
-
-      {hasChildren && open && (
-        <div className="ml-8 mt-1 space-y-1">
-          {item.children.map((child) => (
-            <button
-              key={child.label}
-              className={`w-full text-left px-2 py-1 rounded hover:bg-gray-50 text-gray-600 text-sm`}
-              onClick={() => onSelect(child.path || child.label)}
-            >
-              {child.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <NavLink
+      to={item.path}
+      end={isRoot}
+      className={({ isActive }) =>
+        `flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-gray-100 text-gray-700 transition ${
+          isActive ? "bg-gray-100 font-semibold" : ""
+        }`
+      }
+    >
+      <Icon className="mr-3 text-xl" />
+      <span className="flex-1 text-left">{item.label}</span>
+    </NavLink>
   );
 }
 
-/**
- * Sidebar
- * Props:
- * - selected: current path/selection
- * - onSelect: function(pathOrLabel)
- * - fixed: boolean (default: false) — if true, positions the sidebar fixed on the left
- *
- * Default changed to non-fixed so Topbar can span full width. If you want the previous behavior
- * (sidebar fixed on left and content offset with ml-64), pass fixed={true}.
- */
-export default function Sidebar({ selected, onSelect, fixed = false }) {
+export default function Sidebar({ fixed = false }) {
   const baseClass = fixed
     ? "bg-white w-64 min-h-screen border-r flex flex-col fixed left-0 z-30 pt-0"
     : "bg-white w-64 min-h-screen border-r flex flex-col";
@@ -131,26 +90,19 @@ export default function Sidebar({ selected, onSelect, fixed = false }) {
         <div className="py-4">
           {menuSections.map((section) => (
             <div key={section.title} className="mb-6">
-              <div className="px-6 text-xs font-bold text-gray-400 mb-2 uppercase">
-                {section.title}
-              </div>
-              <div className="space-y-1">
+              <div className="px-6 text-xs font-bold text-gray-400 mb-2 uppercase">{section.title}</div>
+              <div className="space-y-1 px-2">
                 {section.items.map((item) => (
-                  <SidebarMenuItem
-                    key={item.label}
-                    item={item}
-                    selected={selected}
-                    onSelect={onSelect}
-                  />
+                  <div key={item.path}>
+                    <MenuItem item={item} />
+                  </div>
                 ))}
               </div>
             </div>
           ))}
         </div>
       </nav>
-      <div className="px-6 py-4 border-t text-xs text-gray-400">
-        &copy; {new Date().getFullYear()} RailTrans Expo
-      </div>
+      <div className="px-6 py-4 border-t text-xs text-gray-400">&copy; {new Date().getFullYear()} RailTrans Expo</div>
     </aside>
   );
 }

@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import EditModal from "../components/EditModal";
-import Topbar from "../components/Topbar";
-import Sidebar from "../components/Sidebar";
 import DeleteModal from "../components/DeleteModal";
 import AdminExhibitor from "../pages/AdminExhibitor";
 import AdminPartner from "../pages/AdminPartner";
@@ -667,12 +665,7 @@ export default function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Topbar />
       <div className="flex max-w-full">
-        <div className="w-64 hidden md:block">
-          <Sidebar selected={location.pathname} onSelect={handleSidebarSelect} />
-        </div>
-
         <main className="flex-1 p-4 sm:p-8 overflow-auto" style={{ maxHeight: "calc(100vh - 80px)" }}>
           <div className="flex items-center justify-between mb-4">
             <div>

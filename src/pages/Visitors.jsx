@@ -8,13 +8,17 @@ import { generateVisitorBadgePDF } from "../utils/pdfGenerator";
 import { buildTicketEmail } from "../utils/emailTemplate";
 
 /*
-  Visitors.jsx (mobile email input cleared by default)
+  Visitors.jsx
 
-  Change summary:
-  - When the UI is running on a mobile viewport (isMobile === true) we now clear the
-    email field automatically so the email input appears empty by default on phones.
-  - Removed the "Clear" button from the mobile email input per your request.
-  - All other behavior is unchanged.
+  Changes made to ensure the email field is empty in the UI (desktop & mobile) by default:
+  - form state initialised with email: "" so the input is empty initially.
+  - removed any prefill from fetchConfig (no longer injects stored/query email into the form).
+  - removed the mobile-only "clear prefilled email" effect.
+  - removed auto-fill of email during form submit (handleFormSubmit).
+  - completeRegistrationAndEmail will still read a bestEmail from storage/query for sending/finalization,
+    but it will NOT write that value back into the visible form (keeps UI empty).
+    When building the final visitor payload we use form.email || bestEmail so the process can continue
+    while the UI remains empty unless the user typed an email.
 */
 
 const API_BASE = (
@@ -204,9 +208,10 @@ function EventDetailsBlock({ event }) {
 
 /* ---------- Main component ---------- */
 export default function Visitors() {
+  // Start with empty email explicitly
   const [step, setStep] = useState(1);
   const [config, setConfig] = useState(null);
-  const [form, setForm] = useState({});
+  const [form, setForm] = useState({ email: "" }); // <-- ensure email empty by default
   const [ticketCategory, setTicketCategory] = useState("");
   const [ticketMeta, setTicketMeta] = useState({ price: 0, gstAmount: 0, total: 0, label: "" });
   const [txId, setTxId] = useState("");
@@ -235,12 +240,7 @@ export default function Visitors() {
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", onChange); else mq.removeListener(onChange); };
   }, []);
 
-  // Clear prefilled email on mobile so the field displays empty by default
-  useEffect(() => {
-    if (isMobile) {
-      setForm(prev => ({ ...(prev || {}), email: "" }));
-    }
-  }, [isMobile]);
+  // NOTE: removed mobile-clear effect and fetchConfig prefill so email stays empty in UI
 
   const fetchConfig = useCallback(async () => {
     setLoading(true);
@@ -266,8 +266,7 @@ export default function Visitors() {
 
       setConfig(normalized);
       setBadgeTemplateUrl(cfg?.badgeTemplateUrl || "");
-      const prefillEmail = getBestEmail({});
-      if (prefillEmail) setForm(prev => ({ ...prev, email: prefillEmail }));
+      // intentionally do NOT prefill form.email here - keep UI empty
     } catch (e) {
       console.error("[Visitors] Failed to load visitor config:", e);
       setConfig({ fields: [], images: [], backgroundMedia: { type: "image", url: "" } });
@@ -297,7 +296,6 @@ export default function Visitors() {
     setBgVideoReady(false);
     setBgVideoErrorMsg("");
 
-    // HEAD check just for diagnostics (non-fatal)
     (async () => {
       try {
         const head = await fetch(src, { method: "HEAD", mode: "cors", headers: { "ngrok-skip-browser-warning": "69420" } });
@@ -391,7 +389,7 @@ export default function Visitors() {
     }
   };
 
-  /* ---------- Backend helpers & registration flow (unchanged) ---------- */
+  /* ---------- Backend helpers & registration flow ---------- */
   async function saveStep(stepName, data = {}, meta = {}) {
     try {
       await fetch(`${API_BASE}/api/visitors/step`, { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ step: stepName, data, meta }) });
@@ -428,8 +426,8 @@ export default function Visitors() {
 
   async function handleFormSubmit(formData) {
     setError("");
-    const ensuredEmail = getBestEmail(formData);
-    const nextForm = ensuredEmail ? { ...formData, email: ensuredEmail } : { ...formData };
+    // NOTE: do NOT auto-fill email from storage/query here; keep what user typed (or empty)
+    const nextForm = { ...formData };
     setForm(nextForm);
     await saveStep("registration_attempt", { form: nextForm });
     try {
@@ -464,9 +462,18 @@ export default function Visitors() {
         finalizeCalledRef.current = false;
         return;
       }
-      const bestEmail = getBestEmail(form);
-      if (!bestEmail) { setError("Email is required"); setProcessing(false); finalizeCalledRef.current = false; return; }
-      if (!extractEmailFromForm(form)) setForm(prev => ({ ...prev, email: bestEmail }));
+
+      const bestEmail = getBestEmail(form); // still allowed to read for sending
+      if (!bestEmail && !form?.email) {
+        setError("Email is required");
+        setProcessing(false);
+        finalizeCalledRef.current = false;
+        return;
+      }
+
+      // Do NOT write bestEmail back into visible form (keeps UI empty)
+      // Use bestEmail as fallback when building the final payload:
+      const finalEmail = (form && form.email) ? form.email : bestEmail;
 
       let ticket_code = form.ticket_code || (visitor && visitor.ticket_code) || null;
       if (!ticket_code && savedVisitorId) {
@@ -488,7 +495,7 @@ export default function Visitors() {
           } catch (e) { /* ignore */ }
         } else {
           try {
-            const saved = await saveVisitor({ ...form, ticket_code: gen });
+            const saved = await saveVisitor({ ...form, ticket_code: gen, email: finalEmail });
             if (saved?.insertedId) setSavedVisitorId(saved.insertedId);
             if (saved?.ticket_code) ticket_code = saved.ticket_code;
           } catch (saveErr) { console.warn("Saving visitor during finalization failed:", saveErr); }
@@ -496,7 +503,7 @@ export default function Visitors() {
         setForm(prev => ({ ...prev, ticket_code }));
       }
 
-      const fullVisitor = { ...form, ticket_code, ticket_category: ticketCategory, ticket_price: ticketMeta.price, ticket_gst: ticketMeta.gstAmount, ticket_total: ticketMeta.total, eventDetails: config?.eventDetails || {} };
+      const fullVisitor = { ...form, email: finalEmail, ticket_code, ticket_category: ticketCategory, ticket_price: ticketMeta.price, ticket_gst: ticketMeta.gstAmount, ticket_total: ticketMeta.total, eventDetails: config?.eventDetails || {} };
       setVisitor(fullVisitor);
       await saveStep("finalizing_start", { fullVisitor });
 
@@ -563,11 +570,9 @@ export default function Visitors() {
                 />
               </div>
 
-              {/* Visible editable email control (EMPTY on mobile by default) */}
-              <div className="mt-3 mb-4">
-                
-               
-                
+              {/* Note: email input remains empty by default on all viewports */}
+              <div className="mt-3 mb-4" aria-hidden>
+                {/* intentionally left blank to keep UI consistent */}
               </div>
             </>
           ) : (
