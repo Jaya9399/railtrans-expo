@@ -220,7 +220,7 @@ export default function TicketScanner({
     try {
       const res = await fetch(apiPrint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" ,"ngrok-skip-browser-warning": "69420" },
         body: JSON.stringify({ ticketId: id }),
       });
       if (!res.ok) {

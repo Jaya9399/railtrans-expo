@@ -1,3 +1,4 @@
+// url: (local file) server.js
 require("dotenv").config();
 
 const express = require("express");
@@ -57,35 +58,23 @@ const PORT = process.env.PORT || 5000;
 app.use(express.json({ limit: "20mb" })); // supports base64 PDFs
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// Serve uploaded images statically
-app.use("/uploads", express.static(uploadsDir));
-
-// --- GUARANTEED FALLBACK /api/visitor-config endpoint ---
-// This fallback ensures something responds for /api/visitor-config (useful for debugging ngrok/phones).
-// You can remove or replace this when your real visitorConfig route is ready.
-// It intentionally returns a minimal valid configuration for DynamicRegistrationForm.
-app.get("/api/visitor-config", (req, res) => {
-  console.log("[FALLBACK] /api/visitor-config requested from", req.headers.host || req.ip);
-  const exampleConfig = {
-    backgroundMedia: { type: "image", url: "/uploads/bg.jpg" },
-    images: ["/uploads/img1.jpg", "/uploads/img2.jpg"],
-    eventDetails: {
-      name: "RailTrans Expo 2026",
-      date: "03–04 July 2026",
-      venue: "Halls 12 & 12A, Bharat Mandapam, New Delhi",
-      tagline: "Asia’s Second Largest Event for Railways, Transport & Semiconductor Industry"
-    },
-    termsUrl: "/uploads/terms.pdf",
-    termsRequired: true,
-    termsLabel: "I accept the Terms & Conditions",
-    fields: [
-      { name: "name", label: "Full name", type: "text", required: true, visible: true },
-      { name: "email", label: "Email", type: "email", required: true, visible: true },
-      { name: "company", label: "Company", type: "text", required: false, visible: true }
-    ]
-  };
-  res.json(exampleConfig);
-});
+// ---------- IMPORTANT FIX: serve uploads with correct MIME + CORS + Accept-Ranges ----------
+app.use("/uploads", express.static(uploadsDir, {
+  setHeaders: (res, filePath) => {
+    // Ensure correct MIME for common video types (override if server/mime lookup is wrong)
+    if (filePath.match(/\.(mp4)$/i)) {
+      res.setHeader("Content-Type", "video/mp4");
+    } else if (filePath.match(/\.(webm)$/i)) {
+      res.setHeader("Content-Type", "video/webm");
+    }
+    // Allow cross-origin access from frontend (replace '*' with your origin in prod)
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    // Allow the custom header used by client
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, ngrok-skip-browser-warning");
+    // Expose Accept-Ranges (useful for video seeking)
+    res.setHeader("Accept-Ranges", "bytes");
+  }
+}));
 
 // Helper to safely require route modules without crashing server if a file is missing.
 // If the module cannot be required, returns a router that responds 501 on each path.

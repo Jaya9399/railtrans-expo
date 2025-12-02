@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { sendMail } = require("../mailer");
+const { sendMail } = require("../utils/mailer");
 
 const API_BASE = (process.env.API_BASE || process.env.BACKEND_URL || "http://localhost:5000").replace(/\/$/, "");
 const FRONTEND_BASE = (process.env.FRONTEND_BASE || process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -33,7 +33,7 @@ router.post("/", async (req, res) => {
         reference_id: String(entity_id),
         metadata: { entity_type, new_category },
       };
-      const r = await fetch(`${API_BASE}/api/payment/create-order`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const r = await fetch(`${API_BASE}/api/payment/create-order`, { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
       const js = await r.json().catch(() => ({}));
       if (!r.ok || !js.success) {
         return res.status(502).json({ success: false, error: js.error || "Failed to create payment order" });
@@ -57,7 +57,7 @@ router.post("/", async (req, res) => {
     try {
       await fetch(`${API_BASE}/api/tickets/create`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
         body: JSON.stringify({
           ticket_code,
           entity_type: entity_type.replace(/s$/, ""), // e.g. speakers -> speaker
@@ -78,7 +78,7 @@ router.post("/", async (req, res) => {
     try {
       await fetch(`${API_BASE}/api/${encodeURIComponent(entity_type)}/${encodeURIComponent(String(entity_id))}/confirm`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
         body: JSON.stringify({ ticket_category: new_category, upgradedAt: new Date().toISOString() }),
       }).catch(()=>{});
     } catch (e) {

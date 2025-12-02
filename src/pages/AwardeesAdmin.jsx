@@ -16,7 +16,11 @@ async function uploadFileToServer(file, endpoint = "/api/upload-asset") {
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch(url, { method: "POST", body: formData });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "ngrok-skip-browser-warning": "69420" },
+    body: formData
+  });
   if (!res.ok) {
     let txt = "";
     try { txt = await res.text(); } catch {}
@@ -91,7 +95,7 @@ export default function AwardeesAdmin() {
     let mounted = true;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/awardee-config`, { cache: "no-store" });
+        const res = await fetch(`${API_BASE}/api/awardee-config`, { cache: "no-store", headers: { "Accept": "application/json", "ngrok-skip-browser-warning": "69420" } });
         if (!res.ok) throw new Error(`Failed to fetch config (${res.status})`);
         const cfg = await res.json();
         if (!mounted) return;
@@ -187,7 +191,7 @@ export default function AwardeesAdmin() {
     setError(null);
     try {
       const toSave = stripAcceptTermsFields(config);
-      const res = await fetch(`${API_BASE}/api/awardee-config/config`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(toSave) });
+      const res = await fetch(`${API_BASE}/api/awardee-config/config`, { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(toSave) });
       if (!res.ok) {
         const txt = await res.text().catch(()=>"");
         throw new Error(txt || `HTTP ${res.status}`);

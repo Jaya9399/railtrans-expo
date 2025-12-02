@@ -14,6 +14,7 @@ import SpeakersAdmin from "./SpeakersAdmin";
 import AwardeesAdmin from "./AwardeesAdmin";  
 import AdminPartners from "./AdminPartner";
 import AdminTopbarSettings from "./AdminTopbarSettings";
+import PaymentsSummary from "./PaymentSummary";
 
 // Simple placeholders (if you need them)
 function Registrations() { return <div className="p-8">Registrations</div>; }
@@ -37,6 +38,7 @@ export default function AppRoutes() {
       <Route path="/SpeakersAdmin" element={<SpeakersAdmin />} />
       <Route path="/AwardeesAdmin" element={<AwardeesAdmin />} />
       <Route path="/admin/topbar-settings" element={<AdminTopbarSettings />} />
+      <Route path="/payments-summary" element={<PaymentsSummary />} />
       
 
       {/* Exhibitors - Data admin page */}

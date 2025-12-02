@@ -1,23 +1,21 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 
 /**
- * TicketCategorySelector
+ * TicketCategorySelector (manager-backed)
+ *
+ * - Reads ticket category amounts from localStorage (key: "ticket_categories_local_v1")
+ *   which is managed by TicketPricingManager.
+ * - If localStorage has no data, falls back to built-in defaults.
+ * - When user selects a category, the callback receives price/gst/gstAmount/total/label
+ *   derived from the pricing manager (not from any hard-coded defaults).
  *
  * Props:
  * - role: "visitors" | "exhibitors" | "partners" | "speakers" | "awardees" (optional)
  * - value: current selected value
- * - onChange(value, meta) : called when a category is selected. meta contains { price, gst, total, label }
- * - categories: optional override array of category objects (see default format)
+ * - onChange(value, meta) : called when a category is selected. meta contains { price, gstRate, gstAmount, total, label }
+ * - categories: optional override array of category objects - if supplied, will be used as source (but still merged with manager)
  *
- * Category object shape:
- * {
- *   value: "free" | "premium" | "combo" | ...,
- *   label: "Free Ticket",
- *   price: 0,            // base price (number)
- *   gst: 0.18,           // GST fraction (0.18) or 0
- *   features: [ "..." ],
- *   button: "Get Free Ticket"
- * }
+ * This component intentionally prioritizes the client-side TicketPricingManager values.
  */
 
 const DEFAULT_CATEGORIES_BY_ROLE = {
@@ -40,22 +38,126 @@ const DEFAULT_CATEGORIES_BY_ROLE = {
   ]
 };
 
-function formatCurrency(n) {
-  if (typeof n !== "number") n = Number(n) || 0;
-  return `₹${n.toLocaleString("en-IN")}`;
+const LOCAL_STORAGE_KEY = "ticket_categories_local_v1";
+
+function safeNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }
 
-export default function TicketCategorySelector({ role = "visitors", value, onChange = () => {}, categories }) {
-  const opts = Array.isArray(categories) ? categories : (DEFAULT_CATEGORIES_BY_ROLE[role] || DEFAULT_CATEGORIES_BY_ROLE.visitors);
+function formatCurrency(n) {
+  const num = Number(n) || 0;
+  return `₹${num.toLocaleString("en-IN")}`;
+}
 
+/* Read categories mapping from localStorage and normalize */
+function readCategoriesFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+/* Normalize an array of category objects to canonical shape */
+function normalizeCategoriesArray(arr, fallback = []) {
+  if (!Array.isArray(arr)) return fallback;
+  return arr.map((c, i) => ({
+    value: (c && (c.value || c.key)) ? String(c.value || c.key) : `cat-${i}`,
+    label: (c && c.label) ? String(c.label) : String(c.value || c.key || `Category ${i+1}`),
+    price: safeNumber(c && (c.price ?? c.amount) ? (c.price ?? c.amount) : 0),
+    gst: safeNumber(c && (c.gst ?? c.tax) ? (c.gst ?? c.tax) : 0),
+    features: Array.isArray(c && c.features) ? c.features : (c && c.features ? [String(c.features)] : []),
+    button: (c && c.button) ? String(c.button) : "Select"
+  }));
+}
+
+/* Merge manager categories with a provided override: override takes precedence if provided */
+function resolveCategories(role, overrideCategories) {
+  // priority: overrideCategories (prop) -> localStorage -> defaults
+  if (Array.isArray(overrideCategories) && overrideCategories.length) {
+    return normalizeCategoriesArray(overrideCategories, DEFAULT_CATEGORIES_BY_ROLE[role] || DEFAULT_CATEGORIES_BY_ROLE.visitors);
+  }
+  const local = readCategoriesFromLocalStorage();
+  if (local && local[role] && Array.isArray(local[role]) && local[role].length) {
+    return normalizeCategoriesArray(local[role], DEFAULT_CATEGORIES_BY_ROLE[role] || DEFAULT_CATEGORIES_BY_ROLE.visitors);
+  }
+  return normalizeCategoriesArray(DEFAULT_CATEGORIES_BY_ROLE[role] || DEFAULT_CATEGORIES_BY_ROLE.visitors, DEFAULT_CATEGORIES_BY_ROLE[role] || DEFAULT_CATEGORIES_BY_ROLE.visitors);
+}
+
+/* Find a category by value (case-insensitive) in the provided lists */
+function findCategoryByValue(value, categories) {
+  if (!value) return null;
+  const v = String(value).toLowerCase();
+  return (categories || []).find(c => String(c.value).toLowerCase() === v) || null;
+}
+
+/* Best-effort fallback mapping for common aliases */
+function fallbackCategoryMeta(value, role) {
+  if (!value) return { price: 0, gst: 0, label: value || "" };
+  const v = String(value).toLowerCase();
+  // Use role-specific fallbacks
+  if (v.includes("combo")) return { price: 5000, gst: 0.18, label: "Combo" };
+  if (v.includes("premium")) {
+    if (role === "partners") return { price: 15000, gst: 0.18, label: "Premium" };
+    if (role === "exhibitors") return { price: 5000, gst: 0.18, label: "Premium" };
+    return { price: 2500, gst: 0.18, label: "Premium" };
+  }
+  if (v.includes("free") || v.includes("general") || v === "0") return { price: 0, gst: 0, label: "Free" };
+  if (v.includes("vip")) return { price: 7500, gst: 0.18, label: "VIP" };
+  // default
+  return { price: 2500, gst: 0.18, label: String(value) };
+}
+
+export default function TicketCategorySelector({ role = "visitors", value, onChange = () => {}, categories: categoriesProp }) {
+  const [opts, setOpts] = useState(() => resolveCategories(role, categoriesProp));
+
+  // When role or categoriesProp changes, re-resolve options
+  useEffect(() => {
+    setOpts(resolveCategories(role, categoriesProp));
+  }, [role, categoriesProp]);
+
+  // Listen for storage updates (TicketPricingManager may save to localStorage)
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === LOCAL_STORAGE_KEY) {
+        setOpts(resolveCategories(role, categoriesProp));
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [role, categoriesProp]);
+
+  // When user selects, derive meta from manager-backed opts first; fallback if missing
   const handleSelect = (opt) => {
-    const price = Number(opt.price || 0);
-    const gstRate = Number(opt.gst || 0);
-    const gstAmount = Math.round(price * gstRate);
-    const total = price + gstAmount;
-    onChange(opt.value, { price, gstRate, gstAmount, total, label: opt.label });
+    // opt may be an object from current opts; ensure we derive authoritative meta:
+    const allOpts = resolveCategories(role, categoriesProp);
+    // find by value in manager list (case-insensitive)
+    const matched = findCategoryByValue(opt.value, allOpts) || null;
+    let price, gstRate, gstAmount, total, label;
+    if (matched) {
+      price = safeNumber(matched.price);
+      gstRate = safeNumber(matched.gst);
+      gstAmount = Math.round(price * gstRate);
+      total = price + gstAmount;
+      label = matched.label || opt.label || String(opt.value);
+    } else {
+      // fallback heuristics
+      const fb = fallbackCategoryMeta(opt.value, role);
+      price = safeNumber(fb.price);
+      gstRate = safeNumber(fb.gst);
+      gstAmount = Math.round(price * gstRate);
+      total = price + gstAmount;
+      label = fb.label || opt.label || String(opt.value);
+    }
+    onChange(opt.value, { price, gstRate, gstAmount, total, label });
   };
 
+  // Render using opts (manager-backed)
   return (
     <div className="flex flex-wrap justify-center gap-6 py-8 bg-white">
       {opts.map(opt => {

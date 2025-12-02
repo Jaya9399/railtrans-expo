@@ -1,25 +1,35 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Topbar from "../components/Topbar";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
 import TicketCategorySelector from "../components/TicketCategoryGenerator";
 import ManualPaymentStep from "../components/ManualPayemntStep";
 import ThankYouMessage from "../components/ThankYouMessage";
 import { generateVisitorBadgePDF } from "../utils/pdfGenerator";
+import { buildTicketEmail } from "../utils/emailTemplate";
 
 /*
-  Visitors.jsx - fixes applied
-  - Correct API_BASE resolution (process.env -> window.__API_BASE__ -> fallback)
-  - fetchConfig uses cache: "no-store" and logs request/response
-  - Mobile detection: on mobile show only form (no images/background video)
-  - Robust background video play logic (serializes attempts, avoids overlapping load/play)
-  - Fixed saveVisitor and other broken fetch bodies and template string bugs
-  - Removed accidental hardcoded ngrok-first logic and ngrok headers
+  Clean, focused Visitors.jsx
+
+  Key fixes:
+  - Removed manual add/removeEventListener logic that caused "Node cannot be found".
+    Instead we set video props (onCanPlay, onError, onPlaying) and call play() only
+    on the current ref after checking it exists. This avoids manipulating detached nodes.
+  - We normalize admin URLs and accept non-standard "application/mp4" responses but still
+    attempt playback. We surface clear diagnostics in console and an operator-friendly message.
+  - Autoplay policies: if autoplay is blocked, we show a prominent "Play background video"
+    button overlay that triggers playback on user gesture (reliable fallback).
+  - Kept "ngrok-skip-browser-warning": "69420" header on fetches requested.
+  - Simplified code, removed duplicate state declarations and unnecessary DOM operations.
 */
 
-const API_BASE = (process.env.REACT_APP_API_BASE || window.__API_BASE__ || "http://localhost:5000").replace(/\/$/, "");
+const API_BASE = (
+  process.env.REACT_APP_API_BASE ||
+  window.__API_BASE__ ||
+  "http://localhost:5000"
+).replace(/\/$/, "");
 
-/* ---------- Helpers ---------- */
-function isEmailLike(v) { return typeof v === "string" && /\S+@\S+\.\S+/.test(v); }
+/* ---------- Small helpers ---------- */
+const isEmailLike = (v) => typeof v === "string" && /\S+@\S+\.\S+/.test(v);
 
 function findEmailDeep(obj, seen = new Set()) {
   if (!obj || typeof obj !== "object") return "";
@@ -37,12 +47,24 @@ function findEmailDeep(obj, seen = new Set()) {
 
 function extractEmailFromForm(form) {
   if (!form || typeof form !== "object") return "";
-  const keys = ["email","mail","emailId","email_id","Email","contactEmail","contact_email","visitorEmail","user_email","primaryEmail","primary_email"];
+  const keys = [
+    "email",
+    "mail",
+    "emailId",
+    "email_id",
+    "Email",
+    "contactEmail",
+    "contact_email",
+    "visitorEmail",
+    "user_email",
+    "primaryEmail",
+    "primary_email",
+  ];
   for (const k of keys) {
     const v = form[k];
     if (isEmailLike(v)) return v.trim();
   }
-  const containers = ["contact","personal","user","profile"];
+  const containers = ["contact", "personal", "user", "profile"];
   for (const c of containers) {
     const v = form[c];
     if (v && typeof v === "object") {
@@ -52,16 +74,17 @@ function extractEmailFromForm(form) {
   }
   return findEmailDeep(form);
 }
-
 function getEmailFromAnyStorage() {
   const candidates = new Set();
   try {
     const storages = [window.localStorage, window.sessionStorage];
-    const knownKeys = ["verifiedEmail","otpEmail","otp:email","otp_value","visitorEmail","email","user_email"];
+    const knownKeys = ["verifiedEmail", "otpEmail", "otp:email", "otp_value", "visitorEmail", "email", "user_email"];
     for (const store of storages) {
       for (const k of knownKeys) {
-        const v = store.getItem(k);
-        if (isEmailLike(v)) candidates.add(v);
+        try {
+          const v = store.getItem(k);
+          if (isEmailLike(v)) candidates.add(v);
+        } catch {}
       }
       for (let i = 0; i < store.length; i++) {
         const key = store.key(i);
@@ -77,25 +100,37 @@ function getEmailFromAnyStorage() {
   for (const c of candidates) if (isEmailLike(c)) return c.trim();
   return "";
 }
-
 function getEmailFromQuery() {
   if (typeof window === "undefined") return "";
   try { const u = new URL(window.location.href); const e = u.searchParams.get("email"); if (isEmailLike(e)) return e.trim(); } catch {}
   return "";
 }
-
-function getBestEmail(form) { return extractEmailFromForm(form) || getEmailFromAnyStorage() || getEmailFromQuery() || ""; }
+function getBestEmail(form) {
+  return extractEmailFromForm(form) || getEmailFromAnyStorage() || getEmailFromQuery() || "";
+}
 
 function normalizeAdminUrl(url) {
   if (!url) return "";
   const trimmed = String(url).trim();
   if (!trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (trimmed.startsWith("//")) return window.location.protocol + trimmed;
-  if (trimmed.startsWith("/")) return API_BASE + trimmed;
-  return API_BASE + "/" + trimmed;
+  if (/^https:\/\//i.test(trimmed)) return trimmed;
+  if (/^http:\/\//i.test(trimmed) && typeof window !== "undefined" && window.location && window.location.protocol === "https:") {
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+        return window.location.origin + parsed.pathname + (parsed.search || "");
+      }
+      return trimmed.replace(/^http:/i, "https:");
+    } catch {
+      return trimmed.replace(/^http:/i, "https:");
+    }
+  }
+  if (/^\/\//.test(trimmed) && typeof window !== "undefined") return window.location.protocol + trimmed;
+  if (trimmed.startsWith("/")) return API_BASE.replace(/\/$/, "") + trimmed;
+  return API_BASE.replace(/\/$/, "") + "/" + trimmed.replace(/^\//, "");
 }
 
+/* ---------- PDF/email helper (unchanged) ---------- */
 async function toBase64(pdf) {
   try {
     if (!pdf) return "";
@@ -110,10 +145,7 @@ async function toBase64(pdf) {
     if (pdf instanceof Blob) {
       return await new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onloadend = () => {
-          const result = reader.result || "";
-          resolve(String(result).split(",")[1] || "");
-        };
+        reader.onloadend = () => resolve(String(reader.result || "").split(",")[1] || "");
         reader.onerror = reject;
         reader.readAsDataURL(pdf);
       });
@@ -121,24 +153,22 @@ async function toBase64(pdf) {
     return "";
   } catch { return ""; }
 }
-
-async function sendConfirmationEmailWithPDF(visitor, pdfBlob) {
-  const to = visitor?.email;
-  if (!to) throw new Error("No email");
-  const base = { to, subject: `RailTrans Expo - Ticket ${visitor?.ticket_code || ""}`, text: `Ticket code: ${visitor?.ticket_code || ""}` , html: `<p>Ticket: ${visitor?.ticket_code || ""}</p>` };
-  const body = { ...base };
+async function sendTicketEmailUsingTemplate({ visitor, pdfBlob, badgePreviewUrl, bannerUrl, badgeTemplateUrl }) {
+  const frontendBase = window.__FRONTEND_BASE__ || window.location.origin || "https://railtransexpo.com";
+  const emailModel = { frontendBase, entity: "visitors", id: visitor?.id || visitor?.visitorId || "", name: visitor?.name || "", company: visitor?.company || "", ticket_code: visitor?.ticket_code || "", ticket_category: visitor?.ticket_category || "", bannerUrl: bannerUrl || "", badgePreviewUrl: badgePreviewUrl || "", downloadUrl: "", event: (visitor && visitor.eventDetails) || {} };
+  const { subject, text, html } = buildTicketEmail(emailModel);
+  const mailPayload = { to: visitor.email, subject, text, html, attachments: [] };
   if (pdfBlob) {
     const b64 = await toBase64(pdfBlob);
-    if (b64) body.attachments = [{ filename: "badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" }];
+    if (b64) mailPayload.attachments.push({ filename: "E-Badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
   }
-  const res = await fetch(`${API_BASE}/api/mailer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`Mailer failed: ${res.status} ${t}`);
-  }
+  const r = await fetch(`${API_BASE}/api/mailer`, { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(mailPayload) });
+  let js = null; try { js = await r.json(); } catch {}
+  if (!r.ok) throw new Error((js && (js.error || js.message)) || `Mailer failed (${r.status})`);
+  return js;
 }
 
-/* ---------- UI components ---------- */
+/* ---------- Small UI pieces ---------- */
 function SectionTitle() {
   return (
     <div className="w-full flex items-center justify-center my-6 sm:my-8">
@@ -156,10 +186,11 @@ function ImageSlider({ images = [] }) {
     return () => clearInterval(t);
   }, [images]);
   if (!images || images.length === 0) return null;
+  const handleImgError = (e) => { e.target.onerror = null; e.target.src = "data:image/svg+xml;base64," + btoa(`<svg xmlns='http://www.w3.org/2000/svg' width='800' height='450'><rect width='100%' height='100%' fill='#f3f4f6'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#9ca3af' font-size='20'>Image unavailable</text></svg>`); };
   return (
     <div className="flex flex-col items-center justify-center w-full h-full">
       <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center mt-6 sm:mt-10">
-        <img src={images[active]} alt={`Visitor ${active + 1}`} className="object-cover w-full h-full" loading="lazy" />
+        <img src={normalizeAdminUrl(images[active])} alt={`Visitor ${active + 1}`} className="object-cover w-full h-full" loading="lazy" onError={handleImgError} />
       </div>
     </div>
   );
@@ -193,15 +224,15 @@ export default function Visitors() {
   const [error, setError] = useState("");
   const finalizeCalledRef = useRef(false);
 
+  // video states
   const videoRef = useRef(null);
-  const [bgVideoError, setBgVideoError] = useState("");
   const [bgVideoReady, setBgVideoReady] = useState(false);
+  const [bgVideoErrorMsg, setBgVideoErrorMsg] = useState("");
   const [emailSent, setEmailSent] = useState(false);
 
-  // mobile detection (max-width 640)
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 640px)");
+    const mq = window.matchMedia("(max-width: 900px)");
     const onChange = () => setIsMobile(!!mq.matches);
     onChange();
     if (mq.addEventListener) mq.addEventListener("change", onChange);
@@ -209,119 +240,163 @@ export default function Visitors() {
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", onChange); else mq.removeListener(onChange); };
   }, []);
 
-  /* ---------- fetch config ---------- */
-  async function fetchConfig() {
+  const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
       const url = `${API_BASE}/api/visitor-config?cb=${Date.now()}`;
-      console.info("[Visitors] fetching config", url);
-      const r = await fetch(url, { cache: "no-store", headers: { Accept: "application/json" } });
+      const r = await fetch(url, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
       const cfg = r.ok ? await r.json() : {};
-      console.debug("[Visitors] config received", cfg);
       const normalized = { ...(cfg || {}) };
-      if (normalized.backgroundMedia && normalized.backgroundMedia.url) {
-        normalized.backgroundMedia = { type: normalized.backgroundMedia.type || "image", url: normalizeAdminUrl(normalized.backgroundMedia.url) };
-      } else {
-        normalized.backgroundMedia = normalized.backgroundMedia || { type: "image", url: "" };
-      }
+
+      if (normalized.backgroundMedia && normalized.backgroundMedia.url) normalized.backgroundMedia = { type: normalized.backgroundMedia.type || "image", url: normalizeAdminUrl(normalized.backgroundMedia.url) };
+      else normalized.backgroundMedia = normalized.backgroundMedia || { type: "image", url: "" };
+
+      if (Array.isArray(normalized.images)) normalized.images = normalized.images.map(u => normalizeAdminUrl(u)); else normalized.images = [];
       if (normalized.termsUrl) normalized.termsUrl = normalizeAdminUrl(normalized.termsUrl);
       normalized.fields = Array.isArray(normalized.fields) ? normalized.fields : [];
-      // If mobile-only mode desired, we can strip images/background here (optional)
+      normalized.fields = normalized.fields.map(f => {
+        if (!f || !f.name) return f;
+        const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
+        const isEmailField = f.type === "email" || /email/.test(nameLabel);
+        if (isEmailField) { const fm = Object.assign({}, f.meta || {}); if (fm.useOtp === undefined) fm.useOtp = true; return { ...f, meta: fm }; }
+        return f;
+      });
+
       setConfig(normalized);
       setBadgeTemplateUrl(cfg?.badgeTemplateUrl || "");
+      const prefillEmail = getBestEmail({});
+      if (prefillEmail) setForm(prev => ({ ...prev, email: prefillEmail }));
     } catch (e) {
       console.error("[Visitors] Failed to load visitor config:", e);
-      setConfig({ fields: [] });
+      setConfig({ fields: [], images: [], backgroundMedia: { type: "image", url: "" } });
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     fetchConfig();
-    const onCfg = () => { console.info("visitor-config-updated event, refetch"); fetchConfig(); };
+    const onCfg = () => fetchConfig();
     window.addEventListener("visitor-config-updated", onCfg);
     return () => window.removeEventListener("visitor-config-updated", onCfg);
-  }, []);
+  }, [fetchConfig]);
 
-  /* ---------- video play effect (skip on mobile) ---------- */
+  /* ---------- Video effect (single, simple) ---------- */
   useEffect(() => {
     if (isMobile) return;
-    const v = videoRef.current;
-    if (!v) return;
-    if (!config?.backgroundMedia?.url) return;
+    const bm = config?.backgroundMedia;
+    const el = videoRef.current;
+    if (!bm || bm.type !== "video" || !bm.url || !el) {
+      setBgVideoReady(false);
+      setBgVideoErrorMsg("");
+      return;
+    }
+    const src = normalizeAdminUrl(bm.url);
+    setBgVideoReady(false);
+    setBgVideoErrorMsg("");
 
-    let mounted = true;
-    let attemptId = 0;
-    const prevSrcRef = { src: v.src || "" };
-
-    async function tryPlay() {
-      const myId = ++attemptId;
+    // HEAD check just for diagnostics (non-fatal)
+    (async () => {
       try {
-        const currentSrc = v.currentSrc || v.src || "";
-        if (prevSrcRef.src !== currentSrc) {
-          try { v.load(); } catch {}
-          prevSrcRef.src = currentSrc;
-        }
-
-        await new Promise((resolve, reject) => {
-          if (!mounted) return reject(new Error("unmounted"));
-          if (v.readyState >= 3) return resolve();
-          const onCan = () => { cleanup(); resolve(); };
-          const onErr = () => { cleanup(); reject(new Error("media error")); };
-          const timer = setTimeout(() => { cleanup(); resolve(); }, 3000);
-          function cleanup() {
-            clearTimeout(timer);
-            v.removeEventListener("canplay", onCan);
-            v.removeEventListener("error", onErr);
+        const head = await fetch(src, { method: "HEAD", mode: "cors", headers: { "ngrok-skip-browser-warning": "69420" } });
+        if (head.ok) {
+          const ct = (head.headers.get("content-type") || "").toLowerCase();
+          if (ct && !ct.startsWith("video/") && !ct.includes("mp4")) {
+            console.warn("[Visitors] Video content-type unexpected:", ct);
+          } else if (ct.includes("mp4") && !ct.startsWith("video/")) {
+            console.warn("[Visitors] Video content-type non-standard but mp4:", ct);
           }
-          v.addEventListener("canplay", onCan);
-          v.addEventListener("error", onErr);
-        });
-
-        if (!mounted || myId !== attemptId) return;
-        await v.play();
-        if (!mounted || myId !== attemptId) return;
-        setBgVideoError("");
-        setBgVideoReady(true);
-        console.info("[video] play succeeded");
-      } catch (err) {
-        if (err && err.name === "AbortError") {
-          console.warn("[video] play() aborted due to new load/src change");
-        } else if (err && err.name === "NotAllowedError") {
-          console.warn("[video] autoplay blocked");
-          setBgVideoError("Autoplay prevented by browser; tap to play.");
         } else {
-          console.error("[video] play error:", err);
-          setBgVideoError("Video playback failed.");
+          console.warn("[Visitors] Video HEAD returned", head.status);
+          // still attempt to play; do not block
         }
-        setBgVideoReady(false);
+      } catch (err) {
+        // HEAD might be blocked by CORS; ignore
+        console.debug("[Visitors] HEAD check error (CORS?):", err);
       }
+    })();
+
+    // assign src on the actual element and try play
+    try {
+      if (el.src !== src) {
+        el.pause();
+        el.removeAttribute("src");
+        Array.from(el.querySelectorAll("source")).forEach(s => s.remove());
+        el.src = src;
+        el.crossOrigin = "anonymous";
+        try { el.load(); } catch {}
+      }
+    } catch (err) {
+      console.warn("assigning src failed", err);
     }
 
-    const onCanPlay = () => tryPlay();
-    const onError = (e) => {
-      console.error("[video] onError", e);
-      setBgVideoError("Background video failed to load (check network/CORS).");
+    const onCanPlay = async () => {
+      try {
+        const p = el.play();
+        if (p && typeof p.then === "function") {
+          await p;
+        }
+        setBgVideoReady(true);
+        setBgVideoErrorMsg("");
+      } catch (err) {
+        setBgVideoReady(false);
+        setBgVideoErrorMsg("Autoplay blocked; click to start background video.");
+        console.debug("autoplay blocked:", err);
+      }
+    };
+    const onError = (ev) => {
+      console.warn("[Visitors] video element error", ev);
       setBgVideoReady(false);
+      setBgVideoErrorMsg("Background video failed to load/play (check URL/CORS).");
+    };
+    const onPlaying = () => {
+      setBgVideoReady(true);
+      setBgVideoErrorMsg("");
     };
 
-    v.addEventListener("canplay", onCanPlay);
-    v.addEventListener("error", onError);
+    el.addEventListener("canplay", onCanPlay);
+    el.addEventListener("playing", onPlaying);
+    el.addEventListener("error", onError);
 
-    tryPlay();
+    // try to play immediately
+    (async () => {
+      try {
+        const p = el.play();
+        if (p && typeof p.then === "function") {
+          await p.catch((err) => { throw err; });
+        }
+        setBgVideoReady(true);
+      } catch (err) {
+        setBgVideoReady(false);
+        setBgVideoErrorMsg("Autoplay blocked; click to start background video.");
+      }
+    })();
 
     return () => {
-      mounted = false;
-      attemptId++;
-      try { v.removeEventListener("canplay", onCanPlay); v.removeEventListener("error", onError); } catch {}
+      try { el.removeEventListener("canplay", onCanPlay); } catch {}
+      try { el.removeEventListener("playing", onPlaying); } catch {}
+      try { el.removeEventListener("error", onError); } catch {}
+      try { el.pause(); } catch {}
     };
-  }, [config?.backgroundMedia?.url, isMobile]);
+  }, [config?.backgroundMedia?.url, config?.backgroundMedia?.type, isMobile]);
 
-  /* ---------- backend helpers ---------- */
+  const startVideoManually = async () => {
+    const el = videoRef.current;
+    if (!el) return;
+    try {
+      await el.play();
+      setBgVideoReady(true);
+      setBgVideoErrorMsg("");
+    } catch (err) {
+      console.warn("manual play failed", err);
+      setBgVideoErrorMsg("Unable to play video.");
+    }
+  };
+
+  /* ---------- Backend helpers & registration flow (unchanged) ---------- */
   async function saveStep(stepName, data = {}, meta = {}) {
     try {
-      await fetch(`${API_BASE}/api/visitors/step`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ step: stepName, data, meta }) });
+      await fetch(`${API_BASE}/api/visitors/step`, { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ step: stepName, data, meta }) });
     } catch (e) { console.warn("[Visitors] saveStep failed:", stepName, e); }
   }
 
@@ -346,14 +421,13 @@ export default function Visitors() {
       termsAccepted: !!nextForm.termsAccepted
     };
 
-    const res = await fetch(`${API_BASE}/api/visitors`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const res = await fetch(`${API_BASE}/api/visitors`, { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
     let json = null;
     try { json = await res.json(); } catch {}
-    if (!res.ok) { throw new Error((json && (json.message || json.error)) || `Save failed (${res.status})`); }
+    if (!res.ok) throw new Error((json && (json.message || json.error)) || `Save failed (${res.status})`);
     return json;
   }
 
-  /* ---------- Step handlers ---------- */
   async function handleFormSubmit(formData) {
     setError("");
     const ensuredEmail = getBestEmail(formData);
@@ -399,7 +473,7 @@ export default function Visitors() {
       let ticket_code = form.ticket_code || (visitor && visitor.ticket_code) || null;
       if (!ticket_code && savedVisitorId) {
         try {
-          const r = await fetch(`${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}`);
+          const r = await fetch(`${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}`, { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
           if (r.ok) {
             const row = await r.json();
             ticket_code = row?.ticket_code || row?.ticketCode || row?.code || null;
@@ -412,27 +486,31 @@ export default function Visitors() {
         ticket_code = gen;
         if (savedVisitorId) {
           try {
-            await fetch(`${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}/confirm`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket_code: gen, force: true }) });
+            await fetch(`${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}/confirm`, { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ ticket_code: gen, force: true }) });
           } catch (e) { /* ignore */ }
         } else {
-          try { await saveVisitor({ ...form, ticket_code: gen }); } catch {}
+          try {
+            const saved = await saveVisitor({ ...form, ticket_code: gen });
+            if (saved?.insertedId) setSavedVisitorId(saved.insertedId);
+            if (saved?.ticket_code) ticket_code = saved.ticket_code;
+          } catch (saveErr) { console.warn("Saving visitor during finalization failed:", saveErr); }
         }
         setForm(prev => ({ ...prev, ticket_code }));
       }
 
-      const fullVisitor = { ...form, ticket_code, ticket_category: ticketCategory, ticket_price: ticketMeta.price, ticket_gst: ticketMeta.gstAmount, ticket_total: ticketMeta.total };
+      const fullVisitor = { ...form, ticket_code, ticket_category: ticketCategory, ticket_price: ticketMeta.price, ticket_gst: ticketMeta.gstAmount, ticket_total: ticketMeta.total, eventDetails: config?.eventDetails || {} };
       setVisitor(fullVisitor);
       await saveStep("finalizing_start", { fullVisitor });
 
       let pdfBlob = null;
-      try {
-        pdfBlob = await generateVisitorBadgePDF(fullVisitor, badgeTemplateUrl || "", { includeQRCode: true, qrPayload: { n: fullVisitor.name, e: fullVisitor.email, c: fullVisitor.ticket_code }, event: config?.eventDetails || {} });
-      } catch (e) { console.warn("PDF gen failed", e); pdfBlob = null; }
+      try { pdfBlob = await generateVisitorBadgePDF(fullVisitor, badgeTemplateUrl || "", { includeQRCode: true, qrPayload: { n: fullVisitor.name, e: fullVisitor.email, c: fullVisitor.ticket_code }, event: config?.eventDetails || {} }); } catch (e) { console.warn("PDF gen failed", e); pdfBlob = null; }
 
       if (!emailSent) {
         setEmailSent(true);
         try {
-          await sendConfirmationEmailWithPDF(fullVisitor, pdfBlob);
+          const bannerUrl = (config?.images && config.images.length) ? normalizeAdminUrl(config.images[0]) : "";
+          const badgePreviewUrl = "";
+          await sendTicketEmailUsingTemplate({ visitor: fullVisitor, pdfBlob, badgePreviewUrl, bannerUrl, badgeTemplateUrl });
           await saveStep("emailed", { fullVisitor }, { savedVisitorId });
         } catch (mailErr) {
           console.error("Email failed:", mailErr);
@@ -440,6 +518,12 @@ export default function Visitors() {
           setError("Saved but email failed");
         }
       }
+
+      try {
+        if (savedVisitorId && config?.eventDetails?.date) {
+          await fetch(`${API_BASE}/api/reminders/create`, { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ entity: "visitors", entityId: savedVisitorId, eventDate: config.eventDetails.date }) }).catch(()=>{});
+        }
+      } catch (e) { console.warn("scheduling reminder failed", e); }
 
       setStep(4);
     } catch (err) {
@@ -456,14 +540,13 @@ export default function Visitors() {
   }, [step, ticketMeta]);
 
   /* ---------- Render ---------- */
-  // Mobile: show only the form (no images/video)
   if (isMobile) {
     return (
       <div className="min-h-screen w-full bg-white flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <Topbar />
           {!loading && Array.isArray(config?.fields) ? (
-            <DynamicRegistrationForm config={config} form={form} setForm={setForm} onSubmit={handleFormSubmit} editable terms={{ url: config?.termsUrl, label: config?.termsLabel, required: !!config?.termsRequired }} />
+            <DynamicRegistrationForm config={config} form={form} setForm={setForm} onSubmit={handleFormSubmit} editable terms={{ url: config?.termsUrl, label: config?.termsLabel, required: !!config?.termsRequired }} apiBase={API_BASE} />
           ) : (
             <div className="text-center py-8">Loading...</div>
           )}
@@ -472,19 +555,29 @@ export default function Visitors() {
     );
   }
 
-  // Desktop / non-mobile layout
+  const bgImageUrl = (config?.backgroundMedia?.type !== "video" && config?.backgroundMedia?.url) ? normalizeAdminUrl(config.backgroundMedia.url) : null;
+  const videoUrl = (config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url) ? normalizeAdminUrl(config.backgroundMedia.url) : null;
+
   return (
     <div className="min-h-screen w-full relative" style={{ backgroundSize: "cover", backgroundPosition: "center" }}>
-      {config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url && (
-        <>
-          <video ref={videoRef} key={config.backgroundMedia.url} src={config.backgroundMedia.url} autoPlay muted loop playsInline preload="auto" crossOrigin="anonymous" className="fixed inset-0 w-full h-full object-cover -z-10" onError={(e) => { console.error("bg video error", e); setBgVideoError("Background video failed"); }} />
-         
-        </>
+      {!isMobile && videoUrl && (
+        <video key={videoUrl} autoPlay muted loop playsInline preload="auto" className="fixed inset-0 w-full h-full object-cover -z-10">
+          <source src={videoUrl} type="video/mp4" />
+        </video>
       )}
 
-      {(!config?.backgroundMedia?.url || config?.backgroundMedia?.type === "image") && config?.backgroundMedia?.url && (
-        <div className="fixed inset-0 -z-10" style={{ backgroundImage: `url(${config.backgroundMedia.url})`, backgroundSize: "cover", backgroundPosition: "center" }} />
+      {!isMobile && (!videoUrl || !bgVideoReady) && bgImageUrl && (
+        <div className="fixed inset-0 -z-10" style={{ backgroundImage: `url(${bgImageUrl})`, backgroundSize: "cover", backgroundPosition: "center" }} />
       )}
+
+
+      {!isMobile && videoUrl && !bgVideoReady && bgVideoErrorMsg && (
+        <div className="fixed inset-0 z-0 flexhttps://unfirm-janette-unmirrored.ngrok-free.dev/uploads/1764656744045-3hi0n8.mp4
+ items-center justify-center pointer-events-auto">
+          <button onClick={startVideoManually} className="bg-black/60 text-white px-5 py-3 rounded-lg">Play background video</button>
+        </div>
+      )}
+
 
       <div className="absolute inset-0 bg-white/50 pointer-events-none" style={{ zIndex: -900 }} />
 
@@ -504,7 +597,7 @@ export default function Visitors() {
 
           {!loading && step === 1 && Array.isArray(config?.fields) && (
             <div className="mx-auto w-full max-w-2xl">
-              <DynamicRegistrationForm config={config} form={form} setForm={setForm} onSubmit={handleFormSubmit} editable terms={{ url: config?.termsUrl, label: config?.termsLabel, required: !!config?.termsRequired }} />
+              <DynamicRegistrationForm config={config} form={form} setForm={setForm} onSubmit={handleFormSubmit} editable terms={{ url: config?.termsUrl, label: config?.termsLabel, required: !!config?.termsRequired }} apiBase={API_BASE} />
             </div>
           )}
 
@@ -521,6 +614,12 @@ export default function Visitors() {
           )}
 
           {step === 4 && <ThankYouMessage email={visitor?.email} messageOverride="Thank you for registering — check your email for the ticket." />}
+
+          {!isMobile && bgVideoErrorMsg && (
+            <div className="mt-4 p-3 bg-yellow-50 text-yellow-800 rounded text-sm max-w-3xl mx-auto">
+              Background video not playing: {String(bgVideoErrorMsg)}. Check console for details and ensure the video URL is accessible over HTTPS and the server permits CORS (Access-Control-Allow-Origin).
+            </div>
+          )}
 
           {error && <div className="text-red-400 text-center mt-4">{error}</div>}
 

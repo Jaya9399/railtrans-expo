@@ -5,15 +5,19 @@ import TicketCategorySelector from "../components/TicketCategoryGenerator";
 import ManualPaymentStep from "../components/ManualPayemntStep";
 import ThankYouMessage from "../components/ThankYouMessage";
 import { generateVisitorBadgePDF } from "../utils/pdfGenerator";
+import { buildTicketEmail } from "../utils/emailTemplate";
 
 /*
- Speakers.jsx
- - Loads config from backend
- - Supports backgroundMedia (image or video) coming from backend
- - Shows video on desktop (hidden on mobile)
- - Shows a rotating image slider if config.images is present; slides automatically every few seconds
- - Passes backend-provided terms (termsUrl/termsText/termsLabel/termsRequired) to DynamicRegistrationForm
- - Strips any accept_terms / "I agree" checkbox fields from config.fields before rendering
+  Speakers.jsx (final fixes)
+
+  - Restored ImageSlider & EventDetailsBlock
+  - Ensures payment (checkout) and manual-proof flows both finalize the speaker record
+  - After successful save:
+    - creates ticket (best-effort)
+    - generates PDF badge (best-effort)
+    - sends templated email using buildTicketEmail and shows ack status
+    - schedules reminder via /api/reminders/create and surfaces scheduling result
+  - Improved error handling and explicit ack/reminder UI state
 */
 
 function getApiBaseFromEnvOrWindow() {
@@ -39,17 +43,10 @@ function normalizeAdminUrl(url) {
   return apiUrl(trimmed);
 }
 
-const API_BASE = getApiBaseFromEnvOrWindow();
-
 /* helpers */
 function isEmailLike(v) {
   return typeof v === "string" && /\S+@\S+\.\S+/.test(v);
 }
-const isFreeCategory = (val) => {
-  if (val == null) return false;
-  const s = typeof val === "string" ? val.trim().toLowerCase() : val;
-  return s === "free" || s === "free ticket" || s === "general" || s === "0" || s === 0;
-};
 function ticketPriceForCategory(cat) {
   if (!cat) return 0;
   const c = String(cat).toLowerCase();
@@ -81,15 +78,39 @@ async function toBase64(pdf) {
   }
   return "";
 }
+async function postJSON(url, body) {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(body) });
+  let json = null;
+  try { json = await res.json(); } catch {}
+  return { ok: res.ok, status: res.status, body: json };
+}
 async function sendMailPayload(payload) {
   const res = await fetch(apiUrl("/api/mailer"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
     body: JSON.stringify(payload),
   });
   let body = null;
   try { body = await res.json(); } catch {}
   return { ok: res.ok, status: res.status, body };
+}
+async function uploadAsset(file) {
+  if (!file) return "";
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(apiUrl("/api/upload-asset"), { method: "POST", body: fd });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      console.warn("uploadAsset failed", txt);
+      return "";
+    }
+    const js = await r.json().catch(() => null);
+    return js?.imageUrl || js?.fileUrl || js?.url || js?.path || "";
+  } catch (e) {
+    console.warn("uploadAsset error", e);
+    return "";
+  }
 }
 
 /* UI helpers */
@@ -100,20 +121,15 @@ function EventDetailsBlock({ event }) {
   const logoDark = "#196e87";
   return (
     <div className="flex flex-col items-center justify-center h-full w-full mt-6">
-      <div className="font-extrabold text-3xl sm:text-5xl mb-3 text-center" style={{ background: logoGradient, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", letterSpacing: "0.03em" }}>
+      <div className="font-extrabold text-3xl sm:text-5xl mb-3 text-center" style={{ background: logoGradient, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
         {event?.name || "Event Name"}
       </div>
-      <div className="text-xl sm:text-2xl font-bold mb-1 text-center" style={{ color: logoBlue }}>
-        {event?.date || "Event Date"}
-      </div>
-      <div className="text-base sm:text-xl font-semibold text-center" style={{ color: logoDark }}>
-        {event?.venue || "Event Venue"}
-      </div>
+      <div className="text-xl sm:text-2xl font-bold mb-1 text-center" style={{ color: logoBlue }}>{event?.date || "Event Date"}</div>
+      <div className="text-base sm:text-xl font-semibold text-center" style={{ color: logoDark }}>{event?.venue || "Event Venue"}</div>
       {event?.tagline && <div className="text-base sm:text-xl font-semibold text-center text-[#21809b] mt-2">{event.tagline}</div>}
     </div>
   );
 }
-
 function ImageSlider({ images = [], intervalMs = 3500 }) {
   const [active, setActive] = useState(0);
   useEffect(() => {
@@ -131,7 +147,47 @@ function ImageSlider({ images = [], intervalMs = 3500 }) {
   );
 }
 
-/* Main component */
+/* schedule reminder helper (improved logging + fallback) */
+async function scheduleReminder(entityId, eventDate) {
+  if (!entityId || !eventDate) return { ok: false, error: "missing" };
+  try {
+    // primary endpoint
+    const res = await fetch(apiUrl("/api/reminders/create"), { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ entity: "speakers", entityId, eventDate }) });
+    const body = await res.text().catch(() => "");
+    let parsed = null;
+    try { parsed = body ? JSON.parse(body) : null; } catch {}
+    if (res.ok) return { ok: true, status: res.status, body: parsed || body };
+    // fallback: try entity-specific endpoint
+    try {
+      const r2 = await fetch(apiUrl("/api/speakers/schedule-reminder"), { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ speakerId: entityId, eventDate }) });
+      const b2 = await r2.json().catch(() => null);
+      if (r2.ok) return { ok: true, status: r2.status, body: b2 };
+      return { ok: false, status: r2.status, body: b2 || body || "both endpoints failed" };
+    } catch (e2) {
+      return { ok: false, error: `reminders/create failed: ${res.status} ; fallback error: ${String(e2)}` };
+    }
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/* templated email helper */
+async function sendTemplatedEmail({ recipientEmail, model, pdfBlob = null }) {
+  if (!recipientEmail) return { ok: false, error: "no-recipient" };
+  try {
+    const { subject, text, html } = buildTicketEmail(model);
+    const payload = { to: recipientEmail, subject, text, html, attachments: [] };
+    if (pdfBlob) {
+      const b64 = await toBase64(pdfBlob);
+      if (b64) payload.attachments.push({ filename: "Ticket.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
+    }
+    return await postJSON(apiUrl("/api/mailer"), payload);
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/* ---------- Component ---------- */
 export default function Speakers() {
   const [config, setConfig] = useState(null);
   const [form, setForm] = useState({});
@@ -142,13 +198,22 @@ export default function Speakers() {
   const [error, setError] = useState("");
   const [speakerId, setSpeakerId] = useState(null);
   const [ticketCategory, setTicketCategory] = useState("");
+  const [ticketMeta, setTicketMeta] = useState({ price: 0, gstRate: 0, gstAmount: 0, total: 0, label: "" });
   const [txId, setTxId] = useState("");
   const [proofFile, setProofFile] = useState(null);
   const [pdfBlob, setPdfBlob] = useState(null);
   const [speaker, setSpeaker] = useState(null);
 
+  const [ackLoading, setAckLoading] = useState(false);
+  const [ackError, setAckError] = useState("");
+  const [ackResult, setAckResult] = useState(null);
+
+  const [reminderScheduled, setReminderScheduled] = useState(false);
+  const [reminderError, setReminderError] = useState("");
+
   const videoRef = useRef(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [paymentReferenceId, setPaymentReferenceId] = useState("");
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 640px)");
@@ -162,11 +227,11 @@ export default function Speakers() {
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/speaker-config?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json" } });
+      const res = await fetch(apiUrl("/api/speaker-config?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json" , "ngrok-skip-browser-warning": "69420" } });
       const cfg = res.ok ? await res.json() : {};
       const normalized = { ...(cfg || {}) };
 
-      // backgroundMedia normalization (support legacy keys)
+      // backgroundMedia normalization
       if (normalized.backgroundMedia && normalized.backgroundMedia.url) {
         normalized.backgroundMedia = { type: normalized.backgroundMedia.type || "image", url: normalizeAdminUrl(normalized.backgroundMedia.url) };
       } else {
@@ -184,7 +249,8 @@ export default function Speakers() {
       normalized.termsLabel = normalized.termsLabel || "Terms & Conditions";
       normalized.termsRequired = !!normalized.termsRequired;
       normalized.fields = Array.isArray(normalized.fields) ? normalized.fields : [];
-      // remove any accept_terms / "I agree" fields from fields array so they won't be rendered as separate checkbox
+
+      // strip accept_terms-like fields
       normalized.fields = normalized.fields.filter(f => {
         if (!f || typeof f !== "object") return false;
         const name = (f.name || "").toString().toLowerCase().replace(/\s+/g,"");
@@ -194,7 +260,21 @@ export default function Speakers() {
         return true;
       });
 
+      // ensure email fields show OTP UI
+      normalized.fields = normalized.fields.map((f) => {
+        if (!f || !f.name) return f;
+        const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
+        const isEmailField = f.type === "email" || /email/.test(nameLabel);
+        if (isEmailField) {
+          const fm = Object.assign({}, f.meta || {});
+          if (fm.useOtp === undefined) fm.useOtp = true;
+          return { ...f, meta: fm };
+        }
+        return f;
+      });
+
       normalized.images = Array.isArray(normalized.images) ? normalized.images.map(normalizeAdminUrl) : [];
+      normalized.eventDetails = typeof normalized.eventDetails === "object" && normalized.eventDetails ? normalized.eventDetails : {};
 
       setConfig(normalized);
     } catch (e) {
@@ -212,7 +292,7 @@ export default function Speakers() {
     return () => window.removeEventListener("speaker-config-updated", onCfg);
   }, [fetchConfig]);
 
-  // auto-play video on desktop (best-effort)
+  // video autoplay
   useEffect(() => {
     if (isMobile) return;
     const v = videoRef.current;
@@ -220,7 +300,6 @@ export default function Speakers() {
     let mounted = true;
     let attemptId = 0;
     const prevSrc = { src: v.src || "" };
-
     async function tryPlay() {
       const myId = ++attemptId;
       try {
@@ -238,206 +317,275 @@ export default function Speakers() {
         });
         if (!mounted || myId !== attemptId) return;
         await v.play();
-      } catch (err) {
-        // decorative only
-      }
+      } catch (err) { /* decorative only */ }
     }
-
     const onCan = () => tryPlay();
     const onErr = () => {};
     v.addEventListener("canplay", onCan);
     v.addEventListener("error", onErr);
     tryPlay();
-
     return () => { mounted = false; attemptId++; try { v.removeEventListener("canplay", onCan); v.removeEventListener("error", onErr); } catch {} };
   }, [config?.backgroundMedia?.url, isMobile]);
 
-  /* ---------- Step 1 submit ---------- */
+  /* Step 1: client-only submit */
   async function handleFormSubmit(payload) {
     setError("");
-    if (!isEmailLike(payload.email)) {
-      setError("Please enter a valid email.");
-      return;
-    }
+    if (!isEmailLike(payload.email)) { setError("Please enter a valid email."); return; }
     setSubmitting(true);
     try {
-      const toSend = { ...payload };
-      // remove any local accept_terms fields - central terms handling used instead
-      delete toSend.accept_terms;
-      delete toSend.acceptTerms;
-      delete toSend.termsAccepted;
-
-      const res = await fetch(apiUrl("/api/speakers"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(toSend),
-      });
-      const js = await res.json().catch(() => ({}));
-      if (!res.ok || !js.success) {
-        setError(js.error || "Failed to save registration.");
-        return;
-      }
-      const id = js.insertedId || js.insertId || js.id || null;
-      const serverTicket = js.ticket_code || js.ticketCode || null;
-      setSpeakerId(id);
-      setForm(prev => ({ ...toSend, ticket_code: serverTicket || prev.ticket_code || "" }));
+      setForm(payload || {});
+      const ref = (payload.email && payload.email.trim()) ? payload.email.trim() : `guest-${Date.now()}`;
+      setPaymentReferenceId(ref);
+      try { await fetch(apiUrl("/api/speakers/step"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ step: "registration_attempt", data: { form: payload } }) }); } catch {}
       setStep(2);
-    } catch (err) {
-      console.error("save speaker error", err);
-      setError("Failed to save registration. Try again.");
+    } catch (e) {
+      setError("Failed to continue. Try again.");
     } finally {
       setSubmitting(false);
     }
   }
 
-  function handleTicketSelect(cat) {
-    setTicketCategory(cat);
-    if (isFreeCategory(cat)) {
-      finalizeRegistrationAndSend(null, cat);
-    } else {
-      setStep(3);
+  /* Ticket selection */
+  function handleTicketSelect(value, meta = {}) {
+    setTicketCategory(value);
+    const price = Number(meta.price || 0);
+    const gstRate = Number(meta.gst || meta.gstRate || 0);
+    const gstAmount = Math.round(price * gstRate);
+    const total = (meta.total !== undefined) ? Number(meta.total) : price + gstAmount;
+    setTicketMeta({ price, gstRate, gstAmount, total, label: meta.label || "" });
+    if (total === 0) {
+      finalizeRegistrationAndSend(null, value, null);
+      return;
     }
+    setStep(3);
   }
 
-  async function createOrderAndOpenCheckout(price) {
+  /* Payment - checkout */
+  async function createOrderAndOpenCheckout() {
     setProcessing(true);
     setError("");
-    if (!speakerId) {
-      setError("Registration id missing. Please refresh and try again.");
+    const reference = paymentReferenceId || (form && form.email) || `guest-${Date.now()}`;
+    const amount = Number(ticketMeta.total || ticketMeta.price || ticketPriceForCategory(ticketCategory));
+    if (!amount || amount <= 0) {
+      setError("Invalid payment amount.");
       setProcessing(false);
       return;
     }
     try {
-      const payload = { amount: price, currency: "INR", description: `Speaker Ticket - ${ticketCategory}`, reference_id: String(speakerId), metadata: { ticketCategory, email: form.email } };
+      const payload = { amount, currency: "INR", description: `Speaker Ticket - ${ticketCategory}`, reference_id: String(reference), metadata: { ticketCategory, email: form.email || "" } };
       const res = await fetch(apiUrl("/api/payment/create-order"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const js = await res.json().catch(() => ({}));
+      const js = await res.json().catch(()=>({}));
       if (!res.ok || !js.success) { setError(js.error || "Failed to create payment order"); setProcessing(false); return; }
-      const checkoutUrl = js.checkoutUrl || js.checkout_url || js.raw?.checkout_url || js.raw?.payment_link;
+      const checkoutUrl = js.checkoutUrl || js.checkout_url || js.longurl || js.raw?.payment_request?.longurl;
       if (!checkoutUrl) { setError("Payment provider did not return a checkout URL."); setProcessing(false); return; }
       const w = window.open(checkoutUrl, "_blank", "noopener,noreferrer");
       if (!w) { setError("Popup blocked. Allow popups to continue payment."); setProcessing(false); return; }
 
       let attempts = 0;
-      const maxAttempts = 80;
       const poll = setInterval(async () => {
         attempts += 1;
         try {
-          const st = await fetch(apiUrl(`/api/payment/status?reference_id=${encodeURIComponent(String(speakerId))}`));
+          const st = await fetch(apiUrl(`/api/payment/status?reference_id=${encodeURIComponent(String(reference))}`));
           if (!st.ok) return;
-          const js2 = await st.json().catch(() => ({}));
+          const js2 = await st.json().catch(()=>({}));
           const status = (js2.status || "").toString().toLowerCase();
           if (["paid","captured","completed","success"].includes(status)) {
             clearInterval(poll);
             try { if (w && !w.closed) w.close(); } catch {}
-            const providerPaymentId = js2.record?.provider_payment_id || js2.record?.providerPaymentId || null;
-            setTxId(providerPaymentId || null);
-            await finalizeRegistrationAndSend(providerPaymentId || null, ticketCategory);
-          } else if (["failed","cancelled"].includes(status)) {
+            const providerPaymentId = js2.record?.provider_payment_id || js2.record?.payment_id || js2.record?.id || null;
+            setTxId(providerPaymentId || "");
+            await finalizeRegistrationAndSend(providerPaymentId || null, ticketCategory, null);
+          } else if (["failed","cancelled","void"].includes(status)) {
             clearInterval(poll);
             try { if (w && !w.closed) w.close(); } catch {}
             setError("Payment failed or cancelled. Please retry.");
             setProcessing(false);
-          } else if (attempts >= maxAttempts) {
+          } else if (attempts > 60) {
             clearInterval(poll);
-            setError("Payment not confirmed yet. If you completed payment, refresh after a moment.");
+            setError("Payment not yet confirmed. If you completed payment, submit proof or wait a bit.");
             setProcessing(false);
           }
         } catch (e) { /* ignore transient */ }
       }, 3000);
-    } catch (err) {
-      console.error("createOrderAndOpenCheckout error", err);
+    } catch (e) {
+      console.error("createOrderAndOpenCheckout error", e);
       setError("Payment initiation failed.");
       setProcessing(false);
     }
   }
 
+  /* Manual proof -> upload then finalize */
   async function onManualProofSubmit(file) {
+    setError("");
     try {
-      if (file && speakerId) {
-        const fd = new FormData();
-        fd.append("proof", file);
-        fd.append("speakerId", speakerId);
-        await fetch(apiUrl(`/api/speakers/${encodeURIComponent(String(speakerId))}/upload-proof`), { method: "POST", body: fd }).catch(() => {});
-      }
+      const proofUrl = file ? await uploadAsset(file) : "";
+      await finalizeRegistrationAndSend(txId || null, ticketCategory, proofUrl || null);
     } catch (e) {
-      console.warn("upload proof failed", e);
+      console.warn("onManualProofSubmit error", e);
+      setError("Failed to upload proof. Try again.");
     }
-    await finalizeRegistrationAndSend(txId || null, ticketCategory);
   }
 
-  async function finalizeRegistrationAndSend(providerTxId = null, chosenCategory = null) {
+  /* Finalize: save speaker, ticket, pdf, email, schedule reminder */
+  async function finalizeRegistrationAndSend(providerTxId = null, chosenCategory = null, paymentProofUrl = null) {
+    if (processing) return;
     setProcessing(true);
     setError("");
+    setAckError("");
+    setAckResult(null);
+    setReminderError("");
+    setReminderScheduled(false);
+
     try {
       const name = form.name || `${form.firstName || ""} ${form.lastName || ""}`.trim() || "Speaker";
       const chosen = chosenCategory || ticketCategory || "free";
 
-      let ticket_code = form.ticket_code || speaker?.ticket_code || null;
+      const payload = {
+        ...form,
+        name,
+        ticket_category: chosen,
+        ticket_price: ticketMeta.price || 0,
+        ticket_gst: ticketMeta.gstAmount || 0,
+        ticket_total: ticketMeta.total || 0,
+        txId: providerTxId || txId || null,
+        payment_proof_url: paymentProofUrl || null,
+        referenceId: paymentReferenceId || null,
+        termsAccepted: !!form.termsAccepted,
+        _rawForm: form
+      };
 
-      if (!ticket_code && speakerId) {
+      // create speaker
+      const res = await fetch(apiUrl("/api/speakers"), { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
+      const js = await res.json().catch(()=>({}));
+      if (!res.ok || !(js && (js.success || js.insertedId || js.id))) {
+        const em = (js && (js.error || js.message)) || `Save failed (${res.status})`;
+        setError(em);
+        setProcessing(false);
+        return;
+      }
+      const insertedId = js.insertedId || js.insertId || js.id || null;
+      if (insertedId) setSpeakerId(insertedId);
+
+      // ticket code
+      let ticket_code = js.ticket_code || js.ticketCode || payload.ticket_code || String(Math.floor(100000 + Math.random() * 900000));
+
+      // create ticket record (best-effort)
+      try {
+        await fetch(apiUrl("/api/tickets/create"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
+          body: JSON.stringify({
+            ticket_code,
+            entity_type: "speaker",
+            entity_id: insertedId || null,
+            name,
+            email: payload.email || null,
+            company: payload.company || null,
+            category: chosen,
+            meta: { createdFrom: "web" }
+          })
+        }).catch(()=>{});
+      } catch (e) { console.warn("create ticket failed", e); }
+
+      // update confirm
+      if (insertedId) {
         try {
-          const r = await fetch(apiUrl(`/api/speakers/${encodeURIComponent(String(speakerId))}`));
-          if (r.ok) {
-            const row = await r.json().catch(() => null);
-            ticket_code = (row && (row.ticket_code || row.code)) || ticket_code;
-            if (ticket_code) setForm(prev => ({ ...prev, ticket_code }));
-          }
+          await fetch(apiUrl(`/api/speakers/${encodeURIComponent(String(insertedId))}/confirm`), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
+            body: JSON.stringify({ ticket_code, ticket_category: chosen, txId: providerTxId || txId || null })
+          }).catch(()=>{});
         } catch (e) {}
       }
 
-      if (!ticket_code) {
-        const generated = String(Math.floor(100000 + Math.random() * 900000));
-        if (speakerId) {
-          try {
-            await fetch(apiUrl(`/api/speakers/${encodeURIComponent(String(speakerId))}/confirm`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket_code: generated, force: true }) }).catch(() => {});
-            ticket_code = generated;
-            setForm(prev => ({ ...prev, ticket_code: generated }));
-          } catch (e) {
-            ticket_code = generated;
-            setForm(prev => ({ ...prev, ticket_code: generated }));
+      const fullSpeaker = { ...payload, ticket_code, id: insertedId };
+
+      // generate PDF
+      let pdf = null;
+      try {
+        if (typeof generateVisitorBadgePDF === "function") {
+          pdf = await generateVisitorBadgePDF(fullSpeaker, config?.badgeTemplateUrl || "", { includeQRCode: true, qrPayload: { ticket_code }, event: config?.eventDetails || {} });
+          setPdfBlob(pdf);
+        }
+      } catch (e) { console.warn("PDF generation failed:", e); }
+
+      // send templated email and set ack state
+      try {
+        setAckLoading(true);
+        const frontendBase = (typeof window !== "undefined" && (window.__FRONTEND_BASE__ || window.location.origin)) || "";
+        const bannerUrl = (config?.images && config.images.length) ? config.images[0] : "";
+        const emailModel = {
+          frontendBase,
+          entity: "speakers",
+          id: insertedId || "",
+          name,
+          company: payload.company || "",
+          ticket_code,
+          ticket_category: chosen,
+          bannerUrl,
+          badgePreviewUrl: "",
+          downloadUrl: "",
+          event: config?.eventDetails || {}
+        };
+        const mailRes = await sendTemplatedEmail({ recipientEmail: payload.email, model: emailModel, pdfBlob: pdf });
+        setAckLoading(false);
+        if (!mailRes || !mailRes.ok) {
+          setAckError((mailRes && (mailRes.error || (mailRes.body && (mailRes.body.error || mailRes.body.message)))) || "Acknowledgement failed");
+        } else {
+          setAckResult(mailRes.body || { ok: true });
+          setAckError("");
+        }
+      } catch (e) {
+        setAckLoading(false);
+        setAckError("Acknowledgement send failed");
+        console.warn("templated email send error", e);
+      }
+
+      // schedule reminder and set reminder UI state
+      try {
+        const evDate = config?.eventDetails?.date || config?.eventDate || null;
+        if (insertedId && evDate) {
+          const sch = await scheduleReminder(insertedId, evDate);
+          if (sch && sch.ok) {
+            setReminderScheduled(true);
+            setReminderError("");
+          } else {
+            setReminderScheduled(false);
+            const msg = sch && (sch.error || (sch.body && (sch.body.error || sch.body.message))) || "Schedule failed";
+            setReminderError(String(msg));
+            console.warn("Reminder schedule response", sch);
           }
         }
+      } catch (e) {
+        setReminderScheduled(false);
+        setReminderError("Reminder scheduling failed");
+        console.warn("scheduleReminder error", e);
       }
 
-      const fullSpeaker = { ...form, name, ticket_category: chosen, ticket_code: form.ticket_code || ticket_code, txId: providerTxId || txId || null, slots: Array.isArray(form.slots) ? form.slots : [], eventDetails: config?.eventDetails || {} };
-      setSpeaker(fullSpeaker);
-
-      // persist ticket
-      try { await fetch(apiUrl("/api/tickets/create"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket_code: fullSpeaker.ticket_code, entity_type: "speaker", entity_id: speakerId || null, name, email: fullSpeaker.email || null, company: fullSpeaker.company || null, category: chosen, meta: { createdFrom: "web" } }) }).catch(() => {}); } catch (e) {}
-
-      // update speaker row
-      if (speakerId) {
-        try { await fetch(apiUrl(`/api/speakers/${encodeURIComponent(String(speakerId))}/confirm`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket_category: chosen, txId: providerTxId || txId || null }) }).catch(() => {}); } catch (e) {}
-      }
-
-      // generate pdf
-      let pdf = null;
-      try { if (typeof generateVisitorBadgePDF === "function") { pdf = await generateVisitorBadgePDF(fullSpeaker, config?.badgeTemplateUrl || "", { includeQRCode: true, event: config?.eventDetails || {} }); setPdfBlob(pdf); } } catch (e) { console.warn("PDF generation failed:", e); pdf = null; }
-
-      // send email
+      // whatsapp notify
       try {
-        const mail = { to: fullSpeaker.email, subject: `RailTrans Expo - Your Ticket (${chosen})`, text: `Hello ${name},\n\nYour ticket code: ${fullSpeaker.ticket_code}\n\nThank you.`, html: `<p>Hi ${name},</p><p>Your ticket code: <strong>${fullSpeaker.ticket_code}</strong></p>` };
-        if (pdf) { const pdfBase64 = await toBase64(pdf); if (pdfBase64) mail.attachments = [{ filename: "RailTransExpo-E-Badge.pdf", content: pdfBase64, encoding: "base64", contentType: "application/pdf" }]; }
-        const mailRes = await sendMailPayload(mail);
-        if (!mailRes.ok) setError(prev => prev ? prev + " Email not sent." : "Email not sent. We'll retry.");
-      } catch (e) { console.warn("Failed to send email", e); setError(prev => prev ? prev + " Email not sent." : "Email not sent. We'll retry."); }
-
-      // whatsapp
-      try { if (fullSpeaker.mobile) await fetch(apiUrl("/api/notify/whatsapp"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to: fullSpeaker.mobile, message: `Your RailTrans Expo ticket code: ${fullSpeaker.ticket_code}` }) }); } catch (e) { console.warn("whatsapp failed", e); }
+        if (payload.mobile) {
+          await fetch(apiUrl("/api/notify/whatsapp"), { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ to: payload.mobile, message: `Your ticket code: ${ticket_code}` }) });
+        }
+      } catch (e) { console.warn("whatsapp failed", e); }
 
       // admin notify
-      try { const adminEmail = process.env.REACT_APP_ADMIN_EMAIL || "admin@railtransexpo.com"; await sendMailPayload({ to: adminEmail, subject: `New Speaker Registered: ${name}`, text: `Name: ${name}\nEmail: ${fullSpeaker.email}\nCategory: ${chosen}\nTicket: ${fullSpeaker.ticket_code}\nTx: ${providerTxId || txId || "N/A"}` }).catch(() => {}); } catch (e) {}
+      try {
+        const adminEmail = process.env.REACT_APP_ADMIN_EMAIL || "admin@railtransexpo.com";
+        await sendMailPayload({ to: adminEmail, subject: `New Speaker Registered: ${name}`, text: `Name: ${name}\nEmail: ${payload.email}\nCategory: ${chosen}\nTicket: ${ticket_code}\nTx: ${providerTxId || txId || "N/A"}` }).catch(()=>{});
+      } catch (e) {}
 
+      setSpeaker(fullSpeaker);
       setStep(4);
     } catch (err) {
-      console.error("finalize error", err);
+      console.error("finalizeRegistrationAndSend error", err);
       setError("Failed to finalize registration.");
     } finally {
       setProcessing(false);
     }
   }
 
-  /* ---------- small UI helpers ---------- */
+  /* UI helpers */
   function HeroBlock() {
     const event = config?.eventDetails || {};
     return (
@@ -455,24 +603,29 @@ export default function Speakers() {
     return (
       <div className="bg-white rounded-2xl shadow p-6 mb-6">
         <h3 className="text-lg font-semibold text-[#196e87] mb-3">Choose Ticket</h3>
-        <TicketCategorySelector value={ticketCategory} onChange={handleTicketSelect} />
+        <TicketCategorySelector role="speakers" value={ticketCategory} onChange={handleTicketSelect} />
         {!isEmailLike(form.email) && <div className="text-red-600 mt-3">No email available on your registration — go back and add email.</div>}
       </div>
     );
   }
 
-  /* ---------- render ---------- */
+  /* render */
   return (
     <div className="min-h-screen w-full relative">
-      {/* Background video on desktop only */}
       {!isMobile && config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url && (
-        <video ref={videoRef} src={config.backgroundMedia.url} autoPlay muted loop playsInline preload="auto" crossOrigin="anonymous" style={{ position: "fixed", inset: 0, width: "100%", height: "100%", objectFit: "cover", zIndex: -999 }} />
+        <video
+          src={config.backgroundMedia.url}
+          autoPlay
+          muted
+          loop
+          playsInline
+          className="fixed inset-0 w-full h-full object-cover"
+          onError={(e) => console.error("Video error", e)}
+        />
       )}
-      {/* image background fallback */}
       {(!config?.backgroundColor) && config?.backgroundMedia?.type === "image" && config?.backgroundMedia?.url && (
         <div style={{ position: "fixed", inset: 0, zIndex: -999, backgroundImage: `url(${config.backgroundMedia.url})`, backgroundSize: "cover", backgroundPosition: "center" }} />
       )}
-      {/* translucent overlay */}
       <div style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.55)", zIndex: -900 }} />
 
       <div className="relative z-10">
@@ -519,7 +672,7 @@ export default function Speakers() {
             <div className="max-w-3xl mx-auto">
               <ManualPaymentStep
                 ticketType={ticketCategory}
-                ticketPrice={ticketPriceForCategory(ticketCategory)}
+                ticketPrice={ticketMeta.total || ticketMeta.price || ticketPriceForCategory(ticketCategory)}
                 onProofUpload={(file) => onManualProofSubmit(file)}
                 onTxIdChange={(val) => setTxId(val)}
                 txId={txId}
@@ -527,7 +680,7 @@ export default function Speakers() {
                 setProofFile={setProofFile}
               />
               <div className="flex justify-center gap-3 mt-4">
-                <button className="px-6 py-2 bg-[#196e87] text-white rounded" onClick={() => createOrderAndOpenCheckout(ticketPriceForCategory(ticketCategory))} disabled={processing}>
+                <button className="px-6 py-2 bg-[#196e87] text-white rounded" onClick={() => createOrderAndOpenCheckout()} disabled={processing}>
                   {processing ? "Processing..." : "Pay & Complete"}
                 </button>
               </div>
@@ -540,6 +693,13 @@ export default function Speakers() {
           {step === 4 && (
             <div className="max-w-3xl mx-auto">
               <ThankYouMessage email={speaker?.email || form.email} />
+              <div className="mt-4 text-center">
+                {ackLoading && <div className="text-gray-600">Sending acknowledgement...</div>}
+                {ackError && <div className="text-red-600">Acknowledgement failed: {ackError}</div>}
+                {ackResult && <div className="text-green-700">Acknowledgement sent</div>}
+                {reminderScheduled && <div className="text-green-700 mt-2">Reminder scheduled for event date.</div>}
+                {reminderError && <div className="text-red-600 mt-2">Reminder error: {reminderError}</div>}
+              </div>
             </div>
           )}
 

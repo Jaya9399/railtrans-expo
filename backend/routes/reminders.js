@@ -1,5 +1,5 @@
 const express = require("express");
-const { sendMail } = require("../mailer"); // expects module that exports sendMail(...)
+const { sendMail } = require("../utils/mailer"); // expects module that exports sendMail(...)
 const router = express.Router();
 
 const API_BASE = (process.env.API_BASE || process.env.BACKEND_URL || "http://localhost:5000").replace(/\/$/, "");
@@ -27,7 +27,7 @@ router.post("/send", async (req, res) => {
     const listUrl = `${API_BASE}/api/${entity}?${params.toString()}`;
 
     // fetch list
-    const listRes = await fetch(listUrl, { headers: { Accept: "application/json" } });
+    const listRes = await fetch(listUrl, { headers: { Accept: "application/json" , "ngrok-skip-browser-warning": "69420" } });
     if (!listRes.ok) {
       const txt = await listRes.text().catch(() => "");
       return res.status(502).json({ success: false, error: `Failed to fetch ${entity}: ${listRes.status}`, body: txt });

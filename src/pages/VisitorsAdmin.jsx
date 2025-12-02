@@ -8,13 +8,13 @@ const API_BASE = (process.env.REACT_APP_API_BASE || window.__API_BASE__ || "http
 
 /**
  * Upload helper: sends 'file' field to the backend upload endpoint.
- * Uses absolute URL to ensure requests go to backend (not dev server).
+ * Adds the ngrok skip header to the request as requested.
  */
 async function uploadFileToServer(file, endpoint = "/api/upload-asset") {
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch(url, { method: "POST", body: formData });
+  const res = await fetch(url, { method: "POST", headers: { "ngrok-skip-browser-warning": "69420" }, body: formData });
   if (!res.ok) {
     let txt = "";
     try { txt = await res.text(); } catch {}
@@ -51,10 +51,14 @@ export default function VisitorsAdmin() {
     let mounted = true;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/visitor-config`,  { method: "POST",  headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(config) },);
-        if (!res.ok) throw new Error("Failed to fetch config");
-        const cfg = await res.json();
+        const res = await fetch(`${API_BASE}/api/visitor-config`, { method: "GET", headers: { "Accept": "application/json", "ngrok-skip-browser-warning": "69420" } });
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(`Failed to fetch config: ${res.status} ${text}`);
+        }
+        const cfg = await res.json().catch(() => ({}));
         if (!mounted) return;
+
         const normalized = {
           ...cfg,
           fields: Array.isArray(cfg.fields) ? cfg.fields : [],
@@ -67,14 +71,29 @@ export default function VisitorsAdmin() {
           backgroundColor: cfg.backgroundColor || "#ffffff",
           badgeTemplateUrl: cfg.badgeTemplateUrl || ""
         };
+
         normalized.fields = normalized.fields.map(f =>
           ["select","radio"].includes(f.type) ? { ...f, options: Array.isArray(f.options) ? f.options : [""] } : { ...f, options: Array.isArray(f.options) ? f.options : [] }
         );
 
-        // Ensure defaults exist (don't duplicate by name)
         const existing = new Set(normalized.fields.map(f => f.name));
         DEFAULT_VISITOR_FIELDS.forEach(def => {
           if (!existing.has(def.name)) normalized.fields.push(clone(def));
+        });
+
+        normalized.fields = normalized.fields.map(f => {
+          if (!f || !f.name) return f;
+          if (f.name === "company") {
+            const copy = { ...f };
+            if (!copy.visibleIf) copy.visibleIf = { company_type: "Company" };
+            return copy;
+          }
+          if (f.name === "other_details") {
+            const copy = { ...f };
+            if (!copy.visibleIf) copy.visibleIf = { company_type: "Other" };
+            return copy;
+          }
+          return f;
         });
 
         setConfig(normalized);
@@ -92,7 +111,6 @@ export default function VisitorsAdmin() {
   if (error) return <div className="text-red-600 p-4">{error}</div>;
   if (!config) return <div className="text-red-600 p-4">No config found.</div>;
 
-  // Field helpers (kept minimal)
   function updateField(idx, updates) {
     setConfig(prev => {
       const cfg = clone(prev);
@@ -149,13 +167,16 @@ export default function VisitorsAdmin() {
     setMsg("");
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/visitor-config/config`, { method: "POST",  headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(config) });
+      const res = await fetch(`${API_BASE}/api/visitor-config/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        body: JSON.stringify(config)
+      });
       if (!res.ok) {
         const txt = await res.text().catch(()=>"");
         throw new Error(txt || `HTTP ${res.status}`);
       }
       setMsg("Saved!");
-      // Dispatch an event so any visitors pages can re-fetch config immediately
       try { window.dispatchEvent(new Event("visitor-config-updated")); } catch {}
     } catch (e) {
       console.error("saveConfig error:", e && (e.stack || e));
