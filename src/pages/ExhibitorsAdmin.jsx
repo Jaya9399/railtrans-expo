@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
 
 function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
@@ -9,12 +9,18 @@ const API_BASE = (process.env.REACT_APP_API_BASE || window.__API_BASE__ || "http
 /**
  * Upload helper: sends 'file' field to the backend upload endpoint.
  * Uses absolute URL to ensure requests go to backend (not dev server).
+ * Adds the ngrok skip header as requested.
  */
 async function uploadFileToServer(file, endpoint = "/api/upload-asset") {
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch(url, { method: "POST", body: formData });
+  const res = await fetch(url, {
+    method: "POST",
+    // Do not set Content-Type for FormData (browser will set boundary)
+    headers: { "ngrok-skip-browser-warning": "69420" },
+    body: formData
+  });
   if (!res.ok) {
     let txt = "";
     try { txt = await res.text(); } catch {}
@@ -88,30 +94,33 @@ export default function ExhibitorsAdmin() {
   const [error, setError] = useState(null);
   const [uploading, setUploading] = useState(false);
 
+  const fetchConfig = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/exhibitor-config`, { cache: "no-store", headers: { "Accept": "application/json", "ngrok-skip-browser-warning": "69420" } });
+      if (!res.ok) throw new Error(`Failed to fetch config (${res.status})`);
+      const cfg = await res.json();
+      setConfig(normalizeConfig(cfg));
+    } catch (e) {
+      console.error("ExhibitorsAdmin load config error:", e && (e.stack || e));
+      setError("Error loading config from backend. See server logs.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let mounted = true;
     (async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/exhibitor-config`, { cache: "no-store" });
-        if (!res.ok) throw new Error(`Failed to fetch config (${res.status})`);
-        const cfg = await res.json();
-        if (!mounted) return;
-        setConfig(normalizeConfig(cfg));
-      } catch (e) {
-        console.error("ExhibitorsAdmin load config error:", e && (e.stack || e));
-        setError("Error loading config from backend. See server logs.");
-      } finally {
-        if (mounted) setLoading(false);
-      }
+      await fetchConfig();
     })();
     return () => (mounted = false);
-  }, []);
+  }, [fetchConfig]);
 
   if (loading) return <div>Loading...</div>;
   if (error) return <div className="text-red-600 p-4">{error}</div>;
   if (!config) return <div className="text-red-600 p-4">No config found.</div>;
 
-  // Field helpers
   function updateField(idx, updates) {
     setConfig(prev => {
       const cfg = clone(prev);
@@ -127,15 +136,11 @@ export default function ExhibitorsAdmin() {
   function addField() { setConfig(prev => { const cfg = clone(prev); cfg.fields.push({ name: `f${Date.now()}`, label: "New Field", type: "text", required:false, visible:true, options: [] }); return cfg; }); }
   function addCheckboxField() { setConfig(prev => { const cfg = clone(prev); cfg.fields.push({ name: `cb${Date.now()}`, label: "Checkbox", type: "checkbox", required:false, visible:true, options: [] }); return cfg; }); }
 
-  // Images (legacy gallery)
   function updateImage(idx, value) { setConfig(prev => { const cfg = clone(prev); cfg.images[idx] = value; return cfg; }); }
   function deleteImage(idx) { setConfig(prev => { const cfg = clone(prev); cfg.images.splice(idx,1); return cfg; }); }
   function addImage() { setConfig(prev => { const cfg = clone(prev); cfg.images.push(""); return cfg; }); }
-
-  // Event details helper
   function updateEventDetail(key, value) { setConfig(prev => { const cfg = clone(prev); cfg.eventDetails = cfg.eventDetails || {}; cfg.eventDetails[key] = value; return cfg; }); }
 
-  // Background color / media handlers
   async function handleAssetUpload(e, key, idx = null, mediaType = "image") {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -169,12 +174,10 @@ export default function ExhibitorsAdmin() {
     setMsg("Terms file cleared (save to persist).");
   }
 
-  // allow clearing / editing terms text
   function updateTermsText(value) {
     setConfig(prev => ({ ...clone(prev), termsText: value }));
   }
 
-  // Before saving, ensure accept_terms / "I agree" checkbox is NOT included in fields
   function stripAcceptTermsFields(cfg) {
     if (!cfg) return cfg;
     const copy = clone(cfg);
@@ -192,10 +195,13 @@ export default function ExhibitorsAdmin() {
     setMsg("");
     setError(null);
     try {
-      // Remove accept_terms from fields before persisting config
       const toSave = stripAcceptTermsFields(config);
       const canonical = normalizeConfig(toSave);
-      const res = await fetch(`${API_BASE}/api/exhibitor-config/config`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(canonical) });
+      const res = await fetch(`${API_BASE}/api/exhibitor-config/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        body: JSON.stringify(canonical)
+      });
       if (!res.ok) {
         const txt = await res.text().catch(()=>"");
         throw new Error(txt || `HTTP ${res.status}`);
@@ -214,7 +220,6 @@ export default function ExhibitorsAdmin() {
     <div className="p-8">
       <h2 className="text-2xl font-bold mb-4">Exhibitors Admin Config</h2>
 
-      {/* Appearance: allow background color OR background media (image/video) */}
       <div className="mb-6">
         <h3 className="font-bold mb-2">Registration Page Appearance</h3>
         <label className="block mb-1">Background Color (takes precedence if set)</label>
@@ -224,7 +229,6 @@ export default function ExhibitorsAdmin() {
         </div>
       </div>
 
-      {/* Background Media (image or video) */}
       <h3 className="font-bold mb-2 mt-6">Background Media (image or video) — used when backgroundColor not set</h3>
       <div className="mb-2">
         <label className="mr-3">Current:</label>
@@ -241,7 +245,6 @@ export default function ExhibitorsAdmin() {
         <div className="text-sm text-gray-600 ml-4">Background color takes precedence over media.</div>
       </div>
 
-      {/* Gallery Images (legacy) */}
       <h3 className="font-bold mb-2 mt-8">Gallery Images (optional)</h3>
       {(config.images || []).map((img, idx) => (
         <div key={idx} className="flex items-center gap-2 mb-2">
@@ -256,7 +259,6 @@ export default function ExhibitorsAdmin() {
         <button onClick={addImage} className="ml-2 px-4 py-2 bg-blue-100">Add Gallery Image</button>
       </div>
 
-      {/* Fields */}
       <h3 className="font-bold mb-2 mt-8">Fields</h3>
       {(config.fields || []).map((field, idx) => (
         <div key={idx} className="flex flex-col gap-1 mb-2 border-b pb-2">
@@ -298,7 +300,6 @@ export default function ExhibitorsAdmin() {
         <button onClick={addCheckboxField} className="px-4 py-2 bg-yellow-100">Add Checkbox Field</button>
       </div>
 
-      {/* Terms */}
       <h3 className="font-bold mb-2 mt-8">Terms &amp; Conditions (appears at end of form)</h3>
       <div className="mb-2">
         <label className="block mb-1">Label shown to users</label>
@@ -327,7 +328,6 @@ export default function ExhibitorsAdmin() {
         </div>
       </div>
 
-      {/* Event Details */}
       <h3 className="font-bold mb-2 mt-8">Event Details</h3>
       <input value={config.eventDetails?.name || ""} onChange={e => updateEventDetail("name", e.target.value)} placeholder="Event Name" className="border px-2 mb-2 block" />
       <input value={config.eventDetails?.date || ""} onChange={e => updateEventDetail("date", e.target.value)} placeholder="Date" className="border px-2 mb-2 block" />
