@@ -14,7 +14,7 @@ export default function AdminRoute({ children }) {
 
   if (!user) {
     // Not authenticated — redirect to login for easier testing
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/" replace />;
   }
 
   if (!user.email || user.email.toLowerCase().trim() !== ADMIN_EMAIL.toLowerCase()) {

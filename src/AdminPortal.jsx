@@ -1,45 +1,10 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import AdminLogin from "./components/AdminLogin";
 
-/**
- * RailTransExpoHomepage.jsx
- *
- * - Reads admin credentials from environment variables:
- *     - For Create React App: REACT_APP_ADMIN_EMAIL and REACT_APP_ADMIN_PASSWORD
- *     - For Vite: VITE_ADMIN_EMAIL and VITE_ADMIN_PASSWORD
- *   (If env vars are not provided, the component falls back to demo credentials.)
- *
- * - Uses react-router's useNavigate to go to the dashboard ("/") after successful login.
- * - Responsive: grid is 1 column on small screens, 2 columns on md+ screens.
- * - Uses inline SVG icons (no external icon deps).
- *
- * Security note: client-side env vars and client-side checks are not secure for protecting admin pages.
- * Use a real authentication system and server-side authorization for production.
- */
-
-/* Default demo credentials (will be used only if env vars are missing) */
-const FALLBACK_ADMIN_EMAIL = "support@railtransexpo.com";
-const FALLBACK_ADMIN_PASSWORD = "admin123";
-
-/* Read from environment (CRA or Vite). */
-const ENV_ADMIN_EMAIL =
-  (process.env.REACT_APP_ADMIN_EMAIL) ||
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_ADMIN_EMAIL) ||
-  FALLBACK_ADMIN_EMAIL;
-
-const ENV_ADMIN_PASSWORD =
-  (process.env.REACT_APP_ADMIN_PASSWORD) ||
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_ADMIN_PASSWORD) ||
-  FALLBACK_ADMIN_PASSWORD;
-
-/* -------------------------
-   Inline SVG icon components
-   ------------------------- */
+/* Inline icons (kept same as before) */
 const IconWrapper = ({ children, className = "" }) => (
-  <div
-    className={`p-3 bg-white/14 rounded-xl inline-flex items-center justify-center ${className}`}
-    aria-hidden="true"
-  >
+  <div className={`p-3 bg-white/14 rounded-xl inline-flex items-center justify-center ${className}`} aria-hidden="true">
     {children}
   </div>
 );
@@ -91,6 +56,7 @@ function AwardIcon(props) {
   );
 }
 
+/* Admin button icon (small shield) */
 function ShieldIcon(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
@@ -99,78 +65,49 @@ function ShieldIcon(props) {
   );
 }
 
-/* -------------------------
-   Component
-   ------------------------- */
+
+/* Registration cards */
+const registrationButtons = [
+  {
+    title: "Visitors",
+    description: "Register as a visitor to explore the expo",
+    Icon: UsersIcon,
+    url: "/visitors",
+    color: "from-blue-500 to-blue-600",
+  },
+  {
+    title: "Exhibitors",
+    description: "Showcase your products and services",
+    Icon: BriefcaseIcon,
+    url: "/exhibitors",
+    color: "from-slate-700 to-slate-600",
+  },
+  {
+    title: "Speakers",
+    description: "Share your expertise with the industry",
+    Icon: MicIcon,
+    url: "/speakers",
+    color: "from-stone-600 to-stone-500",
+  },
+  {
+    title: "Partners",
+    description: "Collaborate and grow together",
+    Icon: AwardIcon,
+    url: "/partners",
+    color: "from-blue-400 to-blue-500",
+  },
+];
+
 export default function RailTransExpoHomepage() {
   const [showAdminLogin, setShowAdminLogin] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const navigate = useNavigate();
 
-  const handleAdminLogin = () => {
-    setError("");
-    const enteredEmail = (email || "").trim().toLowerCase();
-    const requiredEmail = (ENV_ADMIN_EMAIL || FALLBACK_ADMIN_EMAIL).trim().toLowerCase();
-    const requiredPassword = ENV_ADMIN_PASSWORD || FALLBACK_ADMIN_PASSWORD;
-
-    if (!enteredEmail || !password) {
-      setError("Please enter both email and password.");
-      return;
-    }
-
-    if (enteredEmail === requiredEmail && password === requiredPassword) {
-      // Save user in localStorage so your existing AuthContext/AdminRoute can detect the admin session.
-      try {
-        localStorage.setItem("user", JSON.stringify({ email: requiredEmail }));
-      } catch (e) {
-        // ignore storage errors
-      }
-
-      // Redirect to dashboard ("/") which renders <DashboardContent />
-      navigate("/admin", { replace: true });
-    } else {
-      setError("Invalid credentials. Please try again.");
-    }
+  const onAdminSuccess = () => {
+    // Parent-level callback after successful login in AdminLogin component
+    setShowAdminLogin(false);
+    // navigate to admin dashboard
+    navigate("/admin", { replace: true });
   };
-
-  const handleKeyPress = (e) => {
-    if (e.key === "Enter") {
-      handleAdminLogin();
-    }
-  };
-
-  const registrationButtons = [
-    {
-      title: "Visitors",
-      description: "Register as a visitor to explore the expo",
-      Icon: UsersIcon,
-      url: "/visitors",
-      color: "from-blue-500 to-blue-600",
-    },
-    {
-      title: "Exhibitors",
-      description: "Showcase your products and services",
-      Icon: BriefcaseIcon,
-      url: "/exhibitors",
-      color: "from-slate-700 to-slate-600",
-    },
-    {
-      title: "Speakers",
-      description: "Share your expertise with the industry",
-      Icon: MicIcon,
-      url: "/speakers",
-      color: "from-stone-600 to-stone-500",
-    },
-    {
-      title: "Partners",
-      description: "Collaborate and grow together",
-      Icon: AwardIcon,
-      url: "/partners",
-      color: "from-blue-400 to-blue-500",
-    },
-  ];
 
   return (
     <div className="min-h-screen bg-gray-50 text-slate-900 antialiased">
@@ -179,12 +116,7 @@ export default function RailTransExpoHomepage() {
         <div className="relative">
           <div className="absolute top-6 right-6 z-20">
             <button
-              onClick={() => {
-                setShowAdminLogin((s) => !s);
-                setError("");
-                setEmail("");
-                setPassword("");
-              }}
+              onClick={() => setShowAdminLogin((s) => !s)}
               className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-full shadow-sm text-sm hover:shadow-md transition"
               aria-label="Admin Access"
             >
@@ -195,74 +127,8 @@ export default function RailTransExpoHomepage() {
         </div>
       </div>
 
-      {/* Admin Login Modal */}
-      {showAdminLogin && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="admin-login-title"
-        >
-          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 border">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg shadow">
-                <ShieldIcon className="w-6 h-6 text-white" />
-              </div>
-              <h2 id="admin-login-title" className="text-lg font-semibold">
-                Admin Login
-              </h2>
-              <div className="ml-auto">
-                <button
-                  onClick={() => setShowAdminLogin(false)}
-                  className="text-sm text-slate-500 hover:text-slate-800"
-                  aria-label="Close"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={handleKeyPress}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 focus:ring-2 focus:ring-blue-300"
-                  placeholder="admin@example.com"
-                  autoComplete="username"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={handleKeyPress}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 focus:ring-2 focus:ring-blue-300"
-                  placeholder="Enter password"
-                  autoComplete="current-password"
-                />
-              </div>
-
-              {error && <div className="text-sm text-red-600">{error}</div>}
-
-              <div className="flex gap-2">
-                <button
-                  onClick={handleAdminLogin}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-                >
-                  Login to Admin Panel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Admin Login (component) */}
+      <AdminLogin open={showAdminLogin} onClose={() => setShowAdminLogin(false)} onSuccess={onAdminSuccess} />
 
       {/* Main content */}
       <main className="pt-16 pb-24">
