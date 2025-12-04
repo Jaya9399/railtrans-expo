@@ -20,6 +20,8 @@ import { AuthProvider } from "../AuthContext";
 import AdminPortal from "../AdminPortal";
 import AdminLayout from "../AdminLayout";
 import AdminLogin from "../components/AdminLogin";
+import TicketDownload from "./TicketDownload";
+import TicketUpgrade from "./TicketUpgrade";
 
 // Simple placeholders (if you need them)
 function Registrations() {
@@ -45,6 +47,8 @@ export default function AppRoutes() {
         <Route path="/speakers" element={<Speakers />} />
         <Route path="/awardees" element={<Awardees />} />
         <Route path="/admin-login" element={<AdminLogin open={true} />} />
+        <Route path="/ticket-download" element={<TicketDownload />} />
+        <Route path="/ticket-upgrade" element={<TicketUpgrade />} />
         {/* AdminPortal route */}
         {/* Option A — Unprotected: anyone can open /admin-portal (page provides login UI) */}
         <Route path="/admin-portal" element={<AdminPortal />} />

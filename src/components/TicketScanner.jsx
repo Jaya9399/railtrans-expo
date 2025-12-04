@@ -64,7 +64,7 @@ export default function TicketScanner({
   const rafRef = useRef(null);
   const streamRef = useRef(null);
 
-  const [scanning, setScanning] = useState(true);
+  
   const [busy, setBusy] = useState(false);
   const [rawPayload, setRawPayload] = useState("");
   const [ticketId, setTicketId] = useState(null);

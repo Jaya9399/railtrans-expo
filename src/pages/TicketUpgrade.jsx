@@ -1,18 +1,23 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import TicketCategorySelector from "../components/TicketCategorySelector";
+import TicketCategorySelector from "../components/TicketCategoryGenerator";
 import ManualPaymentStep from "../components/ManualPayemntStep";
 import VisitorTicket from "../components/VisitorTicket";
-import { generateVisitorBadgePDF } from "../utils/pdfGenerator";
 import { buildTicketEmail } from "../utils/emailTemplate";
 import { readRegistrationCache, writeRegistrationCache } from "../utils/registrationCache";
 
 /*
- TicketUpgrade.jsx (updated)
- - After successful upgrade, writes the updated record to registration cache and notifies dashboard.
- - Uses registration cache first to pre-fill visitor details; falls back to fetching /api/visitors/:id.
- - Uses ManualPaymentStep and TicketCategorySelector (reads pricing from local storage managed by TicketPricingManager).
- - Sends acknowledgement email and attaches generated PDF (best-effort).
+ TicketUpgrade.jsx (manual-payment-only)
+ - The legacy "Pay & Upgrade" button has been removed.
+ - ManualPaymentStep remains and handles the provider checkout or manual proof flow.
+ - ManualPaymentStep must call onTxIdChange(txId) when it receives a provider transaction id
+   and call onProofUpload() when payment is confirmed so this page can finalize the upgrade.
+ - finalizeUpgrade performs the server update and sends a no-attachment email with a frontend
+   download link.
+ - Fix: Apply Upgrade (Free) is only enabled when:
+     * a category is selected
+     * the selected category is different from the visitor's current category
+     * the selected category is free (total === 0)
 */
 
 const LOCAL_PRICE_KEY = "ticket_categories_local_v1";
@@ -66,14 +71,19 @@ export default function TicketUpgrade() {
   const [manualProofFile, setManualProofFile] = useState(null);
   const [txId, setTxId] = useState("");
 
+  // keep last tx id in a ref to avoid race between setState and finalize call
+  const latestTxRef = useRef(null);
+
   // preferred: load from registration cache, else API
   useEffect(() => {
     let mounted = true;
     async function load() {
-      if (!id) {
-        if (mounted) { setError("Missing visitor id in query parameters."); setLoading(false); }
+      // allow either id OR ticket_code; error only if both missing
+      if (!id && !providedTicketCode) {
+        if (mounted) { setError("Missing visitor id or ticket_code in query parameters."); setLoading(false); }
         return;
       }
+
       setLoading(true);
       setError("");
 
@@ -83,39 +93,49 @@ export default function TicketUpgrade() {
         return;
       }
 
-      // try cache
-      const cached = readRegistrationCache(entity, id);
-      if (cached) {
-        setRecord(cached);
-        const cur = cached.ticket_category || cached.category || cached.ticketCategory || "";
-        setSelectedCategory(cur || "");
-        const localPricing = readLocalPricing();
-        if (cur && localPricing && localPricing.visitors) {
-          const found = localPricing.visitors.find(c => String(c.value).toLowerCase() === String(cur).toLowerCase());
-          if (found) {
-            const price = Number(found.price || 0);
-            const gst = Number(found.gst || 0);
-            setSelectedMeta({ price, gstRate: gst, gstAmount: Math.round(price * gst), total: Math.round(price + price * gst), label: found.label || found.value });
+      // try cache (only if id present)
+      if (id) {
+        const cached = readRegistrationCache(entity, id);
+        if (cached) {
+          if (!mounted) return;
+          setRecord(cached);
+          const cur = cached.ticket_category || cached.category || cached.ticketCategory || "";
+          setSelectedCategory(cur || "");
+          const localPricing = readLocalPricing();
+          if (cur && localPricing && localPricing.visitors) {
+            const found = localPricing.visitors.find(c => String(c.value).toLowerCase() === String(cur).toLowerCase());
+            if (found) {
+              const price = Number(found.price || 0);
+              const gst = Number(found.gst || 0);
+              setSelectedMeta({ price, gstRate: gst, gstAmount: Math.round(price * gst), total: Math.round(price + price * gst), label: found.label || found.value });
+            }
           }
+          setLoading(false);
+          return;
         }
-        setLoading(false);
-        return;
       }
 
       // fallback: fetch from API
       try {
-        const res = await fetch(`/api/visitors/${encodeURIComponent(String(id))}`);
-        if (!res.ok) {
-          if (mounted) setError(`Failed to fetch visitor (status ${res.status})`);
-          if (mounted) setLoading(false);
-          return;
+        let js = null;
+        if (id) {
+          const res = await fetch(`/api/visitors/${encodeURIComponent(String(id))}`);
+          if (res.ok) js = await res.json().catch(() => null);
+        } else if (providedTicketCode) {
+          // fetch by ticket_code using list endpoint (adapt if your backend uses different query)
+          const r = await fetch(`/api/visitors?where=${encodeURIComponent(`ticket_code=${providedTicketCode}`)}&limit=1`);
+          if (r.ok) {
+            const arr = await r.json().catch(() => []);
+            js = Array.isArray(arr) ? (arr[0] || null) : arr;
+          }
         }
-        const js = await res.json().catch(() => null);
+
         if (!js) {
-          if (mounted) setError("Empty response from server");
+          if (mounted) setError("Visitor not found");
           if (mounted) setLoading(false);
           return;
         }
+
         if (mounted) setRecord(js);
         const cur = js.ticket_category || js.category || js.ticketCategory || "";
         if (mounted) setSelectedCategory(cur || "");
@@ -139,175 +159,130 @@ export default function TicketUpgrade() {
     }
     load();
     return () => { mounted = false; };
-  }, [entity, id]);
+  }, [entity, id, providedTicketCode]);
 
   const onCategoryChange = useCallback((val, meta) => {
     setSelectedCategory(val);
     setSelectedMeta(meta || { price: 0, gstRate: 0, gstAmount: 0, total: 0, label: val });
   }, []);
 
-  // create order and poll, then finalize
-  const createOrderAndOpenCheckout = useCallback(async () => {
+  // Derived flags: whether selected category is free and whether it's different from current
+  const isSelectedFree = useMemo(() => {
+    const t = Number(selectedMeta.total || selectedMeta.price || 0);
+    return !t || t === 0;
+  }, [selectedMeta]);
+
+  const currentCategory = (record && (record.ticket_category || record.category || record.ticketCategory)) || "";
+  const isSameCategory = useMemo(() => {
+    if (!selectedCategory) return true; // treat no selection as same to prevent action
+    return String(selectedCategory).toLowerCase() === String(currentCategory).toLowerCase();
+  }, [selectedCategory, currentCategory]);
+
+  // Minimal finalizeUpgrade: update server, update local cache, notify UI
+  const finalizeUpgrade = useCallback(async ({ method = "online", txId: tx = null, reference = null, proofUrl = null } = {}) => {
     setProcessing(true);
     setError("");
     setMessage("");
     try {
-      const amount = Number(selectedMeta.total || selectedMeta.price || 0);
-      if (!amount || amount <= 0) {
-        setError("Selected category requires payment but amount is invalid.");
-        setProcessing(false);
-        return;
-      }
-      const reference = `upgrade-${id}-${Date.now()}`;
-      const payload = {
-        amount,
-        currency: "INR",
-        description: `Upgrade visitor ${id} → ${selectedCategory}`,
-        reference_id: reference,
-        metadata: { visitorId: id, newCategory: selectedCategory }
-      };
-      const res = await fetch("/api/payment/create-order", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const js = await res.json().catch(() => null);
-      if (!res.ok || !js || !(js.checkoutUrl || js.checkout_url || js.longurl)) {
-        setError((js && (js.error || js.message)) || "Payment initiation failed");
-        setProcessing(false);
-        return;
-      }
-      const checkoutUrl = js.checkoutUrl || js.checkout_url || js.longurl;
+      // determine best target id (use id from query or record)
+      const targetId = id || (record && (record.id || record._id || record.insertedId)) || "";
+      const upgradePayload = { newCategory: selectedCategory, txId: tx, reference, proofUrl, amount: selectedMeta.total || selectedMeta.price || 0 };
 
-      // cache record before opening external payment
-      if (record) writeRegistrationCache(entity, id, record);
-
-      const w = window.open(checkoutUrl, "_blank", "noopener,noreferrer");
-      if (!w) {
-        setError("Popup blocked. Allow popups to continue payment.");
-        setProcessing(false);
-        return;
+      let res = null;
+      // If we have a numeric/identifier targetId, try the dedicated endpoint
+      if (targetId) {
+        res = await fetch(`/api/visitors/${encodeURIComponent(String(targetId))}/upgrade`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(upgradePayload) }).catch(()=>null);
       }
 
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts += 1;
-        try {
-          const st = await fetch(`/api/payment/status?reference_id=${encodeURIComponent(reference)}`);
-          if (!st.ok) return;
-          const js2 = await st.json().catch(() => null);
-          const status = (js2 && (js2.status || js2.payment_status || js2.state) || "").toString().toLowerCase();
-          if (["paid","captured","completed","success"].includes(status)) {
-            clearInterval(poll);
-            try { if (w && !w.closed) w.close(); } catch {}
-            const providerPaymentId = js2.record?.provider_payment_id || js2.record?.payment_id || js2.record?.id || "";
-            setTxId(providerPaymentId || "");
-            await finalizeUpgrade({ method: "online", txId: providerPaymentId, reference });
-          } else if (["failed","cancelled","void"].includes(status)) {
-            clearInterval(poll);
-            try { if (w && !w.closed) w.close(); } catch {}
-            setError("Payment failed or cancelled. Please retry or submit proof.");
-            setProcessing(false);
-          } else if (attempts > 60) {
-            clearInterval(poll);
-            setError("Payment not confirmed yet. If you completed payment, please upload proof or retry.");
-            setProcessing(false);
-          }
-        } catch (e) {
-          // ignore transient
-        }
-      }, 3000);
-    } catch (e) {
-      console.error("createOrder error", e);
-      setError("Payment initiation failed.");
-      setProcessing(false);
-    }
-  }, [selectedMeta, selectedCategory, id, record, entity, finalizeUpgrade]);
-
-  // finalize upgrade and update cached row only (and notify)
-  const finalizeUpgrade = useCallback(async ({ method = "online", txId = null, reference = null, proofUrl = null } = {}) => {
-    setProcessing(true);
-    setError("");
-    setMessage("");
-    try {
-      const upgradePayload = { newCategory: selectedCategory, txId, reference, proofUrl, amount: selectedMeta.total || selectedMeta.price || 0 };
-
-      // Try dedicated endpoint first; fallback to PUT
-      let res = await fetch(`/api/visitors/${encodeURIComponent(String(id))}/upgrade`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(upgradePayload) }).catch(()=>null);
+      // fallback to a PUT by id (if targetId available) or POST to a search/upgrade endpoint if your backend supports it
       if (!res || !res.ok) {
-        res = await fetch(`/api/visitors/${encodeURIComponent(String(id))}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket_category: selectedCategory, txId, payment_reference: reference, payment_proof_url: proofUrl }) }).catch(()=>null);
+        if (targetId) {
+          res = await fetch(`/api/visitors/${encodeURIComponent(String(targetId))}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket_category: selectedCategory, txId: tx, payment_reference: reference, payment_proof_url: proofUrl }) }).catch(()=>null);
+        } else {
+          // As last resort, try a POST to upgrade-by-ticket-code endpoint if available
+          res = await fetch(`/api/visitors/upgrade-by-code`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket_code: providedTicketCode, ticket_category: selectedCategory, txId: tx, reference, proofUrl }) }).catch(()=>null);
+        }
       }
 
       if (!res || !res.ok) {
         const bodyText = res ? await res.text().catch(()=>null) : null;
         setError(`Upgrade failed: ${String(bodyText) || "server error"}`);
         setProcessing(false);
-        return;
+        return null;
       }
 
       // fetch fresh record if possible
       let updated = null;
       try {
-        const r = await fetch(`/api/visitors/${encodeURIComponent(String(id))}`);
-        if (r.ok) {
-          updated = await r.json().catch(()=>null);
+        if (targetId) {
+          const r = await fetch(`/api/visitors/${encodeURIComponent(String(targetId))}`);
+          if (r.ok) updated = await r.json().catch(()=>null);
+        } else if (providedTicketCode) {
+          const r = await fetch(`/api/visitors?where=${encodeURIComponent(`ticket_code=${providedTicketCode}`)}&limit=1`);
+          if (r.ok) {
+            const arr = await r.json().catch(()=>[]);
+            updated = Array.isArray(arr) ? (arr[0] || null) : arr;
+          }
         }
       } catch (e) { /* ignore */ }
 
-      // If we couldn't fetch updated record, mutate local 'record' minimally
       const finalRecord = updated || { ...(record || {}), ticket_category: selectedCategory, ticket_code: (record && (record.ticket_code || record.ticketCode)) || providedTicketCode || "" };
 
-      // write updated record to cache and notify dashboard/other windows
+      // write updated record to cache and notify
       try {
-        writeRegistrationCache("visitors", id, finalRecord);
+        const cacheId = targetId || finalRecord.id || finalRecord._id || finalRecord.insertedId || providedTicketCode || "";
+        if (cacheId) writeRegistrationCache("visitors", cacheId, finalRecord);
       } catch (e) { /* ignore */ }
 
-      // generate PDF and email (best-effort)
+      // build/send a simple notification email WITHOUT attachments (optional, best-effort)
       try {
-        let pdf = null;
-        if (typeof generateVisitorBadgePDF === "function") {
-          pdf = await generateVisitorBadgePDF(finalRecord, "", { includeQRCode: true, qrPayload: { ticket_code: finalRecord.ticket_code || finalRecord.ticketCode || providedTicketCode || "" }, event: (finalRecord && finalRecord.event) || {} });
-        }
-        // build and send email
-        try {
-          const frontendBase = (typeof window !== "undefined" && window.location && window.location.origin) ? window.location.origin : "";
-          const bannerUrl = (readLocalPricing() && readLocalPricing().bannerUrl) || "";
-          const emailModel = {
-            frontendBase,
-            entity: "visitors",
-            id,
-            name: finalRecord?.name || "",
-            company: finalRecord?.company || "",
-            ticket_code: finalRecord?.ticket_code || finalRecord?.ticketCode || providedTicketCode || "",
-            ticket_category: selectedCategory,
-            bannerUrl,
-            badgePreviewUrl: "",
-            downloadUrl: "",
-            event: (finalRecord && finalRecord.event) || {}
-          };
-          const { subject, text, html } = buildTicketEmail(emailModel);
-          const mailPayload = { to: finalRecord?.email, subject, text, html, attachments: [] };
-          if (pdf) {
-            const b64 = await new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(String(reader.result || "").split(",")[1] || "");
-              reader.onerror = () => resolve("");
-              reader.readAsDataURL(pdf);
-            });
-            if (b64) mailPayload.attachments.push({ filename: "E-Badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
-          }
-          await fetch("/api/mailer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(mailPayload) }).catch(()=>null);
-        } catch (e) { console.warn("mail send failed", e); }
-      } catch (e) {
-        console.warn("PDF generation failed", e);
-      }
+        const frontendBase = (typeof window !== "undefined" && window.location && window.location.origin) ? window.location.origin : "";
+        const bannerUrl = (readLocalPricing() && readLocalPricing().bannerUrl) || "";
+        const emailModel = {
+          frontendBase,
+          entity: "visitors",
+          id: targetId,
+          name: finalRecord?.name || "",
+          company: finalRecord?.company || "",
+          ticket_code: finalRecord?.ticket_code || finalRecord?.ticketCode || providedTicketCode || "",
+          ticket_category: selectedCategory,
+          bannerUrl,
+          badgePreviewUrl: "",
+          downloadUrl: `${frontendBase}/ticket-download?entity=visitors&id=${encodeURIComponent(String(targetId || ""))}`,
+          event: (finalRecord && finalRecord.event) || {}
+        };
+        const { subject, text, html } = buildTicketEmail(emailModel);
+        const mailPayload = { to: finalRecord?.email, subject, text, html, attachments: [] };
+        // best-effort send (no attachments)
+        await fetch("/api/mailer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(mailPayload) }).catch(()=>null);
+      } catch (e) { console.warn("mail send failed (no attachments)", e); }
 
       // update UI state and finish
       setRecord(finalRecord);
-      setMessage("Upgrade successful — row updated. Check email for e‑badge.");
+      setMessage("Upgrade successful — row updated. Check your inbox for details (no attachments).");
       setProcessing(false);
+      return finalRecord;
     } catch (e) {
       console.error("finalizeUpgrade", e);
       setError("Finalize upgrade failed.");
       setProcessing(false);
+      return null;
     }
   }, [selectedCategory, selectedMeta, id, record, providedTicketCode]);
+
+  // ManualPaymentStep handlers
+  const handleTxIdChange = useCallback((value) => {
+    setTxId(value || "");
+    latestTxRef.current = value || "";
+  }, []);
+
+  const handlePaymentConfirmed = useCallback(() => {
+    // ManualPaymentStep will call onTxIdChange first, then onProofUpload => use latestTxRef
+    const tx = latestTxRef.current || txId || null;
+    finalizeUpgrade({ method: "online", txId: tx || null }).catch((e) => {
+      console.error("finalizeUpgrade after manual payment failed", e);
+    });
+  }, [finalizeUpgrade, txId]);
 
   const onManualProofUpload = useCallback((file) => {
     setManualProofFile(file || null);
@@ -340,9 +315,10 @@ export default function TicketUpgrade() {
     setProcessing(true);
     setError("");
     try {
-      const res = await fetch(`/api/visitors/${encodeURIComponent(String(id))}/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "Cancelled via upgrade page" }) }).catch(()=>null);
+      const targetId = id || (record && (record.id || record._id || ""));
+      const res = targetId ? await fetch(`/api/visitors/${encodeURIComponent(String(targetId))}/cancel`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "Cancelled via upgrade page" }) }).catch(()=>null) : null;
       if (!res || !res.ok) {
-        const r2 = await fetch(`/api/visitors/${encodeURIComponent(String(id))}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }).catch(()=>null);
+        const r2 = targetId ? await fetch(`/api/visitors/${encodeURIComponent(String(targetId))}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }).catch(()=>null) : null;
         if (!r2 || !r2.ok) {
           setError("Cancel failed");
           setProcessing(false);
@@ -351,7 +327,8 @@ export default function TicketUpgrade() {
       }
       // update cache and notify
       const cancelledRecord = { ...(record || {}), status: "cancelled" };
-      writeRegistrationCache("visitors", id, cancelledRecord);
+      const cacheId = id || (record && (record.id || record._id || "")) || providedTicketCode || "";
+      if (cacheId) writeRegistrationCache("visitors", cacheId, cancelledRecord);
       setMessage("Registration cancelled.");
       setProcessing(false);
     } catch (e) {
@@ -359,12 +336,25 @@ export default function TicketUpgrade() {
       setError("Cancel failed");
       setProcessing(false);
     }
-  }, [id, record]);
+  }, [id, record, providedTicketCode]);
 
   const availableCategories = useMemo(() => {
     const local = readLocalPricing();
     return local && local.visitors ? local.visitors : null;
   }, [record]);
+
+  // Apply (Free) button enabled/disabled logic:
+  // Enabled when:
+  //  - a category is selected (selectedCategory truthy)
+  //  - selected category is free (isSelectedFree === true)
+  //  - selected category is different from currentCategory (not isSameCategory)
+  const canApplyFree = useMemo(() => {
+    if (processing) return false;
+    if (!selectedCategory) return false;
+    if (!isSelectedFree) return false;
+    if (isSameCategory) return false;
+    return true;
+  }, [processing, selectedCategory, isSelectedFree, isSameCategory]);
 
   return (
     <div className="min-h-screen flex items-start justify-center p-6 bg-gray-50">
@@ -390,9 +380,9 @@ export default function TicketUpgrade() {
           <div className="bg-white rounded shadow p-6">
             <div className="mb-4">
               <div className="text-sm text-gray-500">Visitor</div>
-              <div className="text-xl font-semibold">{record.name || record.company || `#${record.id}`}</div>
+              <div className="text-xl font-semibold">{record.name || record.company || `#${record.id || providedTicketCode}`}</div>
               <div className="text-sm text-gray-600">{record.email || ""} • {record.mobile || ""}</div>
-              <div className="mt-2 text-sm">Current category: <strong>{record.ticket_category || record.category || "—"}</strong></div>
+              <div className="mt-2 text-sm">Current category: <strong>{currentCategory || "—"}</strong></div>
             </div>
 
             <div className="mb-6">
@@ -401,7 +391,7 @@ export default function TicketUpgrade() {
             </div>
 
             <div className="mb-4">
-              <div className="text-sm text-gray-600">Selected: <strong>{selectedMeta.label || selectedCategory}</strong></div>
+              <div className="text-sm text-gray-600">Selected: <strong>{selectedMeta.label || selectedCategory || "—"}</strong></div>
               <div className="text-2xl font-extrabold">{selectedMeta.total ? `₹${Number(selectedMeta.total).toLocaleString("en-IN")}` : "Free (no payment needed)"}</div>
               {selectedMeta.gstAmount ? <div className="text-sm text-gray-500">Includes GST: ₹{Number(selectedMeta.gstAmount).toLocaleString("en-IN")}</div> : null}
             </div>
@@ -409,22 +399,21 @@ export default function TicketUpgrade() {
             <div className="mb-6">
               {selectedMeta.total && Number(selectedMeta.total) > 0 ? (
                 <>
+                  {/* ManualPaymentStep is the single payment UI now */}
                   <div className="mb-3">
-                    <button className="px-4 py-2 bg-indigo-600 text-white rounded font-semibold mr-3" onClick={createOrderAndOpenCheckout} disabled={processing}>
-                      {processing ? "Processing…" : "Pay & Upgrade"}
-                    </button>
-                    <span className="text-sm text-gray-500">or upload payment proof below</span>
+                    <span className="text-sm text-gray-500">Use the manual payment section below (you may also open provider checkout from there).</span>
                   </div>
 
                   <ManualPaymentStep
                     ticketType={selectedCategory}
                     ticketPrice={selectedMeta.total}
-                    onProofUpload={onManualProofUpload}
-                    onTxIdChange={(v) => setTxId(v)}
+                    onProofUpload={handlePaymentConfirmed}    // called by ManualPaymentStep after provider confirms
+                    onTxIdChange={handleTxIdChange}            // called by ManualPaymentStep with provider tx id
                     txId={txId}
                     proofFile={manualProofFile}
                     setProofFile={setManualProofFile}
                   />
+
                   <div className="mt-3 flex gap-2">
                     <button className="px-4 py-2 bg-gray-700 text-white rounded" onClick={submitManualProof} disabled={processing || !manualProofFile}>
                       {processing ? "Submitting…" : "Submit Proof & Upgrade"}
@@ -433,9 +422,20 @@ export default function TicketUpgrade() {
                 </>
               ) : (
                 <div>
-                  <button className="px-4 py-2 bg-green-600 text-white rounded font-semibold" onClick={() => finalizeUpgrade({ method: "free" })} disabled={processing}>
+                  <button
+                    className={`px-4 py-2 ${canApplyFree ? "bg-green-600 text-white" : "bg-gray-200 text-gray-500 cursor-not-allowed"} rounded font-semibold`}
+                    onClick={async () => {
+                      if (!canApplyFree) return;
+                      if (!window.confirm(`Apply free upgrade to "${selectedMeta.label || selectedCategory}" for this visitor?`)) return;
+                      await finalizeUpgrade({ method: "free" });
+                    }}
+                    disabled={!canApplyFree}
+                  >
                     {processing ? "Applying…" : "Apply Upgrade (Free)"}
                   </button>
+
+                  {!selectedCategory && <div className="mt-2 text-sm text-gray-500">Select a category to enable the free upgrade button.</div>}
+                  {selectedCategory && isSameCategory && <div className="mt-2 text-sm text-gray-500">Selected category is same as current — choose a different category to upgrade.</div>}
                 </div>
               )}
             </div>
@@ -443,6 +443,12 @@ export default function TicketUpgrade() {
             <div className="mb-6">
               <div className="text-lg font-semibold mb-3">Preview E‑Badge</div>
               <VisitorTicket visitor={record} qrSize={200} showQRCode={true} accentColor="#2b6b4a" />
+            </div>
+
+            <div className="flex gap-3 items-center">
+              <a href={`${window.__FRONTEND_BASE__ || window.location.origin}/ticket-download?entity=visitors&id=${encodeURIComponent(String(record.id || id || providedTicketCode || ""))}`} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 underline">
+                Open frontend download page
+              </a>
             </div>
 
             {message && <div className="mt-3 text-green-700">{message}</div>}
