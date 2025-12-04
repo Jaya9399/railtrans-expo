@@ -1,14 +1,14 @@
 // Builds subject, plain-text and HTML email for ticket / e-badge delivery
 // Updated to include an "Upgrade Ticket" CTA that links to the ticket upgrade page.
-// The "Upgrade Ticket" button is only included in the HTML email when entity === "visitors".
+// Download button now points to a frontend route (/ticket-download) which will
+// generate the PDF client-side and force a file download when the user opens it.
 //
 // Use:
-// buildTicketEmail({ frontendBase, entity, id, name, company, ticket_code, ticket_category, bannerUrl, badgePreviewUrl, downloadUrl, upgradeUrl, event, form, pdfBase64 })
+// buildTicketEmail({ frontendBase, entity, id, name, company, ticket_code, ticket_category,
+//                    bannerUrl, badgePreviewUrl, downloadUrl, upgradeUrl, event, form, pdfBase64 })
 //
 // When upgradeUrl is not provided, a sensible default is constructed as:
 //   `${frontendBase}/ticket-upgrade?entity=${entity}&id=${id}&ticket_code=${ticket_code}`
-//
-// The email buttons use white text for contrast.
 
 function normalizeBase64(b) {
   if (!b) return "";
@@ -29,7 +29,7 @@ export function buildTicketEmail({
   ticket_category = "",
   bannerUrl = "",       // top banner (Image 1)
   badgePreviewUrl = "", // preview badge (Image 2)
-  downloadUrl = "",     // direct link to badge PDF (recommended signed URL)
+  downloadUrl = "",     // direct link to badge PDF (recommended signed URL) - overridden below to frontend download page
   upgradeUrl = "",      // self-service upgrade link (if any)
   event = {
     name: "6th RailTrans Expo 2026",
@@ -40,14 +40,19 @@ export function buildTicketEmail({
   form = null,          // optional raw form object with extra fields (designation, mobile, etc)
   pdfBase64 = null,     // optional base64 PDF to attach
 } = {}) {
-  const frontend = frontendBase.replace(/\/$/, "");
+  const frontend = String(frontendBase || "").replace(/\/$/, "");
+
   // Construct a reasonable upgrade URL when not provided
   const defaultUpgrade = `${frontend}/ticket-upgrade?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(id || ""))}&ticket_code=${encodeURIComponent(String(ticket_code || ""))}`;
   const upgradeLink = upgradeUrl && String(upgradeUrl).trim() ? upgradeUrl : defaultUpgrade;
 
-  // Provide a sensible downloadUrl if not given and ticket_code exists
+  // Provide a sensible downloadUrl if not given:
+  // Point to a frontend download page which will generate & trigger the download client-side.
   if (!downloadUrl && ticket_code) {
-    downloadUrl = `${frontend.replace(/\/$/, "")}/api/tickets/${encodeURIComponent(String(ticket_code))}/download`;
+    downloadUrl = `${frontend}/ticket-download?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(id || ""))}&ticket_code=${encodeURIComponent(String(ticket_code || ""))}`;
+  } else if (!downloadUrl && id) {
+    // fallback to id-based download page
+    downloadUrl = `${frontend}/ticket-download?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(id || ""))}`;
   }
 
   const manageUrl = `${frontend}/ticket?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(id))}`;
@@ -134,8 +139,8 @@ export function buildTicketEmail({
           <div class="reg">Your Registration Number: <span style="color:#0b4f60">${ticket_code || "N/A"}</span></div>
 
           <div class="actions">
-            ${downloadUrl ? `<a href="${downloadUrl}" class="cta">Download E‑Badge</a>` : `<a href="${manageUrl}" class="cta">View / Download E‑Badge</a>`}
-            ${upgradeLink && entity === "visitors" ? `<a href="${upgradeLink}" class="cta secondary">Upgrade Ticket</a>` : ""}
+            ${downloadUrl ? `<a href="${downloadUrl}" class="cta" target="_blank" rel="noopener noreferrer" aria-label="Download E-Badge PDF">Download E‑Badge</a>` : `<a href="${manageUrl}" class="cta" target="_blank" rel="noopener noreferrer" aria-label="View or Download E-Badge">View / Download E‑Badge</a>`}
+            ${upgradeLink && entity === "visitors" ? `<a href="${upgradeLink}" class="cta secondary" target="_blank" rel="noopener noreferrer" aria-label="Upgrade ticket">Upgrade Ticket</a>` : ""}
           </div>
 
           ${(mobile || "") ? `<div class="small" style="margin-top:8px">Mobile: ${mobile}</div>` : ""}
@@ -169,7 +174,7 @@ export function buildTicketEmail({
 </html>
 `;
 
-  // attachments array: include badge PDF if provided as base64
+  // attachments array: include badge PDF if provided as base64 (optional)
   const attachments = [];
   if (pdfBase64) {
     const b64 = normalizeBase64(pdfBase64);

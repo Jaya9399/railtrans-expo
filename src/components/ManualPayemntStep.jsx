@@ -16,7 +16,7 @@ export default function ManualPaymentStep({
   proofFile,
   setProofFile,
 }) {
-  const [loading, setLoading] = useState(false);
+  const [loading] = useState(false);
   const [payLoading, setPayLoading] = useState(false);
   const [error, setError] = useState("");
   const [checkoutOpened, setCheckoutOpened] = useState(false);
@@ -125,15 +125,7 @@ export default function ManualPaymentStep({
     }
   }
 
-  function handleSubmitProof(e) {
-    e?.preventDefault && e.preventDefault();
-    setError("");
-    if (!txId && !proofFile) {
-      setError("Provide a transaction ID or upload a payment proof to continue.");
-      return;
-    }
-    try { onProofUpload && onProofUpload(); } catch (err) { setError(err?.message || "Failed to submit payment proof"); }
-  }
+  
 
   return (
     <div className="bg-white rounded-xl shadow-xl p-8 max-w-lg mx-auto mt-8">
@@ -152,33 +144,13 @@ export default function ManualPaymentStep({
           <button className="px-4 py-2 bg-green-600 text-white rounded disabled:opacity-60" onClick={createOrder} disabled={payLoading || checkoutOpened}>
             {payLoading ? "Opening checkout..." : checkoutOpened ? "Checkout opened" : "Pay Online"}
           </button>
-          <button type="button" className="px-4 py-2 bg-gray-200 text-gray-800 rounded" onClick={() => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } setCheckoutOpened(false); setPaymentStatus("created"); }}>
-            Use Manual Payment
-          </button>
+          
         </div>
         {paymentStatus === "pending" && <div className="mt-2 text-sm text-yellow-600">Waiting for provider confirmation...</div>}
         {paymentStatus === "paid" && <div className="mt-2 text-sm text-green-600">Payment confirmed.</div>}
       </div>
       <hr className="my-4" />
-      <form onSubmit={handleSubmitProof}>
-        <div className="mb-3">
-          <label className="block mb-2 text-sm font-medium text-gray-700">Transaction ID (if any)</label>
-          <input type="text" value={txId || ""} onChange={(e) => onTxIdChange && onTxIdChange(e.target.value)} className="border px-4 py-2 rounded w-full" placeholder="Enter transaction ID" />
-        </div>
-        <div className="mb-4">
-          <label className="block mb-2 text-sm font-medium text-gray-700">Upload Payment Proof (optional)</label>
-          <input type="file" accept="image/*,.pdf" onChange={(e) => { const f = e?.target?.files?.[0] || null; setProofFile && setProofFile(f); }} />
-          {proofFile && <div className="mt-2 text-sm text-gray-600">Selected: {proofFile.name}</div>}
-        </div>
-        <div className="flex justify-between items-center gap-3">
-          <button type="submit" className="px-6 py-2 rounded-full font-bold bg-[#196e87] text-white" disabled={loading}>
-            {loading ? "Submitting..." : "Submit Payment Proof"}
-          </button>
-          <button type="button" className="px-4 py-2 bg-gray-100 text-gray-800 rounded" onClick={() => { onTxIdChange && onTxIdChange(""); setProofFile && setProofFile(null); setError(""); }}>
-            Reset
-          </button>
-        </div>
-      </form>
+    
       {error && <div className="mt-4 text-red-600 font-medium">{error}</div>}
       <div className="mt-4 text-xs text-gray-500">If you pay online, the checkout will open in a new tab. After successful payment we will automatically continue the registration.</div>
     </div>

@@ -10,8 +10,6 @@ import {
   HiOutlineTable,
   HiOutlineLockClosed,
   HiOutlineChevronRight,
-  HiOutlineChartBar,
-  HiOutlineMail,
 } from "react-icons/hi";
 
 /*
