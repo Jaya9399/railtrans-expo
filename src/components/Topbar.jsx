@@ -13,7 +13,8 @@ function hexToRgb(hex) {
   const h = safeHex(hex);
   if (!h) return null;
   const cleaned = h.replace("#", "");
-  const bigint = parseInt(cleaned.length === 3 ? cleaned.split("").map(c => c + c).join("") : cleaned, 16);
+  const normalized = cleaned.length === 3 ? cleaned.split("").map((c) => c + c).join("") : cleaned;
+  const bigint = parseInt(normalized, 16);
   return {
     r: (bigint >> 16) & 255,
     g: (bigint >> 8) & 255,
@@ -30,7 +31,14 @@ function darkenHex(hex, amount = 0.12) {
   return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
 }
 
-export default function Topbar() {
+/**
+ * Topbar component
+ * - onToggleSidebar: called on mobile hamburger click to open the sidebar drawer.
+ * - Does not fix position; AdminLayout should position it (so layout remains consistent).
+ * - Responsible for loading logo and primary color from /api/admin-config (with localStorage fallback).
+ * - Shows a Scanner button which opens a modal with TicketScanner (lazy loaded).
+ */
+export default function Topbar({ onToggleSidebar = () => {} }) {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [logo, setLogo] = useState("/images/logo.png");
   const [primaryColor, setPrimaryColor] = useState("#196e87");
@@ -47,12 +55,13 @@ export default function Topbar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [scannerOpen, closeScanner]);
 
+  // load admin topbar config (logo + primary color)
   useEffect(() => {
     let mounted = true;
     const controller = new AbortController();
 
     async function loadConfig() {
-      // First try server
+      // 1) try server
       try {
         const res = await fetch("/api/admin-config", { signal: controller.signal });
         if (res.ok) {
@@ -60,18 +69,20 @@ export default function Topbar() {
           if (mounted && json && typeof json === "object") {
             if (json.logoUrl) setLogo(json.logoUrl);
             if (json.primaryColor) setPrimaryColor(safeHex(json.primaryColor) || "#196e87");
-            // persist locally for offline fallback
             try {
-              window.localStorage.setItem("admin:topbar", JSON.stringify({ logoUrl: json.logoUrl || "", primaryColor: json.primaryColor || "" }));
+              window.localStorage.setItem(
+                "admin:topbar",
+                JSON.stringify({ logoUrl: json.logoUrl || "", primaryColor: json.primaryColor || "" })
+              );
             } catch {}
             return;
           }
         }
       } catch (err) {
-        // fetch failed, fall through to localStorage
+        // ignore and fall back to localStorage
       }
 
-      // Fallback to localStorage
+      // 2) fallback to localStorage
       try {
         const raw = window.localStorage.getItem("admin:topbar");
         if (raw) {
@@ -96,56 +107,77 @@ export default function Topbar() {
   return (
     <>
       <header
-        className="w-full shadow flex items-center px-8 py-4"
+        className="h-16 w-full flex items-center px-4 md:px-6 shadow"
         style={{ backgroundColor: primaryColor }}
       >
         <div className="flex items-center w-full">
+          {/* Mobile hamburger: shown only on small screens */}
+          <button
+            onClick={onToggleSidebar}
+            className="md:hidden mr-3 p-2 rounded bg-black/10 text-white hover:bg-black/20"
+            aria-label="Toggle sidebar"
+            title="Open menu"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+
+          {/* Logo */}
           <img
             src={logo}
-            alt="Logo"
-            className="h-12 w-auto mr-4"
+            alt="RailTrans Expo"
+            className="h-10 w-auto mr-4"
             style={{ objectFit: "contain" }}
-            onError={(e) => { e.currentTarget.src = "/images/logo.png"; }}
+            onError={(e) => {
+              // fallback to local asset if remote logo fails
+              try {
+                e.currentTarget.src = "/images/logo.png";
+              } catch {}
+            }}
           />
+
+          {/* spacer */}
           <div className="flex-1" />
-          {/* Scanner button on the right */}
-          <button
-            onClick={openScanner}
-            className="ml-4 px-4 py-2 rounded text-white font-semibold flex items-center gap-2"
-            style={{ backgroundColor: buttonBg }}
-            title="Open Gate Scanner"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7h18M3 12h18M3 17h18" />
-            </svg>
-            Scanner
-          </button>
+
+          {/* Right controls */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={openScanner}
+              className="ml-2 px-3 py-2 rounded text-white font-semibold flex items-center gap-2"
+              style={{ backgroundColor: buttonBg }}
+              title="Open Gate Scanner"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 7h18M3 12h18M3 17h18" />
+              </svg>
+              <span className="hidden sm:inline">Scanner</span>
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Modal for scanner */}
+      {/* Scanner modal (lazy-loaded component) */}
       {scannerOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
           aria-modal="true"
           role="dialog"
         >
-          {/* backdrop */}
           <div
             className="absolute inset-0 bg-black/50"
             onClick={closeScanner}
             aria-hidden="true"
           />
 
-          {/* dialog */}
           <div className="relative w-[96%] sm:w-[80%] md:w-[720px] max-w-full bg-white rounded-lg shadow-2xl overflow-hidden z-10">
             <div className="flex items-center justify-between px-4 py-3 border-b">
-              <div className="text-lg font-semibold" style={{ color: primaryColor }}>Ticket Scanner</div>
+              <div className="text-lg font-semibold" style={{ color: primaryColor }}>
+                Ticket Scanner
+              </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    closeScanner();
-                  }}
+                  onClick={closeScanner}
                   className="px-3 py-1 rounded bg-gray-100 text-gray-800"
                 >
                   Close
