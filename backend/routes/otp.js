@@ -33,27 +33,26 @@ function buildTransporter() {
       pool: true,
     });
   }
-  throw new Error("No SMTP configuration provided.");
+  // Dev fallback so OTP flow can be tested without SMTP configured
+  return nodemailer.createTransport({ jsonTransport: true });
 }
 
 const transporter = buildTransporter();
 transporter.verify((err) => {
   if (err) console.error("SMTP verify failed:", err.message);
-  else console.log("SMTP server is ready to take our messages");
+  else console.log("SMTP server is ready to take messages");
 });
 
 function isValidEmail(addr = "") {
   return typeof addr === "string" && /\S+@\S+\.\S+/.test(addr);
 }
 
-// In-memory OTP store
 const otpStore = new Map();
 
-// Settings
-const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const RESEND_COOLDOWN_MS = 60 * 1000; // 60s cooldown
+const OTP_TTL_MS = 5 * 60 * 1000;
+const RESEND_COOLDOWN_MS = 60 * 1000;
 const MAX_SENDS_PER_WINDOW = 5;
-const SENDS_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const SENDS_WINDOW_MS = 60 * 60 * 1000;
 const MAX_VERIFY_ATTEMPTS = 5;
 
 setInterval(() => {
@@ -63,32 +62,26 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref();
 
-/**
- * Map registration type to DB table name.
- * Extend this map if you have other registration tables.
- */
-function mapTypeToTable(type = "visitor") {
+function mapTypeToTable(type = "") {
   const t = String(type || "").trim().toLowerCase();
   const map = {
     visitor: "visitors",
-    visitors: "visitors",
     exhibitor: "exhibitors",
-    exhibitors: "exhibitors",
     speaker: "speakers",
-    speakers: "speakers",
     partner: "partners",
-    partners: "partners",
     awardee: "awardees",
-    awardees: "awardees",
   };
-  return map[t] || `${t}s`;
+  return map[t] || null;
 }
 
 /**
- * Helper: safely run a SELECT id,ticket_code WHERE LOWER(email)=?
- * Handles different pool.query shapes and normalizes output.
+ * Defensive DB lookup:
+ * - Returns a record {id, ticket_code} when found
+ * - Returns null when not found
+ * - On DB errors, logs the error and returns null (we intentionally "fail open")
  */
 async function findExistingByEmail(table, emailLower) {
+  if (!table) return null;
   try {
     const raw = await pool.query(`SELECT id, ticket_code FROM \`${table}\` WHERE LOWER(email) = ? LIMIT 1`, [emailLower]);
     const rows = Array.isArray(raw) ? raw[0] : raw;
@@ -96,17 +89,20 @@ async function findExistingByEmail(table, emailLower) {
     if (rows && typeof rows === "object" && "id" in rows) return rows;
     return null;
   } catch (err) {
-    console.error(`DB lookup error for table=${table} email=${emailLower}:`, err && err.stack ? err.stack : err);
-    throw err;
+    console.error(`[otp] DB lookup failed for table="${table}", email="${emailLower}":`, err && (err.stack || err.message || err));
+    // Return null so OTP sending continues when DB is temporarily unavailable
+    return null;
   }
 }
 
 /**
  * POST /api/otp/send
- * body: { type: "email", value, requestId?, registrationType }
+ * Body: { type: "email", value: "<email>", requestId?: "...", registrationType: "visitor" }
  *
- * IMPORTANT: check the DB for an existing record IN THE SAME TABLE (registrationType)
- * BEFORE sending the OTP. If the record exists, return 409 and DO NOT send OTP.
+ * Behavior:
+ * - registrationType is required and determines which DB table to check.
+ * - If a matching record exists in that table, respond 409 with existing info and DO NOT send OTP.
+ * - If no matching record is found (or DB check fails), proceed to send OTP (no other errors shown).
  */
 router.post("/send", async (req, res) => {
   try {
@@ -117,44 +113,46 @@ router.post("/send", async (req, res) => {
     }
 
     if (!registrationType || typeof registrationType !== "string") {
-      // require the frontend to pass the registrationType so we only check the intended table
       return res.status(400).json({ success: false, error: "registrationType is required (e.g. 'visitor','exhibitor')", code: "missing_registration_type" });
     }
 
-    const key = String(value).trim().toLowerCase();
-
-    // === PRE-CHECK: only check the same table (registrationType) ===
+    const emailNorm = String(value).trim().toLowerCase();
     const regType = String(registrationType).trim().toLowerCase();
     const table = mapTypeToTable(regType);
 
-    try {
-      const existing = await findExistingByEmail(table, key);
-      if (existing) {
-        // Don't send OTP — inform client that email already exists for this registration type
-        return res.status(409).json({
-          success: false,
-          error: "Email already exists",
-          existing: { id: existing.id, ticket_code: existing.ticket_code || null },
-          registrationType: regType,
-        });
-      }
-    } catch (dbErr) {
-      // If DB check fails unexpectedly, log and return an error (safer than proceeding)
-      console.error("DB pre-check error before sending OTP:", dbErr && dbErr.stack ? dbErr.stack : dbErr);
-      return res.status(500).json({ success: false, error: "Server error checking email" });
+    if (!table) {
+      return res.status(400).json({ success: false, error: "Unknown registrationType", registrationType: regType, code: "unknown_registration_type" });
     }
-    // === END PRE-CHECK ===
 
+    console.debug(`[otp/send] pre-check table=${table} email=${emailNorm}`);
+
+    // DB pre-check: only this table.
+    // If findExistingByEmail returns an object -> existing -> return 409 and do not send OTP.
+    // If it returns null (no row OR DB error), proceed and send OTP.
+    let existing = null;
+    try {
+      existing = await findExistingByEmail(table, emailNorm);
+    } catch (err) {
+      // findExistingByEmail already logs; ensure we don't block OTP sending on error.
+      existing = null;
+    }
+
+    if (existing) {
+      console.debug(`[otp/send] email exists in ${table}: id=${existing.id} ticket_code=${existing.ticket_code}`);
+      return res.status(409).json({
+        success: false,
+        error: "Email already exists",
+        existing: { id: existing.id, ticket_code: existing.ticket_code || null },
+        registrationType: regType,
+      });
+    }
+
+    // No existing record found -> send OTP normally (no other errors shown)
+    const key = emailNorm;
     const now = Date.now();
     const existingRec = otpStore.get(key) || {};
 
-    // Idempotency: if same requestId seen within 2 minutes, return success without sending another email
-    if (
-      requestId &&
-      existingRec.lastRequestId === requestId &&
-      existingRec.lastSentAt &&
-      now - existingRec.lastSentAt < 2 * 60 * 1000
-    ) {
+    if (requestId && existingRec.lastRequestId === requestId && existingRec.lastSentAt && now - existingRec.lastSentAt < 2 * 60 * 1000) {
       return res.json({
         success: true,
         email: key,
@@ -164,7 +162,6 @@ router.post("/send", async (req, res) => {
       });
     }
 
-    // Cooldown
     if (existingRec.cooldownUntil && now < existingRec.cooldownUntil) {
       return res.status(429).json({
         success: false,
@@ -173,7 +170,6 @@ router.post("/send", async (req, res) => {
       });
     }
 
-    // Windowed rate limit
     let windowStart = existingRec.windowStart || now;
     let sendCount = existingRec.sendCount || 0;
     if (now - windowStart > SENDS_WINDOW_MS) {
@@ -184,7 +180,7 @@ router.post("/send", async (req, res) => {
       return res.status(429).json({ success: false, error: "Too many OTP requests. Please try again later." });
     }
 
-    // Generate OTP and store
+    // Generate & store OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const rec = {
       otp,
@@ -198,37 +194,43 @@ router.post("/send", async (req, res) => {
     };
     otpStore.set(key, rec);
 
-    const from = process.env.MAIL_FROM || process.env.SMTP_USER;
-    await transporter.sendMail({
-      from,
-      to: value,
-      subject: "Your RailTrans Expo OTP",
-      text: `Your OTP is ${otp}. It expires in 5 minutes.`,
-      html: `<p>Your OTP is <b>${otp}</b>. It expires in 5 minutes.</p>`,
-    });
+    const from = process.env.MAIL_FROM || process.env.SMTP_USER || "no-reply@example.com";
+    try {
+      await transporter.sendMail({
+        from,
+        to: value,
+        subject: "Your RailTrans Expo OTP",
+        text: `Your OTP is ${otp}. It expires in 5 minutes.`,
+        html: `<p>Your OTP is <b>${otp}</b>. It expires in 5 minutes.</p>`,
+      });
+    } catch (mailErr) {
+      console.error("[otp/send] mail send failed:", mailErr && (mailErr.stack || mailErr.message || mailErr));
+      otpStore.delete(key);
+      return res.status(500).json({ success: false, error: "Failed to send OTP email" });
+    }
 
+    console.debug(`[otp/send] OTP sent to ${emailNorm} for registrationType=${regType}`);
     return res.json({
       success: true,
       email: key,
+      registrationType: regType,
       expiresInSec: Math.floor(OTP_TTL_MS / 1000),
       resendCooldownSec: Math.ceil(RESEND_COOLDOWN_MS / 1000),
     });
   } catch (err) {
-    console.error("OTP send error:", err && err.stack ? err.stack : err);
-    return res.status(500).json({ success: false, error: err && err.message ? err.message : String(err) });
+    console.error("[otp/send] unexpected error:", err && (err.stack || err.message || err));
+    return res.status(500).json({ success: false, error: "Server error" });
   }
 });
 
 /**
  * POST /api/otp/verify
- * body: { value, otp, registrationType }
- *
- * This endpoint verifies the OTP and returns existing record info ONLY for the same
- * registrationType table (required).
+ * Body: { value, otp, registrationType }
  */
 router.post("/verify", async (req, res) => {
   try {
     const { value, otp, registrationType } = req.body || {};
+
     if (!isValidEmail(value)) {
       return res.status(400).json({ success: false, error: "Provide a valid email" });
     }
@@ -236,11 +238,11 @@ router.post("/verify", async (req, res) => {
       return res.status(400).json({ success: false, error: "registrationType is required for verification" });
     }
 
-    const key = String(value).trim().toLowerCase();
+    const emailNorm = String(value).trim().toLowerCase();
+    const key = emailNorm;
     const rec = otpStore.get(key);
-    if (!rec) {
-      return res.json({ success: false, error: "OTP not found or expired" });
-    }
+    if (!rec) return res.json({ success: false, error: "OTP not found or expired" });
+
     const now = Date.now();
     if (rec.expires < now) {
       otpStore.delete(key);
@@ -250,6 +252,7 @@ router.post("/verify", async (req, res) => {
       otpStore.delete(key);
       return res.status(429).json({ success: false, error: "Too many incorrect attempts. Please request a new OTP." });
     }
+
     const input = String(otp || "").trim();
     if (input.length !== 6 || rec.otp !== input) {
       rec.attempts = (rec.attempts || 0) + 1;
@@ -257,29 +260,30 @@ router.post("/verify", async (req, res) => {
       return res.json({ success: false, error: "Incorrect OTP" });
     }
 
-    // success: consume OTP
+    // consume
     otpStore.delete(key);
 
-    // Only check the provided registrationType table
-    const typeToCheck = String(registrationType).trim().toLowerCase();
-    const table = mapTypeToTable(typeToCheck);
+    const regType = String(registrationType).trim().toLowerCase();
+    const table = mapTypeToTable(regType);
+    if (!table) return res.status(400).json({ success: false, error: "Unknown registrationType" });
+
     try {
-      const existing = await findExistingByEmail(table, key);
+      const existing = await findExistingByEmail(table, emailNorm);
       if (existing) {
         return res.json({
           success: true,
-          email: key,
-          registrationType: typeToCheck,
-          existing: { id: existing.id, ticket_code: existing.ticket_code },
+          email: emailNorm,
+          registrationType: regType,
+          existing: { id: existing.id, ticket_code: existing.ticket_code || null },
         });
       }
-      return res.json({ success: true, email: key, registrationType: typeToCheck });
-    } catch (err) {
-      console.error("OTP verify DB check error:", err && err.stack ? err.stack : err);
+      return res.json({ success: true, email: emailNorm, registrationType: regType });
+    } catch (dbErr) {
+      console.error("[otp/verify] DB error:", dbErr && (dbErr.stack || dbErr.message || dbErr));
       return res.status(500).json({ success: false, error: "Server error during verification" });
     }
   } catch (err) {
-    console.error("OTP verify error:", err && err.stack ? err.stack : err);
+    console.error("[otp/verify] unexpected error:", err && (err.stack || err.message || err));
     return res.status(500).json({ success: false, error: "Server error" });
   }
 });

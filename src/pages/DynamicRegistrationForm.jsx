@@ -1,15 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation, useParams } from "react-router-dom";
 
 /*
-  DynamicRegistrationForm.jsx (focused changes)
+  DynamicRegistrationForm.jsx (robust registrationType detection)
 
-  - registrationType is required for per-page forms and is passed to OTP endpoints so DB checks happen only in that table.
-  - EmailOtpVerifier now:
-      * passes registrationType on /send and /verify
-      * if /send returns 409, it shows existing info + TicketUpgrade button
-      * if /verify returns existing, it shows existing info + TicketUpgrade button
-  - TicketUpgrade page should be implemented and linked from the Update button (see pages/TicketUpgrade.jsx below).
+  Changes:
+  - If registrationType prop is not provided, infer it automatically from:
+      1) route params (useParams)
+      2) query string (?type=...)
+      3) last segment of pathname (/register/visitor)
+      4) fallback to "visitor"
+  - Ensures EmailOtpVerifier always receives a concrete registrationType.
+  - Adds a debug console.log in handleSendOtp to show which registrationType is being sent.
+  - Keeps previous behavior otherwise.
 */
 
 function isVisible(field, form) {
@@ -23,6 +26,18 @@ function isEmail(str) {
 }
 function makeRequestId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const KNOWN_TYPES = ["visitor", "exhibitor", "speaker", "partner", "awardee"];
+
+function normalizeType(t) {
+  if (!t || typeof t !== "string") return null;
+  const s = t.trim().toLowerCase();
+  if (!s) return null;
+  if (KNOWN_TYPES.includes(s)) return s;
+  // tolerate plural or trailing s
+  if (s.endsWith("s") && KNOWN_TYPES.includes(s.slice(0, -1))) return s.slice(0, -1);
+  return null;
 }
 
 /* Email OTP verifier - sends registrationType and surfaces existing info */
@@ -77,11 +92,21 @@ function EmailOtpVerifier({
     setExisting(null);
     try {
       const requestId = makeRequestId();
+
+      // DEBUG: show what registrationType will be sent
+      console.debug("[EmailOtpVerifier] sending /api/otp/send registrationType=", registrationType, "email=", emailNorm);
+
       const res = await fetch(`${apiBase || ""}/api/otp/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "email", value: emailNorm, requestId, registrationType }),
+        body: JSON.stringify({
+          type: "email",
+          value: emailNorm,
+          requestId,
+          registrationType, // <<-- IMPORTANT: pass registrationType
+        }),
       });
+
       const data = await res.json().catch(() => null);
 
       // If server returns 409 with existing, show message and DO NOT expect an OTP
@@ -210,7 +235,6 @@ function EmailOtpVerifier({
             >
               Upgrade Ticket
             </button>
-            
           </div>
         </div>
       )}
@@ -218,7 +242,7 @@ function EmailOtpVerifier({
   );
 }
 
-/* Main DynamicRegistrationForm (registrationType must be provided per page) */
+/* Main DynamicRegistrationForm (registrationType detection added) */
 export default function DynamicRegistrationForm({
   config,
   form,
@@ -227,9 +251,12 @@ export default function DynamicRegistrationForm({
   editable = true,
   terms = null,
   apiBase = "",
-  registrationType = "visitor", // must be set per-page
+  registrationType: propRegistrationType = null,
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const params = useParams();
+
   const [emailVerified, setEmailVerified] = useState(false);
   const [localConfig, setLocalConfig] = useState(config || null);
   const [loadingConfig, setLoadingConfig] = useState(!config);
@@ -242,6 +269,42 @@ export default function DynamicRegistrationForm({
 
   const [pendingSubmitAfterOtp, setPendingSubmitAfterOtp] = useState(false);
   const [verificationToken, setVerificationToken] = useState(null);
+
+  // Determine registrationType: priority prop > query ?type= > route param "type" > last path segment > fallback "visitor"
+  const inferredRegistrationType = (() => {
+    const fromProp = normalizeType(propRegistrationType);
+    if (fromProp) return fromProp;
+
+    // query string ?type=...
+    try {
+      const q = new URLSearchParams(location.search || "");
+      const qtype = normalizeType(q.get("type"));
+      if (qtype) return qtype;
+    } catch {}
+
+    // route params (e.g., /register/:type)
+    try {
+      const p = normalizeType(params.type || params.registrationType || params.kind);
+      if (p) return p;
+    } catch {}
+
+    // last path part
+    try {
+      const parts = (location.pathname || "").split("/").filter(Boolean);
+      if (parts.length) {
+        const last = normalizeType(parts[parts.length - 1]);
+        if (last) return last;
+        // sometimes path like /register/visitor -> second last
+        if (parts.length >= 2) {
+          const secondLast = normalizeType(parts[parts.length - 2]);
+          if (secondLast) return secondLast;
+        }
+      }
+    } catch {}
+
+    // fallback
+    return "visitor";
+  })();
 
   useEffect(() => {
     if (config) {
@@ -256,8 +319,8 @@ export default function DynamicRegistrationForm({
       if (config) return;
       setLoadingConfig(true);
       try {
-        const cfgEndpoint = registrationType && registrationType !== "visitor"
-          ? `${apiBase || ""}/api/${encodeURIComponent(registrationType)}-config`
+        const cfgEndpoint = inferredRegistrationType && inferredRegistrationType !== "visitor"
+          ? `${apiBase || ""}/api/${encodeURIComponent(inferredRegistrationType)}-config`
           : `${apiBase || ""}/api/visitor-config`;
         const res = await fetch(cfgEndpoint);
         if (!res.ok) {
@@ -277,7 +340,7 @@ export default function DynamicRegistrationForm({
     }
     fetchCfg();
     return () => (mounted = false);
-  }, [config, apiBase, registrationType]);
+  }, [config, apiBase, inferredRegistrationType]);
 
   useEffect(() => {
     const emailField = (localConfig && localConfig.fields || []).find(f => f.type === "email");
@@ -297,7 +360,7 @@ export default function DynamicRegistrationForm({
       }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form && JSON.stringify(form), localConfig, registrationType]);
+  }, [form && JSON.stringify(form), localConfig, inferredRegistrationType]);
 
   function handleChange(e) {
     const { name, value, type, checked } = e.target;
@@ -324,9 +387,10 @@ export default function DynamicRegistrationForm({
     try {
       const body = { ...payload };
       if (verificationToken) body.verificationToken = verificationToken;
-      body.registrationType = registrationType;
+      body.registrationType = inferredRegistrationType;
       // NOTE: adjust endpoint per your server (this example posts to /api/visitors for all types).
-      const res = await fetch(`${apiBase || ""}/api/visitors`, {
+      const endpoint = `${apiBase || ""}/api/visitors`;
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -340,7 +404,7 @@ export default function DynamicRegistrationForm({
       }
 
       if (data && data.showUpdate && data.existing && data.existing.id) {
-        navigate(`/ticket-upgrade?type=${encodeURIComponent(registrationType)}&id=${encodeURIComponent(String(data.existing.id))}`);
+        navigate(`/ticket-upgrade?type=${encodeURIComponent(inferredRegistrationType)}&id=${encodeURIComponent(String(data.existing.id))}`);
         return { ok: false, data };
       }
 
@@ -437,7 +501,7 @@ export default function DynamicRegistrationForm({
                         setVerified={setEmailVerified}
                         apiBase={apiBase}
                         autoSend={autoOtpSend}
-                        registrationType={registrationType}
+                        registrationType={inferredRegistrationType}
                       />
                     )}
                   </div>
