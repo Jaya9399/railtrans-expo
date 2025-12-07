@@ -1,14 +1,6 @@
 // Builds subject, plain-text and HTML email for ticket / e-badge delivery
-// Updated to include an "Upgrade Ticket" CTA that links to the ticket upgrade page.
-// Download button now points to a frontend route (/ticket-download) which will
-// generate the PDF client-side and force a file download when the user opens it.
-//
-// Use:
-// buildTicketEmail({ frontendBase, entity, id, name, company, ticket_code, ticket_category,
-//                    bannerUrl, badgePreviewUrl, downloadUrl, upgradeUrl, event, form, pdfBase64 })
-//
-// When upgradeUrl is not provided, a sensible default is constructed as:
-//   `${frontendBase}/ticket-upgrade?entity=${entity}&id=${id}&ticket_code=${ticket_code}`
+// This template inlines no remote images itself — server should attach logo as CID.
+// It renders the full registration message and guidelines requested by the user.
 
 function normalizeBase64(b) {
   if (!b) return "";
@@ -19,7 +11,35 @@ function normalizeBase64(b) {
   return b;
 }
 
-export function buildTicketEmail({
+function normalizeForEmailUrl(url, frontendBase) {
+  if (!url) return "";
+  const s = String(url).trim();
+  if (!s) return "";
+  if (s.startsWith("data:")) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  const base = String(frontendBase || "").replace(/\/$/, "");
+  if (!base) return s;
+  if (s.startsWith("/")) return base + s;
+  return base + "/" + s.replace(/^\//, "");
+}
+
+function resolveEventDetails(form, eventParam) {
+  if (form && typeof form === "object") {
+    if (form.event && typeof form.event === "object") return { ...eventParam, ...form.event };
+    if (form.eventDetails && typeof form.eventDetails === "object") return { ...eventParam, ...form.eventDetails };
+    const possible = {
+      name: form.eventName || form.event_name || form.eventTitle || eventParam.name,
+      dates: form.eventDates || form.event_dates || form.dates || eventParam.dates,
+      time: form.eventTime || form.event_time || eventParam.time,
+      venue: form.eventVenue || form.event_venue || form.venue || eventParam.venue,
+      tagline: form.eventTagline || form.tagline || eventParam.tagline,
+    };
+    if (possible.name || possible.dates || possible.venue || possible.time) return { ...eventParam, ...possible };
+  }
+  return eventParam || {};
+}
+
+export async function buildTicketEmail({
   frontendBase = (typeof window !== "undefined" && window.location ? window.location.origin : "https://railtransexpo.com"),
   entity = "attendee",
   id = "",
@@ -27,64 +47,58 @@ export function buildTicketEmail({
   company = "",
   ticket_code = "",
   ticket_category = "",
-  bannerUrl = "",       // top banner (Image 1)
-  badgePreviewUrl = "", // preview badge (Image 2)
-  downloadUrl = "",     // direct link to badge PDF (recommended signed URL) - overridden below to frontend download page
-  upgradeUrl = "",      // self-service upgrade link (if any)
+  badgePreviewUrl = "",
+  downloadUrl = "",
+  upgradeUrl = "",
+  logoUrl = "", // absolute public URL; server can inline as CID
   event = {
     name: "6th RailTrans Expo 2026",
     dates: "03–04 July 2026",
     time: "10:00 AM – 5:00 PM",
-    venue: "Halls 12 & 12A, Bharat Mandapam, New Delhi",
+    venue: "Bharat Mandapam, New Delhi",
   },
-  form = null,          // optional raw form object with extra fields (designation, mobile, etc)
-  pdfBase64 = null,     // optional base64 PDF to attach
+  form = null,
+  pdfBase64 = null,
 } = {}) {
   const frontend = String(frontendBase || "").replace(/\/$/, "");
+  const resolvedEvent = resolveEventDetails(form, event || {});
 
-  // Construct a reasonable upgrade URL when not provided
-  const defaultUpgrade = `${frontend}/ticket-upgrade?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(id || ""))}&ticket_code=${encodeURIComponent(String(ticket_code || ""))}`;
-  const upgradeLink = upgradeUrl && String(upgradeUrl).trim() ? upgradeUrl : defaultUpgrade;
+  // Normalize logo URL (kept as-is for server to inline)
+  let resolvedLogo = logoUrl || "";
+  resolvedLogo = normalizeForEmailUrl(resolvedLogo, frontend) || "";
 
-  // Provide a sensible downloadUrl if not given:
-  // Point to a frontend download page which will generate & trigger the download client-side.
-  if (!downloadUrl && ticket_code) {
-    downloadUrl = `${frontend}/ticket-download?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(id || ""))}&ticket_code=${encodeURIComponent(String(ticket_code || ""))}`;
-  } else if (!downloadUrl && id) {
-    // fallback to id-based download page
-    downloadUrl = `${frontend}/ticket-download?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(id || ""))}`;
-  }
+  // Subject required by user
+  const subject = `6th RailTrans Expo 2026 – Download Your Registration E-Badge`;
 
-  const manageUrl = `${frontend}/ticket?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(id))}`;
-  const subject = `${event.name || "RailTrans Expo"} – Your Registration & E-Badge`;
+  // Choose download link text target
+  const downloadTarget = downloadUrl || `${frontend}/ticket?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(id || ""))}`;
 
-  // Pull additional friendly fields from form if supplied
-  const designation = (form && (form.designation || form.title || form.role)) || "";
-  const mobile = (form && (form.mobile || form.phone || form.contact)) || "";
-
-  // Plain-text alternative (include upgrade instruction for visitors)
+  // Plain-text body (detailed)
   const textLines = [
     `Dear ${name || "Participant"},`,
     "",
-    `Thank you for registering for ${event.name || "RailTrans Expo"}.`,
+    `Thank you for registering for the 6th RailTrans Expo 2026 – Asia’s Second Largest Event for Railways, Transportation & Semiconductor Industry scheduled to be held from ${(resolvedEvent && (resolvedEvent.dates || "03–04 July 2026"))} at ${(resolvedEvent && (resolvedEvent.venue || "Bharat Mandapam, Pragati Maidan, New Delhi, India"))}.`,
     "",
-    `Your Registration Number: ${ticket_code || "N/A"}`,
-    downloadUrl ? `Download your E-Badge: ${downloadUrl}` : `Manage your ticket: ${manageUrl}`,
+    ticket_code ? `Your Registration Number: ${ticket_code}` : "",
+    downloadTarget ? `Download your E-Badge: ${downloadTarget}` : "",
     "",
-    ...(designation ? [`Designation: ${designation}`, ""] : []),
-    ...(mobile ? [`Mobile: ${mobile}`, ""] : []),
-    (entity === "visitors") ? `To upgrade your visitor ticket, visit: ${upgradeLink}` : "",
     "Event Details",
-    `Dates: ${event.dates || ""}`,
-    `Time: ${event.time || ""}`,
-    `Venue: ${event.venue || ""}`,
+    `Dates: ${(resolvedEvent && (resolvedEvent.dates || "03–04 July 2026"))}`,
+    `Time: ${(resolvedEvent && (resolvedEvent.time || "10:00 AM – 5:00 PM"))}`,
+    `Venue: ${(resolvedEvent && (resolvedEvent.venue || "Bharat Mandapam, New Delhi"))}`,
     "",
     "Important Information & Guidelines:",
     "- Entry permitted only through Gate No. 4 and Gate No. 10.",
-    "- Please carry and present your E-badge (received via email/WhatsApp) for scanning at the entry point.",
+    "- Please carry and present your E-badge (received via email/WhatsApp) for scanning at the entry point. The badge is valid exclusively for RailTrans Expo 2026 and concurrent events on event days.",
+    "- A physical badge can be collected from the on-site registration counter.",
     "- The badge is strictly non-transferable and must be worn visibly at all times within the venue.",
     "- Entry is permitted to individuals aged 18 years and above; infants are not permitted.",
     "- All participants must carry a valid Government-issued photo ID (Passport is mandatory for foreign nationals).",
+    "- The organizers reserve the right of admission. Security frisking will be carried out at all entry points.",
+    "- Smoking, tobacco use, and any banned substances are strictly prohibited within the venue.",
+    "- Paid parking facilities are available at the Bharat Mandapam basement.",
+    "",
+    "For any registration-related assistance, please approach the on-site registration counter.",
     "",
     "We look forward to welcoming you at RailTrans Expo 2026.",
     "",
@@ -93,88 +107,80 @@ export function buildTicketEmail({
   ].filter(Boolean);
   const text = textLines.join("\n");
 
-  // HTML email (responsive, simple inline CSS)
-  // The Upgrade button will only be rendered when entity === 'visitors'
-  const html = `
-<!doctype html>
+  // HTML body:
+  // - Left aligned logo image only (no event/date text beside logo per request)
+  // - Full descriptive paragraph and registration number
+  // - "Download your E-Badge: Click Here" link
+  const html = `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial; color: #1f2937; margin: 0; padding: 0; background:#f3f4f6; }
-      .wrap { max-width: 680px; margin: 24px auto; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 6px 18px rgba(9,30,66,0.08); }
-      .container { padding: 20px; }
-      .banner { width: 100%; height: auto; display:block; }
-      h1 { font-size: 20px; margin: 6px 0 12px; color: #0b4f60; }
-      p { margin: 6px 0; line-height: 1.45; color: #374151; }
-      .card { background: #f8fafc; border-radius: 8px; padding: 14px; margin: 12px 0; text-align: center; border: 1px solid #e6eef4;}
-      .badge-preview { max-width: 260px; width: 100%; height: auto; display:block; margin: 10px auto; border-radius: 6px; }
-      .reg { font-weight:700; letter-spacing: 0.02em; margin-top: 6px; }
-      .cta { display:inline-block; margin:10px 6px; padding:12px 18px; background:#c8102e; color:#ffffff; text-decoration:none; border-radius:6px; font-weight:700; }
-      .cta.secondary { background:#196e87; color:#ffffff; }
-      .muted { color:#475569; font-size:13px; }
-      ul.guidelines { padding-left: 20px; margin: 8px 0 16px; color: #374151; }
-      .footer { font-size: 13px; color: #475569; padding: 14px 0 28px; }
-      .meta { color: #374151; font-size: 14px; margin-top: 6px; }
-      .small { font-size: 12px; color: #6b7280; }
-      .actions { margin-top: 12px; }
+      body { font-family: Arial, Helvetica, sans-serif; color: #1f2937; background: #f3f4f6; margin: 0; padding: 0; }
+      .wrap { max-width: 680px; margin: 24px auto; background: #ffffff; border-radius: 8px; overflow: hidden; padding: 20px; }
+      .header { display:flex; align-items:center; gap:12px; margin-bottom: 12px; }
+      .logo { height: 44px; width: auto; display:block; object-fit: contain; }
+      h1 { font-size: 20px; color:#0b4f60; margin: 6px 0 12px; }
+      p { margin: 8px 0; line-height: 1.45; color: #374151; }
+      .card { background: #f8fafc; border-radius:8px; padding:14px; border:1px solid #e6eef4; margin: 12px 0; text-align:center; }
+      .cta { display:inline-block; padding:12px 18px; background:#c8102e; color:#fff; text-decoration:none; border-radius:6px; font-weight:700; margin-top:10px; }
+      .muted { color:#475569; font-size:14px; }
+      .guidelines { margin-top:10px; font-size:13px; color:#475569; line-height:1.5; }
     </style>
   </head>
   <body>
     <div class="wrap">
-      ${bannerUrl ? `<img src="${bannerUrl}" alt="${event.name}" class="banner" />` : ""}
-      <div class="container">
-        <h1>${event.name || "RailTrans Expo"} — Your Registration E‑Badge</h1>
-
-        <p>Dear ${name || "Participant"},</p>
-
-        <p>Thank you for registering for <strong>${event.name}</strong> – ${event.dates || ""} at ${event.venue || ""}.</p>
-
-        <div class="card">
-          <div style="font-size:16px; font-weight:700">${name || ""}</div>
-          ${company ? `<div style="margin-top:6px; color:#475569">${company}</div>` : ""}
-          ${designation ? `<div class="meta">${designation}</div>` : ""}
-          ${badgePreviewUrl ? `<img src="${badgePreviewUrl}" alt="E-badge preview" class="badge-preview" />` : ""}
-          <div class="reg">Your Registration Number: <span style="color:#0b4f60">${ticket_code || "N/A"}</span></div>
-
-          <div class="actions">
-            ${downloadUrl ? `<a href="${downloadUrl}" class="cta" target="_blank" rel="noopener noreferrer" aria-label="Download E-Badge PDF">Download E‑Badge</a>` : `<a href="${manageUrl}" class="cta" target="_blank" rel="noopener noreferrer" aria-label="View or Download E-Badge">View / Download E‑Badge</a>`}
-            ${upgradeLink && entity === "visitors" ? `<a href="${upgradeLink}" class="cta secondary" target="_blank" rel="noopener noreferrer" aria-label="Upgrade ticket">Upgrade Ticket</a>` : ""}
-          </div>
-
-          ${(mobile || "") ? `<div class="small" style="margin-top:8px">Mobile: ${mobile}</div>` : ""}
-        </div>
-
-        <h2 style="font-size:16px; margin-top:8px; color:#0b4f60">Event Details</h2>
-        <p class="muted">
-          <strong>Dates:</strong> ${event.dates || ""}<br/>
-          <strong>Time:</strong> ${event.time || ""}<br/>
-          <strong>Venue:</strong> ${event.venue || ""}
-        </p>
-
-        <h3 style="font-size:15px; color:#0b4f60; margin-top:8px">Important Information & Guidelines</h3>
-        <ul class="guidelines">
-          <li>Entry permitted only through Gate No. 4 and Gate No. 10.</li>
-          <li>Please carry and present your E-badge (received via email/WhatsApp) for scanning at the entry point. The badge is valid exclusively for RailTrans Expo 2026 and concurrent events on event days.</li>
-          <li>The badge is strictly non-transferable and must be worn visibly at all times within the venue.</li>
-          <li>Entry is permitted to individuals aged 18 years and above; infants are not permitted.</li>
-          <li>All participants must carry a valid Government-issued photo ID (Passport is mandatory for foreign nationals).</li>
-        </ul>
-
-        <p>We look forward to welcoming you at RailTrans Expo 2026.</p>
-
-        <p class="footer">
-          Warm regards,<br/>
-          Team RailTrans Expo 2026
-        </p>
+      <div class="header">
+        ${resolvedLogo ? `<img src="${resolvedLogo}" alt="logo" class="logo" />` : ""}
       </div>
+
+      <h1>Your Registration E‑Badge</h1>
+
+      <p>Dear ${name || "Participant"},</p>
+
+      <p>Thank you for registering for the 6th RailTrans Expo 2026 – Asia’s Second Largest Event for Railways, Transportation & Semiconductor Industry scheduled to be held from ${(resolvedEvent && (resolvedEvent.dates || "03–04 July 2026"))} at ${(resolvedEvent && (resolvedEvent.venue || "Bharat Mandapam, Pragati Maidan, New Delhi, India"))}.</p>
+
+      ${ticket_code ? `<p style="font-weight:700">Your Registration Number: ${ticket_code}</p>` : ""}
+
+      <div class="card">
+        <div style="font-weight:700; font-size:16px;">${name || ""}</div>
+        ${company ? `<div style="margin-top:6px;color:#475569">${company}</div>` : ""}
+        ${badgePreviewUrl ? `<img src="${badgePreviewUrl}" alt="E-badge preview" style="max-width:260px;width:100%;margin:10px auto;border-radius:6px;display:block" />` : ""}
+        <div>
+          <a href="${downloadTarget}" class="cta" target="_blank" rel="noopener noreferrer">Download your E‑Badge: Click Here</a>
+        </div>
+      </div>
+
+      <h2 style="font-size:16px;color:#0b4f60;margin-top:8px">Event Details</h2>
+      <div class="muted">
+        <div><strong>Dates:</strong> ${(resolvedEvent && (resolvedEvent.dates || "03–04 July 2026"))}</div>
+        <div><strong>Time:</strong> ${(resolvedEvent && (resolvedEvent.time || "10:00 AM – 5:00 PM"))}</div>
+        <div><strong>Venue:</strong> ${(resolvedEvent && (resolvedEvent.venue || "Halls 12 & 12A, Bharat Mandapam, New Delhi"))}</div>
+      </div>
+
+      <h3 style="font-size:15px;color:#0b4f60;margin-top:12px">Important Information & Guidelines</h3>
+      <div class="guidelines">
+        <p>Entry permitted only through Gate No. 4 and Gate No. 10.</p>
+        <p>Please carry and present your E-badge (received via email/WhatsApp) for scanning at the entry point. The badge is valid exclusively for RailTrans Expo 2026 and concurrent events on event days.</p>
+        <p>A physical badge can be collected from the on-site registration counter.</p>
+        <p>The badge is strictly non-transferable and must be worn visibly at all times within the venue.</p>
+        <p>Entry is permitted to individuals aged 18 years and above; infants are not permitted.</p>
+        <p>All participants must carry a valid Government-issued photo ID (Passport is mandatory for foreign nationals).</p>
+        <p>The organizers reserve the right of admission. Security frisking will be carried out at all entry points.</p>
+        <p>Smoking, tobacco use, and any banned substances are strictly prohibited within the venue.</p>
+        <p>Paid parking facilities are available at the Bharat Mandapam basement.</p>
+        <p>For any registration-related assistance, please approach the on-site registration counter.</p>
+      </div>
+
+      <p style="font-size:13px;color:#475569;margin-top:14px">We look forward to welcoming you at RailTrans Expo 2026.</p>
+
+      <p style="font-size:13px;color:#475569;margin-top:14px">Warm regards,<br/>Team RailTrans Expo 2026</p>
     </div>
   </body>
-</html>
-`;
+</html>`;
 
-  // attachments array: include badge PDF if provided as base64 (optional)
+  // Attach PDF (if provided)
   const attachments = [];
   if (pdfBase64) {
     const b64 = normalizeBase64(pdfBase64);
