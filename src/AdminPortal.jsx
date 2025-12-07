@@ -96,6 +96,13 @@ const registrationButtons = [
     url: "/partners",
     color: "from-blue-400 to-blue-500",
   },
+  {
+    title: "Awardees",
+    description: "Register as an awardee to receive recognition at the expo",
+    Icon: AwardIcon,
+    url: "/awardees",
+    color: "from-amber-400 to-amber-500",
+  },
 ];
 
 export default function RailTransExpoHomepage() {

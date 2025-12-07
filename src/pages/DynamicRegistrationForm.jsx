@@ -1,11 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 /*
-  DynamicRegistrationForm.jsx
+  DynamicRegistrationForm.jsx (focused changes)
 
-  - Removed the "cards" preview UI that displayed backend fields.
-  - Keeps inline OTP control next to any email-like field that has meta.useOtp.
-  - If no config prop is provided, it still fetches /api/visitor-config and renders fields.
+  - registrationType is required for per-page forms and is passed to OTP endpoints so DB checks happen only in that table.
+  - EmailOtpVerifier now:
+      * passes registrationType on /send and /verify
+      * if /send returns 409, it shows existing info + TicketUpgrade button
+      * if /verify returns existing, it shows existing info + TicketUpgrade button
+  - TicketUpgrade page should be implemented and linked from the Update button (see pages/TicketUpgrade.jsx below).
 */
 
 function isVisible(field, form) {
@@ -21,13 +25,24 @@ function makeRequestId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/* Inline Email OTP verifier */
-function EmailOtpVerifier({ email = "", fieldName, setForm, verified, setVerified, apiBase = "" }) {
+/* Email OTP verifier - sends registrationType and surfaces existing info */
+function EmailOtpVerifier({
+  email = "",
+  fieldName,
+  setForm,
+  verified,
+  setVerified,
+  apiBase = "",
+  autoSend = false,
+  registrationType = "visitor",
+}) {
+  const navigate = useNavigate();
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
+  const [existing, setExisting] = useState(null); // { id, ticket_code, registrationType }
   const sendingRef = useRef(false);
   const verifyingRef = useRef(false);
 
@@ -39,23 +54,44 @@ function EmailOtpVerifier({ email = "", fieldName, setForm, verified, setVerifie
     setOtpSent(false);
     setMsg("");
     setError("");
+    setExisting(null);
     setVerified && setVerified(false);
-  }, [emailNorm, setVerified]);
+    if (autoSend && isEmailValid) {
+      setTimeout(() => {
+        handleSendOtp();
+      }, 200);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailNorm, autoSend, registrationType]);
 
   async function handleSendOtp() {
     if (sendingRef.current) return;
+    if (!isEmailValid) {
+      setError("Enter a valid email before sending OTP.");
+      return;
+    }
     sendingRef.current = true;
     setLoading(true);
     setMsg("");
     setError("");
+    setExisting(null);
     try {
       const requestId = makeRequestId();
       const res = await fetch(`${apiBase || ""}/api/otp/send`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
-        body: JSON.stringify({ type: "email", value: emailNorm, requestId }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "email", value: emailNorm, requestId, registrationType }),
       });
       const data = await res.json().catch(() => null);
+
+      // If server returns 409 with existing, show message and DO NOT expect an OTP
+      if (res.status === 409 && data && data.existing) {
+        setExisting({ ...(data.existing), registrationType: data.registrationType || registrationType });
+        setMsg("Email already exists in our records for this registration page.");
+        setOtpSent(false);
+        return;
+      }
+
       if (res.ok && data && data.success) {
         setOtpSent(true);
         setMsg("OTP sent to your email.");
@@ -74,45 +110,53 @@ function EmailOtpVerifier({ email = "", fieldName, setForm, verified, setVerifie
 
   async function handleVerifyOtp() {
     if (verifyingRef.current) return;
+    if (!isEmailValid) {
+      setError("Invalid email");
+      return;
+    }
     verifyingRef.current = true;
     setLoading(true);
     setError("");
+    setMsg("");
+    setExisting(null);
     try {
       const res = await fetch(`${apiBase || ""}/api/otp/verify`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
-        body: JSON.stringify({ value: emailNorm, otp: String(otp).trim() }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: emailNorm, otp: String(otp).trim(), registrationType }),
       });
       const data = await res.json().catch(() => null);
-      if (res.ok && data && data.success) {
-        setVerified && setVerified(true);
-        setMsg("Email verified!");
-        try {
-          const verifiedAddr = (data.email || emailNorm).trim().toLowerCase();
-          localStorage.setItem("verifiedEmail", verifiedAddr);
-          sessionStorage.setItem("verifiedEmail", verifiedAddr);
-          if (typeof setForm === "function" && fieldName) {
-            setForm((prev) => ({ ...prev, [fieldName]: verifiedAddr, otpVerified: true }));
-          }
-        } catch {}
-      } else {
-        setError((data && data.error) || "Incorrect OTP");
+      if (!res.ok || !data || data.success === false) {
+        setError((data && (data.error || data.message)) || "OTP verification failed");
+        return;
+      }
+
+      // mark verified
+      setVerified && setVerified(true);
+      setMsg("Email verified!");
+
+      // update normalized email into form
+      try {
+        const verifiedAddr = (data.email || emailNorm).trim().toLowerCase();
+        localStorage.setItem("verifiedEmail", verifiedAddr);
+        sessionStorage.setItem("verifiedEmail", verifiedAddr);
+        if (typeof setForm === "function" && fieldName) {
+          setForm((prev) => ({ ...prev, [fieldName]: verifiedAddr, otpVerified: true }));
+        }
+      } catch {}
+
+      // if server returned existing info for this registrationType, show it
+      if (data.existing) {
+        setExisting({ ...(data.existing), registrationType: data.registrationType || registrationType });
+        setMsg("Email already exists in our records for this registration page.");
       }
     } catch (e) {
-      console.error("handleVerifyOtp error", e);
+      console.error("handleVerifyOtp error:", e);
       setError("Network/server error.");
     } finally {
       setLoading(false);
       verifyingRef.current = false;
     }
-  }
-
-  if (verified) {
-    return (
-      <div className="ml-3 flex items-center gap-2">
-        <span className="px-2 py-1 text-xs bg-green-600 text-white rounded">Verified ✓</span>
-      </div>
-    );
   }
 
   return (
@@ -148,13 +192,33 @@ function EmailOtpVerifier({ email = "", fieldName, setForm, verified, setVerifie
           </button>
         </>
       )}
+
       {msg && <span className="ml-2 text-green-600 text-xs">{msg}</span>}
       {error && <span className="ml-2 text-red-600 text-xs">{error}</span>}
+
+      {existing && (
+        <div className="ml-4 p-2 bg-yellow-50 border border-yellow-100 rounded text-xs">
+          <div className="mb-1 font-medium text-[#b45309]">Email already exists</div>
+          <div className="text-xs text-gray-700 mb-2">
+            If you want to update your {existing.registrationType || registrationType} ticket/category, click Upgrade Ticket.
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => navigate(`/ticket-upgrade?type=${encodeURIComponent(existing.registrationType || registrationType)}&id=${encodeURIComponent(String(existing.id))}`)}
+              className="px-2 py-1 bg-white border rounded text-[#21809b] text-xs"
+            >
+              Upgrade Ticket
+            </button>
+            
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-/* Main DynamicRegistrationForm */
+/* Main DynamicRegistrationForm (registrationType must be provided per page) */
 export default function DynamicRegistrationForm({
   config,
   form,
@@ -163,10 +227,21 @@ export default function DynamicRegistrationForm({
   editable = true,
   terms = null,
   apiBase = "",
+  registrationType = "visitor", // must be set per-page
 }) {
+  const navigate = useNavigate();
   const [emailVerified, setEmailVerified] = useState(false);
   const [localConfig, setLocalConfig] = useState(config || null);
   const [loadingConfig, setLoadingConfig] = useState(!config);
+
+  const [serverNote, setServerNote] = useState("");
+  const [requireOtp, setRequireOtp] = useState(false);
+  const [autoOtpSend, setAutoOtpSend] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState(null);
+
+  const [pendingSubmitAfterOtp, setPendingSubmitAfterOtp] = useState(false);
+  const [verificationToken, setVerificationToken] = useState(null);
 
   useEffect(() => {
     if (config) {
@@ -181,9 +256,11 @@ export default function DynamicRegistrationForm({
       if (config) return;
       setLoadingConfig(true);
       try {
-        const res = await fetch(`${apiBase || ""}/api/visitor-config`);
+        const cfgEndpoint = registrationType && registrationType !== "visitor"
+          ? `${apiBase || ""}/api/${encodeURIComponent(registrationType)}-config`
+          : `${apiBase || ""}/api/visitor-config`;
+        const res = await fetch(cfgEndpoint);
         if (!res.ok) {
-          console.warn("Failed to fetch /api/visitor-config", res.status);
           setLocalConfig({ fields: [] });
           return;
         }
@@ -192,7 +269,7 @@ export default function DynamicRegistrationForm({
         js.fields = Array.isArray(js.fields) ? js.fields : [];
         setLocalConfig(js);
       } catch (e) {
-        console.error("fetch visitor-config error", e);
+        console.error("fetch config error", e);
         setLocalConfig({ fields: [] });
       } finally {
         if (mounted) setLoadingConfig(false);
@@ -200,12 +277,27 @@ export default function DynamicRegistrationForm({
     }
     fetchCfg();
     return () => (mounted = false);
-  }, [config, apiBase]);
+  }, [config, apiBase, registrationType]);
 
   useEffect(() => {
-    console.debug("DynamicRegistrationForm config:", localConfig);
-    console.debug("DynamicRegistrationForm form:", form);
-  }, [localConfig, form]);
+    const emailField = (localConfig && localConfig.fields || []).find(f => f.type === "email");
+    const emailValue = emailField ? (form[emailField.name] || "").trim().toLowerCase() : "";
+    setServerNote("");
+    setRequireOtp(false);
+    setAutoOtpSend(false);
+    setSubmitMessage(null);
+    setEmailVerified(false);
+    setPendingSubmitAfterOtp(false);
+    setVerificationToken(null);
+
+    try {
+      const stored = localStorage.getItem("verifiedEmail") || sessionStorage.getItem("verifiedEmail");
+      if (stored && stored.trim().toLowerCase() === emailValue && emailValue) {
+        setEmailVerified(true);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form && JSON.stringify(form), localConfig, registrationType]);
 
   function handleChange(e) {
     const { name, value, type, checked } = e.target;
@@ -225,28 +317,93 @@ export default function DynamicRegistrationForm({
   const effectiveConfig = localConfig || { fields: [] };
   const safeFields = (effectiveConfig.fields || []).filter((f) => f && f.name && f.label && isVisible(f, form));
   const emailField = safeFields.find((f) => f.type === "email");
-  const emailValue = emailField ? form[emailField.name] || "" : "";
+  const emailValue = emailField ? (form[emailField.name] || "") : "";
   const termsRequired = terms && terms.required;
 
+  async function doFinalSubmit(payload) {
+    try {
+      const body = { ...payload };
+      if (verificationToken) body.verificationToken = verificationToken;
+      body.registrationType = registrationType;
+      // NOTE: adjust endpoint per your server (this example posts to /api/visitors for all types).
+      const res = await fetch(`${apiBase || ""}/api/visitors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data && data.success) {
+        setSubmitMessage({ type: "success", text: data.message || "Registered successfully." });
+        onSubmit && typeof onSubmit === "function" && onSubmit(form, data);
+        return { ok: true, data };
+      }
+
+      if (data && data.showUpdate && data.existing && data.existing.id) {
+        navigate(`/ticket-upgrade?type=${encodeURIComponent(registrationType)}&id=${encodeURIComponent(String(data.existing.id))}`);
+        return { ok: false, data };
+      }
+
+      setSubmitMessage({ type: "error", text: (data && (data.message || data.error)) || "Registration failed" });
+      return { ok: false, data };
+    } catch (err) {
+      console.error("doFinalSubmit error:", err);
+      setSubmitMessage({ type: "error", text: "Network/server error while submitting." });
+      return { ok: false, data: null };
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSubmitMessage(null);
+    if (termsRequired && !form?.termsAccepted) {
+      setSubmitMessage({ type: "error", text: "Please accept the Terms & Conditions before continuing." });
+      return;
+    }
+
+    if (emailField && emailField.meta && emailField.meta.useOtp && !emailVerified) {
+      setRequireOtp(true);
+      setAutoOtpSend(true);
+      setPendingSubmitAfterOtp(true);
+      setServerNote("We will send an OTP to your email before completing registration.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await doFinalSubmit(form);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  useEffect(() => {
+    if (emailVerified && pendingSubmitAfterOtp) {
+      (async () => {
+        setSubmitting(true);
+        setPendingSubmitAfterOtp(false);
+        try {
+          await doFinalSubmit(form);
+        } finally {
+          setSubmitting(false);
+        }
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailVerified, pendingSubmitAfterOtp]);
+
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (termsRequired && !form?.termsAccepted) {
-          alert("Please accept the Terms & Conditions before continuing.");
-          return;
-        }
-        if (emailField?.required && emailField.meta?.useOtp && !emailVerified) {
-          alert("Please verify your email to continue.");
-          return;
-        }
-        onSubmit && onSubmit(form);
-      }}
-      className="mx-auto w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-[#bde0fe] p-8"
-    >
+    <form onSubmit={handleSubmit} className="mx-auto w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-[#bde0fe] p-8">
       <div className="flex flex-col gap-7">
-        {safeFields.length === 0 && (
+        {loadingConfig && <div className="text-sm text-gray-500">Loading form...</div>}
+        {safeFields.length === 0 && !loadingConfig && (
           <div className="text-red-500 text-center">No fields configured for this form.</div>
+        )}
+
+        {serverNote && (
+          <div className="p-3 rounded bg-yellow-50 border border-yellow-200 text-sm">
+            {serverNote}
+          </div>
         )}
 
         {safeFields.map((field) => (
@@ -262,9 +419,26 @@ export default function DynamicRegistrationForm({
 
                 {(field.type === "text" || field.type === "email" || field.type === "number") && (
                   <div className="flex items-center">
-                    <input type={field.type} name={field.name} value={form[field.name] || ""} onChange={handleChange} className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg" disabled={!editable} required={field.required} />
+                    <input
+                      type={field.type}
+                      name={field.name}
+                      value={form[field.name] || ""}
+                      onChange={handleChange}
+                      className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg"
+                      disabled={!editable}
+                      required={field.required}
+                    />
                     {field.type === "email" && field.meta?.useOtp && (
-                      <EmailOtpVerifier email={form[field.name]} fieldName={field.name} setForm={setForm} verified={emailVerified} setVerified={setEmailVerified} apiBase={apiBase} />
+                      <EmailOtpVerifier
+                        email={form[field.name]}
+                        fieldName={field.name}
+                        setForm={setForm}
+                        verified={emailVerified}
+                        setVerified={setEmailVerified}
+                        apiBase={apiBase}
+                        autoSend={autoOtpSend}
+                        registrationType={registrationType}
+                      />
                     )}
                   </div>
                 )}
@@ -307,9 +481,26 @@ export default function DynamicRegistrationForm({
           </div>
         )}
 
-        <div className="flex justify-end items-center mt-8">
-          <button type="submit" className="px-8 py-3 rounded-xl bg-[#21809b] text-white font-semibold text-lg disabled:opacity-60" disabled={!editable || safeFields.length === 0 || (emailField?.required && emailField.meta?.useOtp && !emailVerified) || (emailField && emailField.required && !isEmail(emailValue)) || (termsRequired && !form?.termsAccepted)}>
-            Submit
+        {submitMessage && (
+          <div className={`p-3 rounded ${submitMessage.type === "error" ? "bg-red-50 border border-red-200" : submitMessage.type === "info" ? "bg-blue-50 border border-blue-200" : "bg-green-50 border border-green-200"}`}>
+            <p className="text-sm">{submitMessage.text}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end items-center mt-8 gap-3">
+          <button
+            type="submit"
+            className="px-8 py-3 rounded-xl bg-[#21809b] text-white font-semibold text-lg disabled:opacity-60"
+            disabled={
+              !editable ||
+              safeFields.length === 0 ||
+              (emailField?.required && emailField.meta?.useOtp && !emailVerified) ||
+              (emailField && emailField.required && !isEmail(emailValue)) ||
+              (termsRequired && !form?.termsAccepted) ||
+              submitting
+            }
+          >
+            {submitting ? "Processing..." : "Submit"}
           </button>
         </div>
       </div>

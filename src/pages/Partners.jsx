@@ -9,15 +9,15 @@ import { buildTicketEmail } from "../utils/emailTemplate";
 /*
  Partners.jsx
 
- Flow implemented:
- - Step 1: DynamicRegistrationForm (client-only, do NOT save yet). email field will show OTP UI (config fields forced useOtp=true)
- - Step 2: TicketCategorySelector -> stores ticketMeta (price/gst/total). If total==0, finalize (save) immediately.
- - Step 3: ManualPaymentStep (open checkout OR upload proof). When payment confirmed via polling or manual proof upload, SAVE partner record, create ticket, send templated email, schedule reminder.
- - Step 4: ThankYouMessage
-
- Notes:
- - Payment orders are created with reference_id = paymentReferenceId (email or guest-<ts>).
- - All server interactions are best-effort; errors surfaced to user where appropriate.
+ Fixes applied:
+ - Use /api/reminders/send for scheduling reminders (same as other pages).
+ - Ensure email template is called with the registration form (model.form) so event details
+   appear in the email (buildTicketEmail reads form.event/form.eventDetails/flat keys).
+ - Add ngrok bypass header ("ngrok-skip-browser-warning": "69420") to relevant fetches (postJSON, uploadAsset, payment status checks)
+   to match other pages and avoid ngrok blocking.
+ - Resolve logo via /api/admin/logo-url (best-effort) and include in email model.
+ - Attach PDF if provided (best-effort).
+ - Keep failures in optional parts non-fatal and surface useful messages.
 */
 
 function getApiBaseFromEnvOrWindow() {
@@ -73,18 +73,35 @@ function pickFirstString(obj, candidates = []) {
   }
   return "";
 }
+
+/* postJSON wrapper with ngrok header and structured response */
 async function postJSON(url, body) {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(body) });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "69420",
+    },
+    body: JSON.stringify(body),
+  });
   let json = null;
-  try { json = await res.json(); } catch {}
-  return { ok: res.ok, status: res.status, body: json };
+  let text = null;
+  try { text = await res.text(); } catch {}
+  try { json = text ? JSON.parse(text) : null; } catch {}
+  return { ok: res.ok, status: res.status, body: json || text || null };
 }
+
+/* upload asset with ngrok header */
 async function uploadAsset(file) {
   if (!file) return "";
   try {
     const fd = new FormData();
     fd.append("file", file);
-    const r = await fetch(apiUrl("/api/upload-asset"), { method: "POST", body: fd });
+    const r = await fetch(apiUrl("/api/upload-asset"), {
+      method: "POST",
+      headers: { "ngrok-skip-browser-warning": "69420" },
+      body: fd,
+    });
     if (!r.ok) {
       const txt = await r.text().catch(() => "");
       console.warn("uploadAsset failed", txt);
@@ -98,46 +115,117 @@ async function uploadAsset(file) {
   }
 }
 
-/* templated email helper using buildTicketEmail */
-async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = [], pdfBlob = null) {
+/* resolve logo url from server / fallback localStorage */
+async function resolveLogoUrl(config = {}) {
+  try {
+    const r = await fetch(apiUrl("/api/admin/logo-url"), {
+      headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" },
+    });
+    if (r.ok) {
+      const js = await r.json().catch(() => null);
+      const candidate = js?.logo_url || js?.logoUrl || js?.url || "";
+      if (candidate) return normalizeAdminUrl(candidate);
+    }
+  } catch (e) {}
+  if (config && (config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl))) {
+    return normalizeAdminUrl(config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl)) || "";
+  }
+  try {
+    const raw = localStorage.getItem("admin:topbar");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.logoUrl) return normalizeAdminUrl(parsed.logoUrl) || String(parsed.logoUrl).trim();
+    }
+  } catch {}
+  return "";
+}
+
+/* templated email helper using buildTicketEmail
+   - Passes the registration form as `form` in the model so buildTicketEmail reads event details from the form.
+   - Includes resolved logoUrl in model (mailer may inline).
+   - Attaches pdfBase64 when provided (pdfBlob may be base64 string).
+*/
+async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = [], pdfBlob = null, cfg = {}) {
   try {
     const to = pickFirstString(partnerPayload, ["email", "emailAddress", "contactEmail"]) || "";
     if (!to) return { ok: false, error: "no-recipient" };
+
     const frontendBase = (typeof window !== "undefined" && (window.__FRONTEND_BASE__ || window.location.origin)) || "";
     const bannerUrl = Array.isArray(images) && images.length ? images[0] : "";
+
+    const logoUrl = await resolveLogoUrl(cfg);
+
+    // IMPORTANT: pass form so email template reads event details from registration form
+    const formObj = partnerPayload._rawForm || partnerPayload.form || partnerPayload || {};
+
     const model = {
       frontendBase,
       entity: "partners",
       id: partnerId || "",
-      name: partnerPayload.name || partnerPayload.company || "",
-      company: partnerPayload.company || "",
-      ticket_code: partnerPayload.ticket_code || "",
+      name: partnerPayload.name || partnerPayload.company || pickFirstString(formObj, ["name", "company"]) || "",
+      company: partnerPayload.company || formObj.company || "",
+      ticket_code: partnerPayload.ticket_code || partnerPayload.ticketCode || "",
       ticket_category: partnerPayload.ticket_category || "",
       bannerUrl,
       badgePreviewUrl: "",
       downloadUrl: "",
-      event: partnerPayload.event || {}
+      logoUrl: logoUrl || "",
+      form: formObj, // <-- this ensures event details (form.event / form.eventDetails / flat fields) are used by template
+      pdfBase64: null,
     };
-    const { subject, text, html } = buildTicketEmail(model);
+
+    const { subject, text, html, attachments: templateAttachments = [] } = buildTicketEmail(model);
+
     const payload = { to, subject, text, html, attachments: [] };
+
+    // include template attachments if any
+    if (Array.isArray(templateAttachments) && templateAttachments.length) {
+      payload.attachments.push(...templateAttachments);
+    }
+
+    // attach provided PDF (if base64)
     if (pdfBlob) {
-      // pdfBlob may be base64 string or Blob; attempt to include if provided as base64
-      if (typeof pdfBlob === "string" && /^[A-Za-z0-9+/=]+$/.test(pdfBlob)) {
-        payload.attachments.push({ filename: "Ticket.pdf", content: pdfBlob, encoding: "base64", contentType: "application/pdf" });
+      if (typeof pdfBlob === "string") {
+        // if already data URI or base64
+        const m = pdfBlob.match(/^data:application\/pdf;base64,(.*)$/i);
+        const b64 = m ? m[1] : ( /^[A-Za-z0-9+/=]+$/.test(pdfBlob) ? pdfBlob : null );
+        if (b64) {
+          payload.attachments.push({ filename: "e-badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
+        }
       }
     }
-    return await postJSON(apiUrl("/api/mailer"), payload);
+
+    // debug preview (avoid logging full attachments)
+    try {
+      console.debug("[Partners] mailPayload preview:", { to: payload.to, subject: payload.subject, htmlStart: String(payload.html || "").slice(0, 240), attachmentsCount: payload.attachments.length });
+    } catch (e) {}
+
+    // send to mailer with ngrok header
+    const res = await fetch(apiUrl("/api/mailer"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+      body: JSON.stringify(payload),
+    });
+    const txt = await res.text().catch(() => "");
+    let js = null;
+    try { js = txt ? JSON.parse(txt) : null; } catch {}
+    if (!res.ok) {
+      console.warn("[Partners] mailer failed:", res.status, js || txt);
+      return { ok: false, status: res.status, body: js || txt, error: `mailer failed (${res.status})` };
+    }
+    return { ok: true, status: res.status, body: js || txt };
   } catch (e) {
     console.warn("sendTemplatedAckEmail failed", e);
     return { ok: false, error: String(e) };
   }
 }
 
-/* schedule reminder helper */
+/* schedule reminder wrapper using /api/reminders/send (same as other pages) */
 async function scheduleReminder(partnerId, eventDate) {
   try {
     if (!partnerId || !eventDate) return { ok: false, error: "missing" };
-    return await postJSON(apiUrl("/api/partners/schedule-reminder"), { partnerId, eventDate });
+    const payload = { entity: "partners", entityId: partnerId, eventDate };
+    return await postJSON(apiUrl("/api/reminders/send"), payload);
   } catch (e) {
     console.warn("scheduleReminder failed", e);
     return { ok: false, error: String(e) };
@@ -180,7 +268,7 @@ export default function Partners() {
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/partner-config?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json" , "ngrok-skip-browser-warning": "69420" } });
+      const res = await fetch(apiUrl("/api/partner-config?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
       const cfg = res.ok ? await res.json() : {};
       const normalized = { ...(cfg || {}) };
 
@@ -270,7 +358,7 @@ export default function Partners() {
         });
         if (!mounted || myId !== attemptId) return;
         await v.play();
-      } catch (err) { /* ignore */ }
+      } catch (err) {}
     }
     const onCan = () => tryPlay();
     const onErr = () => {};
@@ -285,7 +373,6 @@ export default function Partners() {
     setError("");
     setSaving(true);
     try {
-      // basic validation
       const email = pickFirstString(formData, ["email", "emailAddress", "contactEmail"]) || "";
       if (!email) {
         setError("Email is required to proceed.");
@@ -295,7 +382,7 @@ export default function Partners() {
       setForm(formData || {});
       const ref = email.trim() || `guest-${Date.now()}`;
       setPaymentReferenceId(ref);
-      // telemetry
+      // telemetry (best-effort)
       try { await postJSON(apiUrl("/api/partners/step"), { step: "registration_attempt", data: { form: formData } }); } catch {}
       setStep(2);
     } catch (e) {
@@ -306,7 +393,7 @@ export default function Partners() {
     }
   }
 
-  // Step 2: ticket selection -> store ticketMeta; free -> finalize immediately
+  // Step 2: ticket selection
   function handleTicketSelect(value, meta = {}) {
     setTicketCategory(value);
     const price = Number(meta.price || 0);
@@ -316,7 +403,6 @@ export default function Partners() {
     setTicketMeta({ price, gstRate, gstAmount, total, label: meta.label || "" });
 
     if (total === 0) {
-      // free - persist immediately
       finalizeSave({ ticket_category: value, ticket_price: price, ticket_gst: gstAmount, ticket_total: total, referenceId: paymentReferenceId });
       return;
     }
@@ -326,7 +412,7 @@ export default function Partners() {
   async function createOrderAndOpenCheckout() {
     setError("");
     setSaving(true);
-    const reference = paymentReferenceId || (form && form.email) || `guest-${Date.now()}`;
+    const reference = paymentReferenceId || (form && pickFirstString(form, ["email", "emailAddress", "contactEmail"])) || `guest-${Date.now()}`;
     const amount = Number(ticketMeta.total || ticketMeta.price || 0);
     if (!amount || amount <= 0) {
       setError("Invalid payment amount.");
@@ -335,7 +421,11 @@ export default function Partners() {
     }
     try {
       const payload = { amount, currency: "INR", description: `Partner Ticket - ${ticketCategory}`, reference_id: String(reference), metadata: { ticketCategory, email: form.email || "" } };
-      const res = await fetch(apiUrl("/api/payment/create-order"), { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
+      const res = await fetch(apiUrl("/api/payment/create-order"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        body: JSON.stringify(payload),
+      });
       const js = await res.json().catch(()=>({}));
       if (!res.ok || !js.success) { setError(js.error || "Failed to create payment order"); setSaving(false); return; }
       const checkoutUrl = js.checkoutUrl || js.checkout_url || js.longurl || js.raw?.payment_request?.longurl;
@@ -343,12 +433,12 @@ export default function Partners() {
       const w = window.open(checkoutUrl, "_blank", "noopener,noreferrer");
       if (!w) { setError("Popup blocked. Allow popups to continue payment."); setSaving(false); return; }
 
-      // Poll status using reference
+      // Poll payment status using reference (include ngrok header)
       let attempts = 0;
       const poll = setInterval(async () => {
         attempts += 1;
         try {
-          const st = await fetch(apiUrl(`/api/payment/status?reference_id=${encodeURIComponent(String(reference))}`));
+          const st = await fetch(apiUrl(`/api/payment/status?reference_id=${encodeURIComponent(String(reference))}`), { headers: { "ngrok-skip-browser-warning": "69420" } });
           if (!st.ok) return;
           const js2 = await st.json().catch(()=>({}));
           const status = (js2.status || "").toString().toLowerCase();
@@ -357,7 +447,6 @@ export default function Partners() {
             try { if (w && !w.closed) w.close(); } catch {}
             const providerPaymentId = js2.record?.provider_payment_id || js2.record?.payment_id || js2.record?.id || null;
             setTxId(providerPaymentId || "");
-            // now finalize save with payment details
             await finalizeSave({ ticket_category: ticketCategory, ticket_price: ticketMeta.price, ticket_gst: ticketMeta.gstAmount, ticket_total: ticketMeta.total, txId: providerPaymentId || null, referenceId: reference });
           } else if (["failed","cancelled","void"].includes(status)) {
             clearInterval(poll);
@@ -378,7 +467,6 @@ export default function Partners() {
     }
   }
 
-  // manual proof uploaded -> upload asset then finalize save
   async function onManualProofSubmit(file) {
     setError("");
     setSaving(true);
@@ -393,12 +481,10 @@ export default function Partners() {
     }
   }
 
-  // finalize and persist partner record (called after payment success or manual proof)
   async function finalizeSave({ ticket_category, ticket_price = 0, ticket_gst = 0, ticket_total = 0, payment_proof_url = null, txId: providerTx = null, referenceId: ref = null } = {}) {
     setError("");
     setSaving(true);
     try {
-      // robust company extraction not necessary here, but include form fields as-is
       const payload = {
         ...form,
         ticket_category: ticket_category || ticketCategory || null,
@@ -423,7 +509,7 @@ export default function Partners() {
       const insertedId = (body && body.insertedId) || null;
       setSavedPartnerId(insertedId || null);
 
-      // create ticket record best-effort
+      // attempt creating ticket (best-effort)
       try {
         const ticket_code = body?.ticket_code || payload.ticket_code || String(Math.floor(100000 + Math.random() * 900000));
         await postJSON(apiUrl("/api/tickets/create"), {
@@ -438,10 +524,10 @@ export default function Partners() {
         });
       } catch (e) { console.warn("create ticket failed", e); }
 
-      // send templated email
+      // send templated email (pass form so template reads event details)
       try {
         setAckLoading(true);
-        const mailRes = await sendTemplatedAckEmail(payload, insertedId, config?.images || [], null);
+        const mailRes = await sendTemplatedAckEmail(payload, insertedId, config?.images || [], null, config);
         setAckLoading(false);
         if (!mailRes || !mailRes.ok) {
           setAckError(mailRes && (mailRes.error || (mailRes.body && (mailRes.body.error || mailRes.body.message))) || "Mailer failed");
@@ -455,10 +541,10 @@ export default function Partners() {
         setAckError("Acknowledgement email failed");
       }
 
-      // schedule reminder best-effort
+      // schedule reminder using common endpoint
       try {
         if (insertedId) {
-          const evDate = config?.eventDetails?.date || config?.eventDate || null;
+          const evDate = (form && (form.eventDetails?.date || form.eventDates || form.date)) || config?.eventDetails?.date || null;
           if (evDate) {
             const sch = await scheduleReminder(insertedId, evDate);
             if (sch && sch.ok) { setReminderScheduled(true); setReminderError(""); }
@@ -469,7 +555,7 @@ export default function Partners() {
         console.warn("schedule reminder failed", e);
       }
 
-      // telemetry
+      // telemetry (best-effort)
       try { await postJSON(apiUrl("/api/partners/step"), { step: "registration_completed", data: { id: insertedId, payload } }); } catch {}
 
       setStep(4);
