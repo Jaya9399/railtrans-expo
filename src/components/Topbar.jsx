@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, Suspense } from "react";
+import { AiOutlineQrcode } from "react-icons/ai"; // ⭐ NEW QR Scanner Icon
 
 // Lazy-load scanner to keep bundle small
 const TicketScanner = React.lazy(() => import("./TicketScanner"));
@@ -31,13 +32,6 @@ function darkenHex(hex, amount = 0.12) {
   return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
 }
 
-/**
- * Topbar component
- * - onToggleSidebar: called on mobile hamburger click to open the sidebar drawer.
- * - Does not fix position; AdminLayout should position it (so layout remains consistent).
- * - Responsible for loading logo and primary color from /api/admin-config (with localStorage fallback).
- * - Shows a Scanner button which opens a modal with TicketScanner (lazy loaded).
- */
 export default function Topbar({ onToggleSidebar = () => {} }) {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [logo, setLogo] = useState("/images/logo.png");
@@ -55,13 +49,12 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [scannerOpen, closeScanner]);
 
-  // load admin topbar config (logo + primary color)
+  // load admin topbar config
   useEffect(() => {
     let mounted = true;
     const controller = new AbortController();
 
     async function loadConfig() {
-      // 1) try server
       try {
         const res = await fetch("/api/admin-config", { signal: controller.signal });
         if (res.ok) {
@@ -78,11 +71,8 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
             return;
           }
         }
-      } catch (err) {
-        // ignore and fall back to localStorage
-      }
+      } catch {}
 
-      // 2) fallback to localStorage
       try {
         const raw = window.localStorage.getItem("admin:topbar");
         if (raw) {
@@ -90,9 +80,7 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
           if (parsed?.logoUrl) setLogo(parsed.logoUrl);
           if (parsed?.primaryColor) setPrimaryColor(safeHex(parsed.primaryColor) || "#196e87");
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch {}
     }
 
     loadConfig();
@@ -111,7 +99,8 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
         style={{ backgroundColor: primaryColor }}
       >
         <div className="flex items-center w-full">
-          {/* Mobile hamburger: shown only on small screens */}
+
+          {/* Mobile hamburger */}
           <button
             onClick={onToggleSidebar}
             className="md:hidden mr-3 p-2 rounded bg-black/10 text-white hover:bg-black/20"
@@ -130,59 +119,46 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
             className="h-10 w-auto mr-4"
             style={{ objectFit: "contain" }}
             onError={(e) => {
-              // fallback to local asset if remote logo fails
               try {
                 e.currentTarget.src = "/images/logo.png";
               } catch {}
             }}
           />
 
-          {/* spacer */}
           <div className="flex-1" />
 
           {/* Right controls */}
           <div className="flex items-center gap-3">
+
+            {/* ⭐ UPDATED SCANNER BUTTON WITH REACT ICON */}
             <button
               onClick={openScanner}
               className="ml-2 px-3 py-2 rounded text-white font-semibold flex items-center gap-2"
               style={{ backgroundColor: buttonBg }}
               title="Open Gate Scanner"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 7h18M3 12h18M3 17h18" />
-              </svg>
+              <AiOutlineQrcode size={20} />   {/* 👈 NEW ICON */}
               <span className="hidden sm:inline">Scanner</span>
             </button>
+
           </div>
         </div>
       </header>
 
-      {/* Scanner modal (lazy-loaded component) */}
       {scannerOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          aria-modal="true"
-          role="dialog"
-        >
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={closeScanner}
-            aria-hidden="true"
-          />
+        <div className="fixed inset-0 z-50 flex items-center justify-center" aria-modal="true" role="dialog">
+          <div className="absolute inset-0 bg-black/50" onClick={closeScanner} aria-hidden="true" />
 
           <div className="relative w-[96%] sm:w-[80%] md:w-[720px] max-w-full bg-white rounded-lg shadow-2xl overflow-hidden z-10">
+
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <div className="text-lg font-semibold" style={{ color: primaryColor }}>
                 Ticket Scanner
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={closeScanner}
-                  className="px-3 py-1 rounded bg-gray-100 text-gray-800"
-                >
-                  Close
-                </button>
-              </div>
+
+              <button className="px-3 py-1 rounded bg-gray-100 text-gray-800" onClick={closeScanner}>
+                Close
+              </button>
             </div>
 
             <div style={{ minHeight: 360 }} className="p-4">
@@ -200,6 +176,7 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
                 />
               </Suspense>
             </div>
+
           </div>
         </div>
       )}

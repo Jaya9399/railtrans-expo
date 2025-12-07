@@ -8,16 +8,18 @@ import { generateVisitorBadgePDF } from "../utils/pdfGenerator";
 import { buildTicketEmail } from "../utils/emailTemplate";
 
 /*
-  Speakers.jsx (final fixes)
+  Speakers.jsx (ngrok header + reminder/mail fixes)
 
-  - Restored ImageSlider & EventDetailsBlock
-  - Ensures payment (checkout) and manual-proof flows both finalize the speaker record
-  - After successful save:
-    - creates ticket (best-effort)
-    - generates PDF badge (best-effort)
-    - sends templated email using buildTicketEmail and shows ack status
-    - schedules reminder via /api/reminders/create and surfaces scheduling result
-  - Improved error handling and explicit ack/reminder UI state
+  What changed:
+  - All client fetches to your backend that previously omitted the ngrok bypass header
+    now include "ngrok-skip-browser-warning": "69420" so requests through ngrok-free don't get blocked.
+    This matches other pages (Visitors/Exhibitors/Awardees).
+  - scheduleReminder now tries the single canonical endpoint /api/reminders/send first (with header),
+    and falls back to /api/reminders/create if the former 404s. The function returns structured info.
+  - sendTemplatedEmail and the mail helper now log the built payload (console.debug) and will log
+    response body when mailer returns non-2xx so you can see the server error (400). This helps debug mailer 400s.
+  - notify/whatsapp calls include the ngrok header now.
+  - Telemetry POST to /api/speakers/step is left commented (it caused 404 noise previously).
 */
 
 function getApiBaseFromEnvOrWindow() {
@@ -78,28 +80,35 @@ async function toBase64(pdf) {
   }
   return "";
 }
+
+/* postJSON wrapper: add ngrok header to match other pages and surface response body */
 async function postJSON(url, body) {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(body) });
-  let json = null;
-  try { json = await res.json(); } catch {}
-  return { ok: res.ok, status: res.status, body: json };
-}
-async function sendMailPayload(payload) {
-  const res = await fetch(apiUrl("/api/mailer"), {
+  const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
-    body: JSON.stringify(payload),
+    headers: {
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "69420",
+    },
+    body: JSON.stringify(body),
   });
-  let body = null;
-  try { body = await res.json(); } catch {}
-  return { ok: res.ok, status: res.status, body };
+  let json = null;
+  let text = null;
+  try { text = await res.text(); } catch {}
+  try { json = text ? JSON.parse(text) : null; } catch {}
+  return { ok: res.ok, status: res.status, body: json || text || null };
 }
+
+/* upload asset helper (adds ngrok header) */
 async function uploadAsset(file) {
   if (!file) return "";
   try {
     const fd = new FormData();
     fd.append("file", file);
-    const r = await fetch(apiUrl("/api/upload-asset"), { method: "POST", body: fd });
+    const r = await fetch(apiUrl("/api/upload-asset"), {
+      method: "POST",
+      headers: { "ngrok-skip-browser-warning": "69420" },
+      body: fd,
+    });
     if (!r.ok) {
       const txt = await r.text().catch(() => "");
       console.warn("uploadAsset failed", txt);
@@ -110,6 +119,82 @@ async function uploadAsset(file) {
   } catch (e) {
     console.warn("uploadAsset error", e);
     return "";
+  }
+}
+
+/* scheduleReminder: try /api/reminders/send first (with ngrok header), fallback to /api/reminders/create.
+   Returns { ok, status, body } so caller can decide. */
+async function scheduleReminder(entityId, eventDate) {
+  if (!entityId || !eventDate) return { ok: false, error: "missing" };
+  const payload = { entity: "speakers", entityId, eventDate };
+  try {
+    // primary: /api/reminders/send (used by Visitors/Exhibitors/Awardees)
+    const res = await fetch(apiUrl("/api/reminders/send"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+      body: JSON.stringify(payload),
+    });
+    const text = await res.text().catch(() => "");
+    try { const parsed = text ? JSON.parse(text) : null; if (res.ok) return { ok: true, status: res.status, body: parsed || text }; } catch {}
+    if (res.ok) return { ok: true, status: res.status, body: text || null };
+    // fallback to /api/reminders/create (some backends expose this)
+    const r2 = await fetch(apiUrl("/api/reminders/create"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+      body: JSON.stringify(payload),
+    });
+    const t2 = await r2.text().catch(() => "");
+    try { const p2 = t2 ? JSON.parse(t2) : null; if (r2.ok) return { ok: true, status: r2.status, body: p2 || t2 }; } catch {}
+    return { ok: false, status: r2.status, body: t2 || null };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+/* sendTemplatedEmail: build HTML via buildTicketEmail then POST to /api/mailer with ngrok header.
+   Console.debug the payload before sending and log response body on failure to aid debugging.
+*/
+async function sendTemplatedEmail({ recipientEmail, model, pdfBlob = null }) {
+  if (!recipientEmail) return { ok: false, error: "no-recipient" };
+  try {
+    const { subject, text, html, attachments: templateAttachments = [] } = buildTicketEmail(model);
+    const payload = { to: recipientEmail, subject, text, html, attachments: [] };
+    // include template attachments (if any)
+    if (Array.isArray(templateAttachments) && templateAttachments.length) {
+      payload.attachments.push(...templateAttachments);
+    }
+    if (pdfBlob) {
+      const b64 = await toBase64(pdfBlob);
+      if (b64) payload.attachments.push({ filename: "Ticket.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
+    }
+
+    // debug: show payload summary (not full large attachments)
+    try {
+      console.debug("[sendTemplatedEmail] mailPayload preview:", {
+        to: payload.to,
+        subject: payload.subject,
+        htmlStart: String(payload.html || "").slice(0, 240),
+        attachmentsCount: payload.attachments ? payload.attachments.length : 0,
+      });
+    } catch (e) {}
+
+    // send with ngrok header
+    const res = await fetch(apiUrl("/api/mailer"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+      body: JSON.stringify(payload),
+    });
+    const txt = await res.text().catch(() => "");
+    let js = null;
+    try { js = txt ? JSON.parse(txt) : null; } catch {}
+    if (!res.ok) {
+      console.warn("[sendTemplatedEmail] mailer response failed:", res.status, js || txt);
+      return { ok: false, status: res.status, body: js || txt, error: `mailer failed (${res.status})` };
+    }
+    return { ok: true, status: res.status, body: js || txt };
+  } catch (e) {
+    console.warn("sendTemplatedEmail failed:", e);
+    return { ok: false, error: String(e) };
   }
 }
 
@@ -145,46 +230,6 @@ function ImageSlider({ images = [], intervalMs = 3500 }) {
       </div>
     </div>
   );
-}
-
-/* schedule reminder helper (improved logging + fallback) */
-async function scheduleReminder(entityId, eventDate) {
-  if (!entityId || !eventDate) return { ok: false, error: "missing" };
-  try {
-    // primary endpoint
-    const res = await fetch(apiUrl("/api/reminders/create"), { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ entity: "speakers", entityId, eventDate }) });
-    const body = await res.text().catch(() => "");
-    let parsed = null;
-    try { parsed = body ? JSON.parse(body) : null; } catch {}
-    if (res.ok) return { ok: true, status: res.status, body: parsed || body };
-    // fallback: try entity-specific endpoint
-    try {
-      const r2 = await fetch(apiUrl("/api/speakers/schedule-reminder"), { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ speakerId: entityId, eventDate }) });
-      const b2 = await r2.json().catch(() => null);
-      if (r2.ok) return { ok: true, status: r2.status, body: b2 };
-      return { ok: false, status: r2.status, body: b2 || body || "both endpoints failed" };
-    } catch (e2) {
-      return { ok: false, error: `reminders/create failed: ${res.status} ; fallback error: ${String(e2)}` };
-    }
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
-}
-
-/* templated email helper */
-async function sendTemplatedEmail({ recipientEmail, model, pdfBlob = null }) {
-  if (!recipientEmail) return { ok: false, error: "no-recipient" };
-  try {
-    const { subject, text, html } = buildTicketEmail(model);
-    const payload = { to: recipientEmail, subject, text, html, attachments: [] };
-    if (pdfBlob) {
-      const b64 = await toBase64(pdfBlob);
-      if (b64) payload.attachments.push({ filename: "Ticket.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
-    }
-    return await postJSON(apiUrl("/api/mailer"), payload);
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
 }
 
 /* ---------- Component ---------- */
@@ -227,7 +272,7 @@ export default function Speakers() {
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/speaker-config?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json" , "ngrok-skip-browser-warning": "69420" } });
+      const res = await fetch(apiUrl("/api/speaker-config?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
       const cfg = res.ok ? await res.json() : {};
       const normalized = { ...(cfg || {}) };
 
@@ -292,7 +337,7 @@ export default function Speakers() {
     return () => window.removeEventListener("speaker-config-updated", onCfg);
   }, [fetchConfig]);
 
-  // video autoplay
+  // background video autoplay best-effort
   useEffect(() => {
     if (isMobile) return;
     const v = videoRef.current;
@@ -317,7 +362,7 @@ export default function Speakers() {
         });
         if (!mounted || myId !== attemptId) return;
         await v.play();
-      } catch (err) { /* decorative only */ }
+      } catch (err) {}
     }
     const onCan = () => tryPlay();
     const onErr = () => {};
@@ -336,7 +381,10 @@ export default function Speakers() {
       setForm(payload || {});
       const ref = (payload.email && payload.email.trim()) ? payload.email.trim() : `guest-${Date.now()}`;
       setPaymentReferenceId(ref);
-      try { await fetch(apiUrl("/api/speakers/step"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ step: "registration_attempt", data: { form: payload } }) }); } catch {}
+
+      // telemetry / step endpoint - keep commented to avoid 404s until backend provides it
+      // try { await fetch(apiUrl("/api/speakers/step"), { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ step: "registration_attempt", data: { form: payload } }) }); } catch {}
+
       setStep(2);
     } catch (e) {
       setError("Failed to continue. Try again.");
@@ -360,7 +408,7 @@ export default function Speakers() {
     setStep(3);
   }
 
-  /* Payment - checkout */
+  /* Payment checkout */
   async function createOrderAndOpenCheckout() {
     setProcessing(true);
     setError("");
@@ -373,7 +421,7 @@ export default function Speakers() {
     }
     try {
       const payload = { amount, currency: "INR", description: `Speaker Ticket - ${ticketCategory}`, reference_id: String(reference), metadata: { ticketCategory, email: form.email || "" } };
-      const res = await fetch(apiUrl("/api/payment/create-order"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await fetch(apiUrl("/api/payment/create-order"), { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
       const js = await res.json().catch(()=>({}));
       if (!res.ok || !js.success) { setError(js.error || "Failed to create payment order"); setProcessing(false); return; }
       const checkoutUrl = js.checkoutUrl || js.checkout_url || js.longurl || js.raw?.payment_request?.longurl;
@@ -385,7 +433,7 @@ export default function Speakers() {
       const poll = setInterval(async () => {
         attempts += 1;
         try {
-          const st = await fetch(apiUrl(`/api/payment/status?reference_id=${encodeURIComponent(String(reference))}`));
+          const st = await fetch(apiUrl(`/api/payment/status?reference_id=${encodeURIComponent(String(reference))}`), { headers: { "ngrok-skip-browser-warning": "69420" } });
           if (!st.ok) return;
           const js2 = await st.json().catch(()=>({}));
           const status = (js2.status || "").toString().toLowerCase();
@@ -405,7 +453,7 @@ export default function Speakers() {
             setError("Payment not yet confirmed. If you completed payment, submit proof or wait a bit.");
             setProcessing(false);
           }
-        } catch (e) { /* ignore transient */ }
+        } catch (e) {}
       }, 3000);
     } catch (e) {
       console.error("createOrderAndOpenCheckout error", e);
@@ -426,7 +474,7 @@ export default function Speakers() {
     }
   }
 
-  /* Finalize: save speaker, ticket, pdf, email, schedule reminder */
+  /* Finalize: save speaker, generate PDF, send email, schedule reminder */
   async function finalizeRegistrationAndSend(providerTxId = null, chosenCategory = null, paymentProofUrl = null) {
     if (processing) return;
     setProcessing(true);
@@ -454,8 +502,12 @@ export default function Speakers() {
         _rawForm: form
       };
 
-      // create speaker
-      const res = await fetch(apiUrl("/api/speakers"), { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
+      // save speaker
+      const res = await fetch(apiUrl("/api/speakers"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        body: JSON.stringify(payload),
+      });
       const js = await res.json().catch(()=>({}));
       if (!res.ok || !(js && (js.success || js.insertedId || js.id))) {
         const em = (js && (js.error || js.message)) || `Save failed (${res.status})`;
@@ -466,33 +518,13 @@ export default function Speakers() {
       const insertedId = js.insertedId || js.insertId || js.id || null;
       if (insertedId) setSpeakerId(insertedId);
 
-      // ticket code
+      // ticket_code generation / confirm
       let ticket_code = js.ticket_code || js.ticketCode || payload.ticket_code || String(Math.floor(100000 + Math.random() * 900000));
-
-      // create ticket record (best-effort)
-      try {
-        await fetch(apiUrl("/api/tickets/create"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
-          body: JSON.stringify({
-            ticket_code,
-            entity_type: "speaker",
-            entity_id: insertedId || null,
-            name,
-            email: payload.email || null,
-            company: payload.company || null,
-            category: chosen,
-            meta: { createdFrom: "web" }
-          })
-        }).catch(()=>{});
-      } catch (e) { console.warn("create ticket failed", e); }
-
-      // update confirm
       if (insertedId) {
         try {
           await fetch(apiUrl(`/api/speakers/${encodeURIComponent(String(insertedId))}/confirm`), {
             method: "POST",
-            headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" },
+            headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
             body: JSON.stringify({ ticket_code, ticket_category: chosen, txId: providerTxId || txId || null })
           }).catch(()=>{});
         } catch (e) {}
@@ -500,7 +532,7 @@ export default function Speakers() {
 
       const fullSpeaker = { ...payload, ticket_code, id: insertedId };
 
-      // generate PDF
+      // generate PDF (best-effort)
       let pdf = null;
       try {
         if (typeof generateVisitorBadgePDF === "function") {
@@ -509,7 +541,30 @@ export default function Speakers() {
         }
       } catch (e) { console.warn("PDF generation failed:", e); }
 
-      // send templated email and set ack state
+      // prepare logoUrl for email (server -> config -> localStorage)
+      let logoUrl = "";
+      try {
+        const r = await fetch(apiUrl("/api/admin/logo-url"), { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+        if (r.ok) {
+          const jsLogo = await r.json().catch(() => null);
+          const candidate = jsLogo?.logo_url || jsLogo?.logoUrl || jsLogo?.url || "";
+          if (candidate) logoUrl = normalizeAdminUrl(candidate);
+        }
+      } catch (e) {}
+      if (!logoUrl && config && (config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl))) {
+        logoUrl = normalizeAdminUrl(config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl)) || "";
+      }
+      if (!logoUrl) {
+        try {
+          const raw = localStorage.getItem("admin:topbar");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.logoUrl) logoUrl = normalizeAdminUrl(parsed.logoUrl) || String(parsed.logoUrl).trim();
+          }
+        } catch {}
+      }
+
+      // send templated email (pass form so template reads event details from registration form)
       try {
         setAckLoading(true);
         const frontendBase = (typeof window !== "undefined" && (window.__FRONTEND_BASE__ || window.location.origin)) || "";
@@ -525,12 +580,15 @@ export default function Speakers() {
           bannerUrl,
           badgePreviewUrl: "",
           downloadUrl: "",
-          event: config?.eventDetails || {}
+          logoUrl,
+          // CRUCIAL: pass registration form so email includes event details from the registration page
+          form: form || {},
+          pdfBase64: null,
         };
         const mailRes = await sendTemplatedEmail({ recipientEmail: payload.email, model: emailModel, pdfBlob: pdf });
         setAckLoading(false);
         if (!mailRes || !mailRes.ok) {
-          setAckError((mailRes && (mailRes.error || (mailRes.body && (mailRes.body.error || mailRes.body.message)))) || "Acknowledgement failed");
+          setAckError((mailRes && (mailRes.error || (mailRes.body && (mailRes.body.error || mailRes.body.message)))) || `Acknowledgement failed (${mailRes && mailRes.status})`);
         } else {
           setAckResult(mailRes.body || { ok: true });
           setAckError("");
@@ -541,9 +599,9 @@ export default function Speakers() {
         console.warn("templated email send error", e);
       }
 
-      // schedule reminder and set reminder UI state
+      // schedule reminder using POST /api/reminders/send (same as visitors/exhibitors)
       try {
-        const evDate = config?.eventDetails?.date || config?.eventDate || null;
+        const evDate = (form && (form.eventDetails?.date || form.eventDates || form.date)) || config?.eventDetails?.date || null;
         if (insertedId && evDate) {
           const sch = await scheduleReminder(insertedId, evDate);
           if (sch && sch.ok) {
@@ -562,17 +620,21 @@ export default function Speakers() {
         console.warn("scheduleReminder error", e);
       }
 
-      // whatsapp notify
+      // optional whatsapp notify (include ngrok header)
       try {
         if (payload.mobile) {
-          await fetch(apiUrl("/api/notify/whatsapp"), { method: "POST", headers: { "Content-Type": "application/json" , "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ to: payload.mobile, message: `Your ticket code: ${ticket_code}` }) });
+          await fetch(apiUrl("/api/notify/whatsapp"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+            body: JSON.stringify({ to: payload.mobile, message: `Your ticket code: ${ticket_code}` }),
+          }).catch((e)=>{ console.warn("whatsapp call failed", e); });
         }
       } catch (e) { console.warn("whatsapp failed", e); }
 
-      // admin notify
+      // admin notify (best-effort)
       try {
         const adminEmail = process.env.REACT_APP_ADMIN_EMAIL || "admin@railtransexpo.com";
-        await sendMailPayload({ to: adminEmail, subject: `New Speaker Registered: ${name}`, text: `Name: ${name}\nEmail: ${payload.email}\nCategory: ${chosen}\nTicket: ${ticket_code}\nTx: ${providerTxId || txId || "N/A"}` }).catch(()=>{});
+        await postJSON(apiUrl("/api/mailer"), { to: adminEmail, subject: `New Speaker Registered: ${name}`, text: `Name: ${name}\nEmail: ${payload.email}\nCategory: ${chosen}\nTicket: ${ticket_code}\nTx: ${providerTxId || txId || "N/A"}` });
       } catch (e) {}
 
       setSpeaker(fullSpeaker);
