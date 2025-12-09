@@ -3,13 +3,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 /**
  * VisitorTicket
  *
- * - Prefer server-side canonical ticket_code when available (visitor.ticket_code).
- * - Keeps localTicketCode state and lets operator fetch canonical value from server.
  * - QR encodes the ticket code ONLY (not a URL).
- * - Improved layout/styling to match provided badge preview images.
+ * - Ticket code is NOT displayed as plain text anywhere on the badge or preview.
+ * - If no ticket code is available, the UI shows the "Fetch server ticket code" button and copy payload button.
  *
  * Props:
- * - visitor: { id, name, designation, company, ticket_category, ticket_code, email, mobile, logoUrl, eventName, bannerUrl }
+ * - visitor: { id, name, designation, company, ticket_category, ticket_code, email, mobile, logoUrl, eventName, bannerUrl, sponsorLogos }
  * - pdfBlob: Blob | string (data url or base64) (optional)
  * - roleLabel, accentColor, showQRCode, qrSize, className
  */
@@ -38,7 +37,6 @@ export default function VisitorTicket({
   qrSize = 220,
   className = "",
 }) {
-  // Hooks run unconditionally
   const [downloadUrl, setDownloadUrl] = useState(null);
   const downloadUrlRef = useRef(null);
   const cardRef = useRef(null);
@@ -129,13 +127,13 @@ export default function VisitorTicket({
   const handleDownload = useCallback(() => {
     if (!downloadUrl) return;
     const a = document.createElement("a");
-    const filenameSafe = (safeTicketCode || name || "ticket").replace(/\s+/g, "_");
+    const filenameSafe = (name || "ticket").replace(/\s+/g, "_");
     a.href = downloadUrl;
     a.download = `RailTransExpo-${filenameSafe}.pdf`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  }, [downloadUrl, safeTicketCode, name]);
+  }, [downloadUrl, name]);
 
   const handlePrintCard = useCallback(() => {
     if (!cardRef.current) {
@@ -192,13 +190,13 @@ export default function VisitorTicket({
         setFetchingServerCode(false);
         return;
       }
+      // prefer returned updated.ticket_code if present
       const maybe = js.updated || js || (Array.isArray(js) && js[0]) || {};
-      const candidate = maybe.ticket_code || maybe.ticketCode || maybe.ticketId || null;
-      if (candidate) {
-        setLocalTicketCode(String(candidate).trim());
-        setFetchError("");
+      const canonical = maybe.ticket_code || maybe.ticketCode || maybe.ticketId || "";
+      if (canonical) {
+        setLocalTicketCode(String(canonical).trim());
       } else {
-        setFetchError("Server did not return ticket_code for this id");
+        setFetchError("No ticket code returned");
       }
     } catch (e) {
       console.error(e);
@@ -238,17 +236,17 @@ export default function VisitorTicket({
           <div style={{ fontSize: 28, fontWeight: 800, color: "#0b1820", marginBottom: 6 }}>{name || " "}</div>
           {company ? <div style={{ fontSize: 18, color: "#111827", marginBottom: 18 }}>{company}</div> : null}
 
+          {/* QR only — ticket code is NOT displayed as text */}
           {showQRCode && qrUrl ? (
             <div style={{ display: "flex", justifyContent: "center", alignItems: "center", margin: "12px 0 8px" }}>
-              <img src={qrUrl} alt={safeTicketCode ? `QR ${safeTicketCode}` : "QR"} width={qrSize} height={qrSize} style={{ borderRadius: 8 }} />
+              <img src={qrUrl} alt={qrData ? `QR` : "QR"} width={qrSize} height={qrSize} style={{ borderRadius: 8 }} />
             </div>
           ) : null}
 
-          {safeTicketCode ? (
-            <div style={{ marginTop: 12, fontSize: 18, color: "#111827", fontWeight: 600, letterSpacing: "0.02em" }}>{safeTicketCode}</div>
-          ) : (
+          {/* If no ticket code (and therefore no QR) show fetch/copy UI */}
+          {!qrData && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ color: "#ef4444", fontWeight: 700 }}>No ticket code available</div>
+              <div style={{ color: "#ef4444", fontWeight: 700 }}>Ticket code not available</div>
               <div style={{ marginTop: 10, display: "flex", gap: 8, justifyContent: "center" }}>
                 <button
                   onClick={fetchCanonicalTicketCode}
@@ -287,7 +285,6 @@ export default function VisitorTicket({
 
         {/* sponsors / logos strip (placeholder) */}
         <div style={{ marginTop: 22, display: "flex", justifyContent: "center", gap: 18, alignItems: "center", paddingBottom: 8 }}>
-          {/* If you have logos, map and render here; placeholders otherwise */}
           {v.sponsorLogos && Array.isArray(v.sponsorLogos) && v.sponsorLogos.length ? (
             v.sponsorLogos.slice(0, 3).map((src, i) => (
               <img key={i} src={src} alt={`sponsor-${i}`} style={{ height: 48, objectFit: "contain", borderRadius: 6, background: "#fff", padding: 6, boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }} />
