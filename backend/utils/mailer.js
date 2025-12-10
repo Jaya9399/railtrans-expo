@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const mongo = require("./mongoClient");
 
 const {
   SMTP_HOST,
@@ -11,25 +12,29 @@ const {
   MAIL_REPLYTO = ""
 } = process.env;
 
+/* --- helper: obtain DB (supports mongo.getDb() async or mongo.db sync) --- */
+async function obtainDb() {
+  if (!mongo) return null;
+  if (typeof mongo.getDb === "function") {
+    return await mongo.getDb();
+  }
+  if (mongo.db) return mongo.db;
+  return null;
+}
+
 /**
- * Normalize MAIL_FROM and MAIL_FROM_NAME:
- * - MAIL_FROM should be plain email (support@...)
- * - MAIL_FROM_NAME is friendly name (RailTrans Expo)
- * If MAIL_FROM already contains a name (<name@example.com>), we parse it.
+ * Normalize MAIL_FROM and MAIL_FROM_NAME
  */
 function parseMailFrom(envFrom, envName) {
   let email = String(envFrom || "").trim();
   let name = String(envName || "").trim();
 
-  // If MAIL_FROM includes angle brackets or contains a name, try to extract email
   const angleMatch = email.match(/^(.*)<\s*([^>]+)\s*>$/);
   if (angleMatch) {
-    // e.g. "RailTrans Expo <support@domain.com>"
     const maybeName = angleMatch[1].replace(/(^["'\s]+|["'\s]+$)/g, "").trim();
     email = angleMatch[2].trim();
     if (!name && maybeName) name = maybeName;
   } else {
-    // If envFrom contains a space and an @, it might be 'Name support@domain.com'
     const parts = email.split(/\s+/);
     if (parts.length === 2 && parts[1].includes("@")) {
       name = name || parts[0];
@@ -37,9 +42,7 @@ function parseMailFrom(envFrom, envName) {
     }
   }
 
-  // final sanity: email must be an address
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    // fallback to SMTP_USER if looks like an email
     if (SMTP_USER && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(SMTP_USER)) {
       email = SMTP_USER;
     }
@@ -48,6 +51,7 @@ function parseMailFrom(envFrom, envName) {
   return { email, name };
 }
 
+/* --- Build nodemailer transporter (same logic as before) --- */
 function buildTransporter() {
   if (SMTP_HOST) {
     const port = Number(SMTP_PORT || 587);
@@ -58,7 +62,7 @@ function buildTransporter() {
       secure,
       auth: { user: SMTP_USER, pass: SMTP_PASS },
       pool: true,
-      tls: { rejectUnauthorized: false }, // keep for some hosts; remove if strict TLS required
+      tls: { rejectUnauthorized: false },
     });
   }
   if (SMTP_SERVICE) {
@@ -68,7 +72,7 @@ function buildTransporter() {
       pool: true,
     });
   }
-  // No config -> stub that throws
+  // If no SMTP config, return a stub transporter that throws on sendMail
   return {
     async sendMail() {
       throw new Error(
@@ -85,7 +89,8 @@ const transporter = buildTransporter();
 const FROM_INFO = parseMailFrom(MAIL_FROM, MAIL_FROM_NAME);
 
 /**
- * verifyTransport: call at startup to validate SMTP connectivity
+ * verifyTransport: validate SMTP connectivity
+ * returns { ok: boolean, info|error }
  */
 async function verifyTransport() {
   try {
@@ -98,10 +103,26 @@ async function verifyTransport() {
   }
 }
 
+/* --- helper: reduce attachments metadata for DB --- */
+function attachmentsMeta(attachments = []) {
+  if (!Array.isArray(attachments)) return [];
+  return attachments.map(a => {
+    const meta = {};
+    if (a.filename) meta.filename = a.filename;
+    if (a.contentType) meta.contentType = a.contentType;
+    if (a.path) meta.path = a.path;
+    if (a.encoding) meta.encoding = a.encoding;
+    // do not store full content (could be large); record presence and length where possible
+    if (a.content && Buffer.isBuffer(a.content)) meta.size = a.content.length;
+    else if (typeof a.content === "string") meta.contentPreview = a.content.length > 256 ? a.content.slice(0, 256) + "..." : a.content;
+    return meta;
+  });
+}
+
 /**
  * sendMail({ to, subject, text, html, attachments })
- * - attachments: array of { filename, content (base64 or Buffer), encoding, contentType }
- * - returns full info or full error object
+ * Sends email via nodemailer and logs the attempt into MongoDB mail_logs collection.
+ * Returns { success: boolean, info?, error?, dbRecordId? }
  */
 async function sendMail(opts = {}) {
   const to = opts.to;
@@ -109,11 +130,8 @@ async function sendMail(opts = {}) {
     return { success: false, error: "Missing `to` address" };
   }
 
-  // Build from header and envelope.from separately to ensure proper SMTP envelope
-  const fromHeader = FROM_INFO.name
-    ? `${FROM_INFO.name} <${FROM_INFO.email}>`
-    : FROM_INFO.email;
-  const envelopeFrom = FROM_INFO.email; // used for SMTP envelope
+  const fromHeader = FROM_INFO.name ? `${FROM_INFO.name} <${FROM_INFO.email}>` : FROM_INFO.email;
+  const envelopeFrom = FROM_INFO.email;
 
   const message = {
     from: fromHeader,
@@ -122,37 +140,94 @@ async function sendMail(opts = {}) {
     text: opts.text || undefined,
     html: opts.html || undefined,
     replyTo: MAIL_REPLYTO || FROM_INFO.email,
-    // attachments: pass through as provided
-    attachments:
-      (opts.attachments || []).map((a) => {
-        const out = {};
-        if (a.filename) out.filename = a.filename;
-        if (a.content) out.content = a.content;
-        if (a.path) out.path = a.path;
-        if (a.encoding) out.encoding = a.encoding;
-        if (a.contentType) out.contentType = a.contentType;
-        return out;
-      }) || undefined,
+    attachments: (opts.attachments || []).map(a => {
+      const out = {};
+      if (a.filename) out.filename = a.filename;
+      if (a.path) out.path = a.path;
+      if (a.content) out.content = a.content;
+      if (a.encoding) out.encoding = a.encoding;
+      if (a.contentType) out.contentType = a.contentType;
+      return out;
+    }) || undefined,
     envelope: { from: envelopeFrom, to: Array.isArray(to) ? to : [to] },
   };
 
+  // Prepare DB log entry (insert before send to capture intent)
+  const logEntry = {
+    to: Array.isArray(to) ? to : [to],
+    subject: message.subject,
+    text: message.text || null,
+    html: message.html || null,
+    attachments: attachmentsMeta(opts.attachments || []),
+    envelope: message.envelope,
+    from: envelopeFrom,
+    status: "pending",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    sendResult: null,
+  };
+
+  let db = null;
+  try {
+    db = await obtainDb();
+    if (db) {
+      try {
+        const r = await db.collection("mail_logs").insertOne(logEntry);
+        logEntry._id = r.insertedId;
+      } catch (e) {
+        console.warn("[mailer] failed to insert mail_logs entry:", e && (e.message || e));
+      }
+    }
+  } catch (e) {
+    console.warn("[mailer] obtainDb failed for mail logging:", e && (e.message || e));
+  }
+
+  // Attempt to send
   try {
     const info = await transporter.sendMail(message);
-    // Log full info for debugging (accepted/rejected/messageId/response)
-    console.debug("[mailer] sendMail info:", JSON.stringify(info, null, 2));
-    return { success: true, info };
+    const resultInfo = { accepted: info.accepted || [], rejected: info.rejected || [], response: info.response, messageId: info.messageId };
+    // update DB log
+    try {
+      if (db && logEntry._id) {
+        await db.collection("mail_logs").updateOne({ _id: logEntry._id }, { $set: { status: "sent", sendResult: resultInfo, updatedAt: new Date() } });
+      }
+    } catch (e) {
+      console.warn("[mailer] failed to update mail_logs after send:", e && (e.message || e));
+    }
+    console.debug("[mailer] sendMail info:", resultInfo);
+    return { success: true, info: resultInfo, dbRecordId: logEntry._id || null };
   } catch (err) {
-    // Include response body if present
-    const errBody =
-      (err && err.response) || (err && err.response && err.response.body) || null;
-    console.error(
-      "[mailer] sendMail error:",
-      err && (err.stack || err),
-      "response:",
-      errBody
-    );
-    return { success: false, error: String(err && err.message ? err.message : err), body: errBody };
+    const errMsg = String(err && err.message ? err.message : err);
+    console.error("[mailer] sendMail error:", err && (err.stack || err));
+
+    // update DB log with error
+    try {
+      if (db && logEntry._id) {
+        await db.collection("mail_logs").updateOne({ _id: logEntry._id }, { $set: { status: "failed", sendResult: { error: errMsg }, updatedAt: new Date() } });
+      }
+    } catch (e) {
+      console.warn("[mailer] failed to update mail_logs after error:", e && (e.message || e));
+    }
+
+    return { success: false, error: errMsg, dbRecordId: logEntry._id || null };
   }
 }
 
-module.exports = { sendMail, verifyTransport, FROM_INFO };
+/**
+ * queryMailLogs(filter = {}, options = {}) - convenience to fetch logs from DB
+ * - filter: Mongo filter
+ * - options: { limit, skip, sort }
+ */
+async function queryMailLogs(filter = {}, options = {}) {
+  const db = await obtainDb();
+  if (!db) return { success: false, error: "database not available" };
+  const col = db.collection("mail_logs");
+  const cursor = col.find(filter);
+  if (options.sort) cursor.sort(options.sort);
+  if (options.skip) cursor.skip(options.skip);
+  if (options.limit) cursor.limit(options.limit);
+  const rows = await cursor.toArray();
+  return { success: true, rows };
+}
+
+module.exports = { sendMail, verifyTransport, FROM_INFO, queryMailLogs };

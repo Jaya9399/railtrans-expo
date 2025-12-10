@@ -1,4 +1,3 @@
-/* Visitors.jsx - updated API_BASE handling */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Topbar from "../components/Topbar";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
@@ -146,66 +145,43 @@ function normalizeAdminUrl(url) {
   return (API_BASE || "").replace(/\/$/, "") + "/" + t.replace(/^\//, "");
 }
 
-/* ---------- small presentational components (defined before usage) ---------- */
-function SectionTitle() {
-  return (
-    <div className="w-full flex items-center justify-center my-6 sm:my-8">
-      <div className="flex-grow border-t border-[#21809b]" />
-      <span className="mx-3 sm:mx-5 px-4 sm:px-8 py-2 sm:py-3 text-lg sm:text-2xl font-extrabold text-[#21809b] bg-white shadow rounded-2xl">
-        Visitor Registration
-      </span>
-      <div className="flex-grow border-t border-[#21809b]" />
-    </div>
-  );
-}
+/* ---------- mailer POST helper (tries /api/mailer then /api/email) ---------- */
+async function postMailer(payload) {
+  const endpoints = [
+    `${API_BASE}/api/mailer`,
+    `${API_BASE}/api/email`,
+    `/api/mailer`,
+    `/api/email`,
+  ].filter(Boolean);
 
-function ImageSlider({ images = [] }) {
-  const [active, setActive] = useState(0);
-  useEffect(() => {
-    if (!images || images.length === 0) return;
-    const t = setInterval(
-      () => setActive((p) => (p + 1) % images.length),
-      3500
-    );
-    return () => clearInterval(t);
-  }, [images]);
-  if (!images || images.length === 0) return null;
-  return (
-    <div className="flex items-center justify-center w-full h-full">
-      <div className="rounded-3xl overflow-hidden shadow-2xl h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] bg-white/75 flex items-center justify-center">
-        <img
-          src={normalizeAdminUrl(images[active])}
-          alt="banner"
-          className="object-cover w-full h-full"
-        />
-      </div>
-    </div>
-  );
-}
-
-function EventDetailsBlock({ event }) {
-  if (!event) return null;
-  return (
-    <div className="flex flex-col items-center justify-center h-full w-full mt-6">
-      <div
-        className="font-extrabold text-3xl sm:text-5xl mb-3 text-center"
-        style={{
-          background:
-            "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)",
-          WebkitBackgroundClip: "text",
-          WebkitTextFillColor: "transparent",
-        }}
-      >
-        {event?.name || "Event Name"}
-      </div>
-      <div className="text-xl sm:text-2xl font-bold mb-1 text-center text-[#21809b]">
-        {event?.date || event?.dates || "Event Date"}
-      </div>
-      <div className="text-base sm:text-xl font-semibold text-center text-[#196e87]">
-        {event?.venue || "Event Venue"}
-      </div>
-    </div>
-  );
+  let lastErr = null;
+  for (const url of endpoints) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json().catch(() => null);
+      if (r.ok) {
+        return { ok: true, body, url, status: r.status };
+      }
+      // try next endpoint only if 404 (route missing) — treat other errors as final
+      if (r.status === 404) {
+        lastErr = { status: r.status, body, url };
+        continue;
+      }
+      // non-404 error -> return failed
+      return { ok: false, status: r.status, body, url };
+    } catch (err) {
+      lastErr = err;
+      continue;
+    }
+  }
+  return { ok: false, error: lastErr || "all endpoints failed" };
 }
 
 /* ---------- email/send helper (client-side) ---------- */
@@ -307,19 +283,13 @@ async function sendTicketEmailUsingTemplate({
     attachments: [],
   };
 
-  const r = await fetch(`${API_BASE}/api/mailer`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "ngrok-skip-browser-warning": "69420",
-    },
-    body: JSON.stringify(mailPayload),
-  });
-
-  const js = await r.json().catch(() => null);
-  if (!r.ok)
-    throw new Error((js && (js.error || js.message)) || `Mailer failed (${r.status})`);
-  return js;
+  // Use postMailer which will try /api/mailer then /api/email and fall back to relative paths.
+  const result = await postMailer(mailPayload);
+  if (!result.ok) {
+    const errMsg = result.body?.error || result.error || `Mailer failed (${result.status || "unknown"})`;
+    throw new Error(errMsg);
+  }
+  return result.body;
 }
 /* ---------- Visitors component ---------- */
 export default function Visitors() {
@@ -342,6 +312,9 @@ export default function Visitors() {
   const [badgeTemplateUrl, setBadgeTemplateUrl] = useState("");
   const [error, setError] = useState("");
   const finalizeCalledRef = useRef(false);
+
+  // New ref to avoid repeated finalization upserts
+  const savedAttemptedRef = useRef(false);
 
   const videoRef = useRef(null);
   const [bgVideoReady, setBgVideoReady] = useState(false);
@@ -433,21 +406,12 @@ export default function Visitors() {
     }
   }, []);
 
-  const saveStep = useCallback(async (stepName, data = {}, meta = {}) => {
-    try {
-      await fetch(`${API_BASE}/api/visitors/step`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "69420",
-        },
-        body: JSON.stringify({ step: stepName, data, meta }),
-      });
-    } catch (e) {
-      console.warn("[Visitors] saveStep failed:", stepName, e);
-    }
-  }, []);
-
+  /**
+   * saveVisitor
+   * - Sends form to server and returns a normalized result object instead of throwing
+   * - Handles both upsert-success and existed/409 shapes
+   * - Guarantees returned { ok: boolean, id?: string, ticket_code?: string, raw?: any, existed?: boolean }
+   */
   const saveVisitor = useCallback(
     async (nextForm) => {
       const payload = {
@@ -472,21 +436,48 @@ export default function Visitors() {
         txId: txId || null,
         termsAccepted: !!nextForm.termsAccepted,
       };
-      const res = await fetch(`${API_BASE}/api/visitors`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "69420",
-        },
-        body: JSON.stringify(payload),
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok)
-        throw new Error(
-          (json && (json.message || json.error)) ||
-            `Save failed (${res.status})`
-        );
-      return json;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/visitors`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "69420",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const json = await res.json().catch(() => null);
+
+        // Accept successful HTTP 2xx responses or server responses with { success: true }
+        if (res.ok || (json && json.success)) {
+          // Support multiple shapes returned by different server versions
+          const id =
+            (json && (json.insertedId || json.inserted_id)) ||
+            (json && json.id) ||
+            null;
+          const ticket =
+            (json && (json.ticket_code || json.ticketCode)) ||
+            (payload && payload.ticket_code) ||
+            null;
+          const existed = !!(json && (json.existed || json.existing));
+          return { ok: true, id: id ? String(id) : null, ticket_code: ticket || null, raw: json || null, existed };
+        }
+
+        // Some servers return 409 with existing info
+        if (res.status === 409 && json && json.existing) {
+          const id = json.existing.id || null;
+          const ticket = json.existing.ticket_code || null;
+          return { ok: true, id: id ? String(id) : null, ticket_code: ticket || null, raw: json, existed: true };
+        }
+
+        // Otherwise treat as error
+        const errMsg = (json && (json.message || json.error)) || `Save failed (${res.status})`;
+        return { ok: false, error: errMsg, raw: json };
+      } catch (err) {
+        console.error("[Visitors] saveVisitor network error:", err);
+        return { ok: false, error: String(err && (err.message || err)) };
+      }
     },
     [ticketCategory, ticketMeta, txId]
   );
@@ -496,199 +487,210 @@ export default function Visitors() {
       setError("");
       setTicketCategory(value);
       setTicketMeta(meta || { price: 0, gstAmount: 0, total: 0, label: "" });
-      await saveStep(
-        "ticket_selected",
-        { ticketCategory: value, form },
-        { ticketMeta: meta || {} }
-      );
       setStep(3);
     },
-    [form, saveStep]
+    [form]
   );
 
   async function handleFormSubmit(formData) {
     setError("");
     const nextForm = { ...formData };
     setForm(nextForm);
-    await saveStep("registration_attempt", { form: nextForm });
-    try {
-      const json = await saveVisitor(nextForm);
-      if (json?.insertedId) setSavedVisitorId(json.insertedId);
-      if (json?.ticket_code)
-        setForm((prev) => ({ ...prev, ticket_code: json.ticket_code }));
-      setVisitor((prev) => ({
-        ...(prev || {}),
-        id: json?.insertedId || prev?.id,
-        ticket_code: json?.ticket_code || prev?.ticket_code,
-        name: nextForm.name,
-        email: nextForm.email,
-      }));
-      await saveStep(
-        "registration",
-        { form: nextForm },
-        {
-          insertedId: json?.insertedId || null,
-          ticket_code: json?.ticket_code || null,
-        }
-      );
-      setStep(2);
-    } catch (err) {
-      console.error("[Visitors] handleFormSubmit error:", err);
-      setError(err.message || "Failed to save registration. Please try again.");
-    }
+
+    // Now only advance to ticket selection without any server persistence
+    setVisitor((prev) => ({
+      ...(prev || {}),
+      name: nextForm.name,
+      email: nextForm.email,
+    }));
+    setStep(2);
   }
 
   const completeRegistrationAndEmail = useCallback(async () => {
-  if (finalizeCalledRef.current) return;
-  finalizeCalledRef.current = true;
-  try {
-    setProcessing(true);
-    if (config?.termsRequired && !form?.termsAccepted) {
-      setError(
-        config?.termsRequiredMessage ||
-          "You must accept the terms and conditions to complete registration."
-      );
-      setProcessing(false);
-      finalizeCalledRef.current = false;
-      return;
-    }
-    const bestEmail = getBestEmail(form);
-    if (!bestEmail && !form?.email) {
-      setError("Email is required");
-      setProcessing(false);
-      finalizeCalledRef.current = false;
-      return;
-    }
-    const finalEmail = form && form.email ? form.email : bestEmail;
-    let ticket_code = form.ticket_code || (visitor && visitor.ticket_code) || null;
-
-    if (!ticket_code && savedVisitorId) {
-      try {
-        const r = await fetch(
-          `${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}`,
-          { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69440" } }
+    if (finalizeCalledRef.current) return;
+    finalizeCalledRef.current = true;
+    try {
+      setProcessing(true);
+      if (config?.termsRequired && !form?.termsAccepted) {
+        setError(
+          config?.termsRequiredMessage ||
+            "You must accept the terms and conditions to complete registration."
         );
-        if (r.ok) {
-          const row = await r.json();
-          ticket_code = row?.ticket_code || row?.ticketCode || row?.code || null;
-          if (ticket_code) setForm((prev) => ({ ...prev, ticket_code }));
+        setProcessing(false);
+        finalizeCalledRef.current = false;
+        return;
+      }
+      const bestEmail = getBestEmail(form);
+      if (!bestEmail && !form?.email) {
+        setError("Email is required");
+        setProcessing(false);
+        finalizeCalledRef.current = false;
+        return;
+      }
+      const finalEmail = form && form.email ? form.email : bestEmail;
+      let ticket_code = form.ticket_code || (visitor && visitor.ticket_code) || null;
+
+      // --- Persist only once here (when completing) ---
+      if (!savedAttemptedRef.current) {
+        try {
+          const saveResult = await saveVisitor({ ...form, email: finalEmail });
+          if (saveResult.ok) {
+            if (saveResult.id) {
+              setSavedVisitorId(saveResult.id);
+            }
+            if (saveResult.ticket_code) {
+              ticket_code = saveResult.ticket_code;
+              setForm((prev) => ({ ...prev, ticket_code }));
+            }
+            savedAttemptedRef.current = true;
+          } else {
+            // If save failed but returned useful info (e.g. existed), honor it
+            if (saveResult.id) {
+              setSavedVisitorId(saveResult.id);
+              savedAttemptedRef.current = true;
+            } else {
+              // treat as fatal for finalization
+              throw new Error(saveResult.error || "Failed to save visitor");
+            }
+          }
+        } catch (e) {
+          console.warn("Initial save during finalization failed:", e);
+          setError("Failed to save registration. Please try again.");
+          setProcessing(false);
+          finalizeCalledRef.current = false;
+          return;
+        }
+      }
+
+      // If we already saved and can fetch ticket_code from saved record, prefer that
+      if (!ticket_code && savedVisitorId) {
+        try {
+          const r = await fetch(
+            `${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}`,
+            { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69440" } }
+          );
+          if (r.ok) {
+            const row = await r.json().catch(() => null);
+            ticket_code = row?.ticket_code || row?.ticketCode || row?.code || null;
+            if (ticket_code) setForm((prev) => ({ ...prev, ticket_code }));
+          }
+        } catch (e) {
+          console.warn("fetch saved visitor failed", e);
+        }
+      }
+
+      // If still no ticket_code, generate one and persist it (only once)
+      if (!ticket_code) {
+        const gen = String(Math.floor(100000 + Math.random() * 900000));
+        ticket_code = gen;
+
+        if (!savedAttemptedRef.current) {
+          // If not yet saved (unlikely), call saveVisitor with ticket_code
+          try {
+            const saved = await saveVisitor({ ...form, ticket_code: gen, email: finalEmail });
+            if (saved.ok && saved.id) {
+              setSavedVisitorId(saved.id);
+            }
+            if (saved.ticket_code) ticket_code = saved.ticket_code;
+            savedAttemptedRef.current = true;
+          } catch (saveErr) {
+            console.warn("Saving visitor with ticket_code failed:", saveErr);
+          }
+        } else if (savedVisitorId) {
+          // If record exists, call confirm endpoint to set ticket_code
+          try {
+            await fetch(
+              `${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}/confirm`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "ngrok-skip-browser-warning": "69440",
+                },
+                body: JSON.stringify({ ticket_code: gen, force: true }),
+              }
+            );
+          } catch (e) {
+            console.warn("confirm ticket_code failed", e);
+          }
+        }
+        setForm((prev) => ({ ...prev, ticket_code }));
+      }
+
+      const fullVisitor = {
+        ...form,
+        email: finalEmail,
+        ticket_code,
+        ticket_category: ticketCategory,
+        ticket_price: ticketMeta.price,
+        ticket_gst: ticketMeta.gstAmount,
+        ticket_total: ticketMeta.total,
+        eventDetails: config?.eventDetails || {},
+      };
+      setVisitor(fullVisitor);
+
+      if (!emailSent) {
+        setEmailSent(true);
+        try {
+          const bannerUrl = config?.images && config.images.length ? normalizeAdminUrl(config.images[0]) : "";
+          await sendTicketEmailUsingTemplate({
+            visitor: fullVisitor,
+            badgePreviewUrl: "",
+            bannerUrl,
+            badgeTemplateUrl,
+            config,
+          });
+        } catch (mailErr) {
+          console.error("Email failed:", mailErr);
+          setError("Saved but email failed");
+        }
+      }
+
+      try {
+        if (savedVisitorId && config?.eventDetails?.date) {
+          const payload = {
+            entity: "visitors",
+            filter: { limit: 1, where: `id=${encodeURIComponent(String(savedVisitorId))}` },
+          };
+          await fetch(`${API_BASE}/api/reminders/send`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69440" },
+            body: JSON.stringify(payload),
+          }).catch(() => {});
         }
       } catch (e) {
-        console.warn("fetch saved visitor failed", e);
+        console.warn("scheduling reminder failed", e);
       }
+
+      setStep(4);
+    } catch (err) {
+      console.error("completeRegistrationAndEmail error:", err);
+      setError("Finalization failed");
+    } finally {
+      setProcessing(false);
+      finalizeCalledRef.current = false;
     }
+  }, [
+    config,
+    form,
+    savedVisitorId,
+    visitor,
+    ticketCategory,
+    ticketMeta,
+    emailSent,
+    badgeTemplateUrl,
+    saveVisitor,
+    sendTicketEmailUsingTemplate,
+    API_BASE,
+  ]);
 
-    if (!ticket_code) {
-      const gen = String(Math.floor(100000 + Math.random() * 900000));
-      ticket_code = gen;
-      if (savedVisitorId) {
-        try {
-          await fetch(
-            `${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}/confirm`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "ngrok-skip-browser-warning": "69440",
-              },
-              body: JSON.stringify({ ticket_code: gen, force: true }),
-            }
-          );
-        } catch {}
-      } else {
-        try {
-          const saved = await saveVisitor({
-            ...form,
-            ticket_code: gen,
-            email: finalEmail,
-          });
-          if (saved?.insertedId) setSavedVisitorId(saved.insertedId);
-          if (saved?.ticket_code) ticket_code = saved.ticket_code;
-        } catch (saveErr) {
-          console.warn("Saving visitor during finalization failed:", saveErr);
-        }
-      }
-      setForm((prev) => ({ ...prev, ticket_code }));
+  useEffect(() => {
+    if (step === 3 && Number(ticketMeta.total) === 0 && !processing) {
+      completeRegistrationAndEmail();
     }
+  }, [step, ticketMeta, processing, completeRegistrationAndEmail]);
 
-    const fullVisitor = {
-      ...form,
-      email: finalEmail,
-      ticket_code,
-      ticket_category: ticketCategory,
-      ticket_price: ticketMeta.price,
-      ticket_gst: ticketMeta.gstAmount,
-      ticket_total: ticketMeta.total,
-      eventDetails: config?.eventDetails || {},
-    };
-    setVisitor(fullVisitor);
-    await saveStep("finalizing_start", { fullVisitor });
-
-    if (!emailSent) {
-      setEmailSent(true);
-      try {
-        const bannerUrl = config?.images && config.images.length ? normalizeAdminUrl(config.images[0]) : "";
-        await sendTicketEmailUsingTemplate({
-          visitor: fullVisitor,
-          badgePreviewUrl: "",
-          bannerUrl,
-          badgeTemplateUrl,
-          config,
-        });
-        await saveStep("emailed", { fullVisitor }, { savedVisitorId });
-      } catch (mailErr) {
-        console.error("Email failed:", mailErr);
-        await saveStep("email_failed", { fullVisitor }, { error: String(mailErr) });
-        setError("Saved but email failed");
-      }
-    }
-
-    try {
-      if (savedVisitorId && config?.eventDetails?.date) {
-        const payload = {
-          entity: "visitors",
-          filter: { limit: 1, where: `id=${encodeURIComponent(String(savedVisitorId))}` },
-        };
-        await fetch(`${API_BASE}/api/reminders/send`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69440" },
-          body: JSON.stringify(payload),
-        }).catch(() => {});
-      }
-    } catch (e) {
-      console.warn("scheduling reminder failed", e);
-    }
-
-    setStep(4);
-  } catch (err) {
-    console.error("completeRegistrationAndEmail error:", err);
-    setError("Finalization failed");
-  } finally {
-    setProcessing(false);
-    finalizeCalledRef.current = false;
-  }
-}, [
-  config,
-  form,
-  savedVisitorId,
-  visitor,
-  ticketCategory,
-  ticketMeta,
-  saveStep,
-  emailSent,
-  badgeTemplateUrl,
-  saveVisitor,
-  sendTicketEmailUsingTemplate,
-  API_BASE,
-]);
-
-useEffect(() => {
-  if (step === 3 && Number(ticketMeta.total) === 0 && !processing) {
-    completeRegistrationAndEmail();
-  }
-}, [step, ticketMeta, processing, completeRegistrationAndEmail]);
-
-  /* ---------- render ---------- */
+  /* ---------- render (unchanged) ---------- */
   if (isMobile) {
     return (
       <div className="min-h-screen w-full bg-white flex items-start justify-center p-4">
@@ -809,38 +811,46 @@ useEffect(() => {
           </button>
         </div>
       )}
-      <div
-        className="absolute inset-0 bg-white/50 pointer-events-none"
-        style={{ zIndex: -900 }}
-      />
+      <div className="absolute inset-0 bg-white/50 pointer-events-none" style={{ zIndex: -900 }} />
       <div className="relative z-10">
         <Topbar />
         <div className="max-w-7xl mx-auto pt-8">
-          <div
-            className="flex flex-col sm:flex-row items-stretch mb-10"
-            style={{ minHeight: 370 }}
-          >
+          <div className="flex flex-col sm:flex-row items-stretch mb-10" style={{ minHeight: 370 }}>
             <div className="sm:w-[60%] w-full flex items-center justify-center">
               {loading ? (
-                <div className="text-[#21809b] text-2xl font-bold">
-                  Loading...
-                </div>
+                <div className="text-[#21809b] text-2xl font-bold">Loading...</div>
               ) : (
-                <ImageSlider images={config?.images || []} />
+                <div className="rounded-3xl overflow-hidden shadow-2xl h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] bg-white/75 flex items-center justify-center">
+                  {config?.images?.length ? <img src={normalizeAdminUrl(config.images[0])} alt="banner" className="object-cover w-full h-full" /> : null}
+                </div>
               )}
             </div>
             <div className="sm:w-[40%] w-full flex items-center justify-center">
               {loading ? (
-                <div className="text-[#21809b] text-xl font-semibold">
-                  Loading event details...
-                </div>
+                <div className="text-[#21809b] text-xl font-semibold">Loading event details...</div>
               ) : (
-                <EventDetailsBlock event={config?.eventDetails || null} />
+                <div className="flex flex-col items-center justify-center h-full w-full mt-6">
+                  <div className="font-extrabold text-3xl sm:text-5xl mb-3 text-center" style={{ background: "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
+                    {config?.eventDetails?.name || "Event Name"}
+                  </div>
+                  <div className="text-xl sm:text-2xl font-bold mb-1 text-center text-[#21809b]">
+                    {config?.eventDetails?.date || config?.eventDetails?.dates || "Event Date"}
+                  </div>
+                  <div className="text-base sm:text-xl font-semibold text-center text-[#196e87]">
+                    {config?.eventDetails?.venue || "Event Venue"}
+                  </div>
+                </div>
               )}
             </div>
           </div>
 
-          <SectionTitle />
+          <div className="w-full flex items-center justify-center my-6 sm:my-8">
+            <div className="flex-grow border-t border-[#21809b]" />
+            <span className="mx-3 sm:mx-5 px-4 sm:px-8 py-2 sm:py-3 text-lg sm:text-2xl font-extrabold text-[#21809b] bg-white shadow rounded-2xl">
+              Visitor Registration
+            </span>
+            <div className="flex-grow border-t border-[#21809b]" />
+          </div>
 
           {!loading && step === 1 && Array.isArray(config?.fields) && (
             <div className="mx-auto w-full max-w-2xl">
@@ -868,19 +878,17 @@ useEffect(() => {
             />
           )}
 
-          {step === 3 &&
-            !/free|general|0/i.test(String(ticketCategory || "")) &&
-            !processing && (
-              <ManualPaymentStep
-                ticketType={ticketCategory}
-                ticketPrice={ticketMeta.total || 0}
-                onProofUpload={() => completeRegistrationAndEmail()}
-                onTxIdChange={(val) => setTxId(val)}
-                txId={txId}
-                proofFile={proofFile}
-                setProofFile={setProofFile}
-              />
-            )}
+          {step === 3 && !/free|general|0/i.test(String(ticketCategory || "")) && !processing && (
+            <ManualPaymentStep
+              ticketType={ticketCategory}
+              ticketPrice={ticketMeta.total || 0}
+              onProofUpload={() => completeRegistrationAndEmail()}
+              onTxIdChange={(val) => setTxId(val)}
+              txId={txId}
+              proofFile={proofFile}
+              setProofFile={setProofFile}
+            />
+          )}
 
           {step === 3 && processing && (
             <ProcessingCard
@@ -891,27 +899,19 @@ useEffect(() => {
           )}
 
           {step === 4 && (
-            <ThankYouMessage
-              email={visitor?.email}
-              messageOverride="Thank you for registering — check your email for the ticket."
-            />
+            <ThankYouMessage email={visitor?.email} messageOverride="Thank you for registering — check your email for the ticket." />
           )}
 
           {!isMobile && bgVideoErrorMsg && (
             <div className="mt-4 p-3 bg-yellow-50 text-yellow-800 rounded text-sm max-w-3xl mx-auto">
-              Background video not playing: {String(bgVideoErrorMsg)}. Check
-              console for details.
+              Background video not playing: {String(bgVideoErrorMsg)}. Check console for details.
             </div>
           )}
 
-          {error && (
-            <div className="text-red-400 text-center mt-4">{error}</div>
-          )}
+          {error && <div className="text-red-400 text-center mt-4">{error}</div>}
 
           <div className="mt-10 sm:mt-12 pb-8">
-            <footer className="text-center text-white font-semibold py-4 text-sm sm:text-lg">
-              © {new Date().getFullYear()} RailTrans Expo
-            </footer>
+            <footer className="text-center text-white font-semibold py-4 text-sm sm:text-lg">© {new Date().getFullYear()} RailTrans Expo</footer>
           </div>
         </div>
       </div>

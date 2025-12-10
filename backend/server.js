@@ -1,4 +1,3 @@
-// server.js
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -91,13 +90,33 @@ try { awardeesRouter = require('./routes/awardees-mongo'); } catch (e) { try { a
 let awardeeConfigRouter = null;
 try { awardeeConfigRouter = require('./routes/awardee-config-mongo'); } catch (e) { try { awardeeConfigRouter = require('./routes/awardeeConfig'); } catch (e2) { awardeeConfigRouter = null; } }
 
-const otpRouter = (() => { try { return require('./routes/otp'); } catch { return null; } })();
-const paymentRouter = (() => { try { return require('./routes/payment'); } catch { return null; } })();
-const emailRouter = (() => { try { return require('./routes/email'); } catch { return null; } })();
-const remindersRouter = (() => { try { return require('./routes/reminders'); } catch { return null; } })();
-const ticketsScanRouter = (() => { try { return require('./routes/tickets-scan'); } catch { return null; } })();
-const ticketsUpgradeRouter = (() => { try { return require('./routes/tickets-upgrade'); } catch { return null; } })();
-const imageUploadRouter = (() => { try { return require('./routes/imageUpload'); } catch { return null; } })();
+// OTP router (log any require error to console)
+const otpRouter = (() => {
+  try {
+    return require('./routes/otp');
+  } catch (e) {
+    console.error('Failed to require ./routes/otp:', e && (e.stack || e.message || e));
+    return null;
+  }
+})();
+
+// mailer/router require with debug
+const emailRouter = (() => {
+  try {
+    const r = require('./routes/email');
+    console.log('Loaded ./routes/email ->', !!r);
+    return r;
+  } catch (e) {
+    console.error('Failed to require ./routes/email:', e && (e.stack || e.message || e));
+    return null;
+  }
+})();
+
+const paymentRouter = (() => { try { return require('./routes/payment'); } catch (e) { console.warn('no payment router', e && (e.message)); return null; } })();
+const remindersRouter = (() => { try { return require('./routes/reminders'); } catch (e) { return null; } })();
+const ticketsScanRouter = (() => { try { return require('./routes/tickets-scan'); } catch (e) { return null; } })();
+const ticketsUpgradeRouter = (() => { try { return require('./routes/tickets-upgrade'); } catch (e) { return null; } })();
+const imageUploadRouter = (() => { try { return require('./routes/imageUpload'); } catch (e) { return null; } })();
 
 let adminRouter = null;
 try { adminRouter = require('./routes/adminConfig'); } catch (e) { adminRouter = null; }
@@ -148,7 +167,16 @@ else {
 // Other API routes (mount if available)
 if (otpRouter) app.use('/api/otp', otpRouter);
 if (paymentRouter) app.use('/api/payment', paymentRouter);
-if (emailRouter) app.use('/api/email', emailRouter);
+
+// Mount email router at both /api/email and /api/mailer to match frontend calls
+if (emailRouter) {
+  app.use('/api/email', emailRouter);
+  app.use('/api/mailer', emailRouter); // <--- ensure /api/mailer resolves
+  console.log('Mounted email router at /api/email and /api/mailer');
+} else {
+  console.warn('No email/mailer router found (routes/email.js missing)');
+}
+
 if (remindersRouter) app.use('/api/reminders', remindersRouter);
 if (ticketsScanRouter) app.use('/api/tickets', ticketsScanRouter);
 if (ticketsUpgradeRouter) app.use('/api/tickets', ticketsUpgradeRouter);
@@ -197,6 +225,8 @@ const PORT = process.env.PORT || 5000;
       console.log(' - /api/exhibitor-config ->', exhibitorConfigRouter ? 'mounted' : 'fallback/none');
       console.log(' - /api/speaker-config ->', (speakerConfigMongoRouter || speakerConfigRouter) ? 'mounted' : 'fallback/none');
       console.log(' - /api/awardee-config ->', awardeeConfigRouter ? 'mounted' : 'fallback/none');
+      console.log(' - /api/otp ->', otpRouter ? 'mounted' : 'fallback/none');
+      console.log(' - /api/mailer ->', emailRouter ? 'mounted' : 'fallback/none');
       if (process.env.REACT_APP_API_BASE_URL) console.log('Front-end API base env:', process.env.REACT_APP_API_BASE_URL);
     });
   } catch (e) {

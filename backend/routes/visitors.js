@@ -3,6 +3,10 @@ const router = express.Router();
 const mongo = require('../utils/mongoClient'); // should export getDb() or .db
 const { ObjectId } = require('mongodb');
 
+// reuse safeFieldName if available to normalize admin field names
+let safeFieldName = null;
+try { safeFieldName = require('../utils/mongoSchemaSync').safeFieldName; } catch (e) { /* optional */ }
+
 router.use(express.json({ limit: '5mb' }));
 
 /**
@@ -24,9 +28,39 @@ function pick(v, keys) {
   return undefined;
 }
 
+function generateTicketCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+/**
+ * loadAdminFields(pageName)
+ * Loads admin configured fields from registration_configs collection and
+ * returns a Set of safe (normalized) names and the original fields array.
+ */
+async function loadAdminFields(db, pageName = 'visitor') {
+  try {
+    const col = db.collection('registration_configs');
+    const doc = await col.findOne({ page: pageName });
+    const fields = (doc && doc.config && Array.isArray(doc.config.fields)) ? doc.config.fields : [];
+    const safeNames = new Set();
+    for (const f of fields) {
+      if (!f || !f.name) continue;
+      const name = String(f.name).trim();
+      if (!name) continue;
+      const sn = (typeof safeFieldName === 'function') ? safeFieldName(name) : name.toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+      if (sn) safeNames.add(sn);
+    }
+    return { fields, safeNames };
+  } catch (e) {
+    return { fields: [], safeNames: new Set() };
+  }
+}
+
 /**
  * POST /api/visitors
  * Save a visitor into registrants collection (role: 'visitor')
+ * - stores raw form under data
+ * - promotes admin-configured fields to top-level normalized keys for easy querying
  */
 router.post('/', async (req, res) => {
   try {
@@ -34,9 +68,7 @@ router.post('/', async (req, res) => {
     if (!db) return res.status(500).json({ success: false, message: 'database not available' });
 
     const coll = db.collection('registrants');
-
     const body = req.body || {};
-    // normalize common top-level values; front-end may send either raw form or wrapped
     const form = body._rawForm || body.form || body || {};
 
     const name = ((body.name || form.name || ((form.firstName && form.lastName) ? `${form.firstName} ${form.lastName}` : '') ) || '').trim();
@@ -47,16 +79,16 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Valid email is required.' });
     }
 
-    // use provided ticket_code if any; otherwise null (you may generate server-side if desired)
-    const ticket_code = body.ticket_code || form.ticket_code || null;
+    const ticket_code = body.ticket_code || form.ticket_code || generateTicketCode();
 
+    // Base document
     const doc = {
       role: 'visitor',
-      data: form, // keep full raw form here
-      name,
-      email,
-      mobile,
-      ticket_code,
+      data: form, // preserve full raw form
+      name: name || null,
+      email: email || null,
+      mobile: mobile || null,
+      ticket_code: ticket_code || null,
       ticket_category: body.ticket_category || form.ticket_category || null,
       ticket_price: Number(body.ticket_price || form.ticket_price || 0) || 0,
       ticket_gst: Number(body.ticket_gst || form.ticket_gst || 0) || 0,
@@ -68,28 +100,42 @@ router.post('/', async (req, res) => {
       updatedAt: new Date(),
     };
 
+    // Promote admin-configured fields to top-level normalized keys if present in submission
+    try {
+      const { safeNames } = await loadAdminFields(db, 'visitor');
+      for (const [k, v] of Object.entries(form || {})) {
+        if (!k) continue;
+        const sn = (typeof safeFieldName === 'function') ? safeFieldName(k) : String(k).trim().toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+        if (!sn) continue;
+        // only promote keys that are in admin configured safe names
+        if (safeNames.has(sn)) {
+          // avoid clobbering reserved top-level fields
+          if (['role','data','createdAt','updatedAt','_id'].includes(sn)) continue;
+          doc[sn] = v === undefined ? null : v;
+        }
+      }
+    } catch (e) {
+      // non-fatal: if admin-config load fails, we still insert raw form
+      console.warn('[visitors] failed to promote admin fields:', e && (e.stack || e));
+    }
+
     const r = await coll.insertOne(doc);
     const insertedId = r && r.insertedId ? String(r.insertedId) : null;
 
-    // Return the ticket_code that will be associated (if any); keep compatibility with old API
-    return res.json({ success: true, message: 'Visitor registered successfully.', insertedId, ticket_code: ticket_code || null });
+    return res.json({ success: true, message: 'Visitor registered successfully.', insertedId, ticket_code: doc.ticket_code || null });
   } catch (err) {
     console.error('[visitors] POST error', err && (err.stack || err));
     return res.status(500).json({ success: false, message: 'Database error', details: String(err && err.message ? err.message : err) });
   }
 });
 
-/**
- * POST /api/visitors/step
- * Fire-and-forget step logger (keep behavior)
- */
+
 router.post('/step', async (req, res) => {
   try {
     const db = await obtainDb();
     if (!db) return res.status(500).json({ success: false, error: 'database not available' });
     const col = db.collection('steps');
     const payload = { ...req.body, createdAt: new Date() };
-    // best-effort insert
     try { await col.insertOne(payload); } catch (e) { console.warn('[visitors] step insert failed', e && e.message); }
     return res.json({ success: true });
   } catch (err) {
@@ -114,7 +160,6 @@ router.get('/', async (req, res) => {
 
     const filter = { role: 'visitor' };
     if (q) {
-      // simple case-insensitive search on email, name, ticket_code and also on nested data
       filter.$or = [
         { email: { $regex: q, $options: 'i' } },
         { name: { $regex: q, $options: 'i' } },
@@ -185,6 +230,7 @@ router.delete('/:id', async (req, res) => {
 /**
  * POST /api/visitors/:id/confirm
  * Update allowed fields; do NOT overwrite ticket_code unless force=true
+ * Also accepts admin-configured normalized fields (safe names).
  */
 router.post('/:id/confirm', async (req, res) => {
   try {
@@ -202,13 +248,31 @@ router.post('/:id/confirm', async (req, res) => {
     const doc = await coll.findOne(q);
     if (!doc) return res.status(404).json({ success: false, error: 'Visitor not found' });
 
-    const whitelist = new Set(['ticket_code','ticket_category','txId','email','name','company','mobile','designation','slots']);
-    const update = {};
-    for (const k of Object.keys(payload || {})) {
-      if (!whitelist.has(k)) continue;
-      update[k] = payload[k];
+    // base whitelist
+    const baseWhitelist = new Set(['ticket_code','ticket_category','txId','email','name','company','mobile','designation','slots']);
+
+    // include admin-configured safe names
+    try {
+      const { safeNames } = await loadAdminFields(db, 'visitor');
+      for (const sn of safeNames) baseWhitelist.add(sn);
+    } catch (e) {
+      // ignore
     }
 
+    const update = {};
+    for (const k of Object.keys(payload || {})) {
+      // accept if in whitelist or if normalized safeName is in whitelist
+      if (baseWhitelist.has(k)) {
+        update[k] = payload[k];
+        continue;
+      }
+      const sn = (typeof safeFieldName === 'function') ? safeFieldName(k) : String(k).trim().toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+      if (sn && baseWhitelist.has(sn)) {
+        update[sn] = payload[k];
+      }
+    }
+
+    // ticket_code defensive handling
     if ('ticket_code' in update) {
       const incoming = update.ticket_code ? String(update.ticket_code).trim() : "";
       const existingCode = doc.ticket_code ? String(doc.ticket_code).trim() : "";
