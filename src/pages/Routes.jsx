@@ -22,6 +22,7 @@ import AdminLayout from "../AdminLayout";
 import AdminLogin from "../components/AdminLogin";
 import TicketDownload from "./TicketDownload";
 import TicketUpgrade from "./TicketUpgrade";
+import EventDetailsAdmin from "./EventDetailsAdmin";
 
 // Simple placeholders (if you need them)
 function Registrations() {
@@ -37,7 +38,6 @@ export default function AppRoutes() {
     // If you already wrap your app with a provider higher up (e.g. in index.jsx), remove this wrapper.
     <AuthProvider>
       <Routes>
-       
         <Route path="/" element={<AdminPortal />} />
 
         {/* Public pages */}
@@ -135,6 +135,14 @@ export default function AppRoutes() {
           element={
             <AdminRoute>
               <AdminPartners />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="/event-details-admin"
+          element={
+            <AdminRoute>
+              <EventDetailsAdmin />
             </AdminRoute>
           }
         />

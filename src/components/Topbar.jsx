@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, Suspense } from "react";
+import React, { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { AiOutlineQrcode } from "react-icons/ai"; // ⭐ NEW QR Scanner Icon
 
 // Lazy-load scanner to keep bundle small
@@ -32,6 +32,24 @@ function darkenHex(hex, amount = 0.12) {
   return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
 }
 
+/* Convert server-relative path to absolute browser URL.
+   If the value already starts with http(s) or data:, leave as-is.
+*/
+function toAbsolute(url) {
+  if (!url) return url;
+  const s = String(url).trim();
+  if (!s) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("data:")) return s;
+  // Ensure leading slash
+  const path = s.startsWith("/") ? s : `/${s}`;
+  try {
+    return `${window.location.origin}${path}`;
+  } catch {
+    return path;
+  }
+}
+
 export default function Topbar({ onToggleSidebar = () => {} }) {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [logo, setLogo] = useState("/images/logo.png");
@@ -56,11 +74,11 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
 
     async function loadConfig() {
       try {
-        const res = await fetch("/api/admin-config", { signal: controller.signal });
+        const res = await fetch("/api/admin-config", { signal: controller.signal, headers: { Accept: "application/json" } });
         if (res.ok) {
           const json = await res.json().catch(() => null);
           if (mounted && json && typeof json === "object") {
-            if (json.logoUrl) setLogo(json.logoUrl);
+            if (json.logoUrl) setLogo(toAbsolute(json.logoUrl));
             if (json.primaryColor) setPrimaryColor(safeHex(json.primaryColor) || "#196e87");
             try {
               window.localStorage.setItem(
@@ -71,13 +89,15 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
             return;
           }
         }
-      } catch {}
+      } catch (e) {
+        // failed to fetch, fallback to local storage
+      }
 
       try {
         const raw = window.localStorage.getItem("admin:topbar");
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (parsed?.logoUrl) setLogo(parsed.logoUrl);
+          if (parsed?.logoUrl) setLogo(toAbsolute(parsed.logoUrl));
           if (parsed?.primaryColor) setPrimaryColor(safeHex(parsed.primaryColor) || "#196e87");
         }
       } catch {}
@@ -87,6 +107,25 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
     return () => {
       mounted = false;
       controller.abort();
+    };
+  }, []);
+
+  // Listen for live updates made by AdminTopbarSettings (or other pages)
+  useEffect(() => {
+    function onTopbarUpdate(e) {
+      try {
+        const d = e && e.detail ? e.detail : null;
+        if (!d) return;
+        if (d.logoUrl) setLogo(toAbsolute(d.logoUrl));
+        if (d.primaryColor) setPrimaryColor(safeHex(d.primaryColor) || "#196e87");
+      } catch {}
+    }
+    window.addEventListener("admin:topbar-updated", onTopbarUpdate);
+    // some code used custom event name admin:topbar-updated, keep compatibility with older event names if used
+    window.addEventListener("admin:topbar-update", onTopbarUpdate); // legacy
+    return () => {
+      window.removeEventListener("admin:topbar-updated", onTopbarUpdate);
+      window.removeEventListener("admin:topbar-update", onTopbarUpdate);
     };
   }, []);
 
@@ -136,6 +175,7 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
               className="ml-2 px-3 py-2 rounded text-white font-semibold flex items-center gap-2"
               style={{ backgroundColor: buttonBg }}
               title="Open Gate Scanner"
+              aria-label="Open Ticket Scanner"
             >
               <AiOutlineQrcode size={20} />   {/* 👈 NEW ICON */}
               <span className="hidden sm:inline">Scanner</span>
@@ -167,10 +207,12 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
                   apiPath="/api/tickets/scan"
                   onError={(err) => {
                     console.error("Scanner error:", err);
+                    // user-friendly message
                     alert(err?.message || "Scanner error");
                   }}
                   onSuccess={(result) => {
                     console.log("Scan success:", result);
+                    // small delay so user sees success then close
                     setTimeout(() => closeScanner(), 800);
                   }}
                 />

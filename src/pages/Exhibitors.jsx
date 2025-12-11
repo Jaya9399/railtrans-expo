@@ -9,10 +9,13 @@ import { buildTicketEmail } from "../utils/emailTemplate";
 
 /*
   Exhibitors.jsx
-  - Fixed field fetching: robustly reads server response (handles { config } wrapper),
-    normalizes fields and merges sensible defaults when DB config is missing fields.
-  - Keeps existing behavior otherwise.
+  - Adds ngrok bypass header on key fetches
+  - Fetches canonical event-details from /api/configs/event-details (fallback /api/event-details)
+    and shows it in the UI (preview). Listens to config-updated and event-details-updated to refresh.
+  - Makes payment status polling and proof uploads include ngrok header.
+  - Keeps previous robust field/config normalization and defaults.
 */
+
 function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
 function getApiBaseFromEnvOrWindow() {
   if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE) {
@@ -282,6 +285,7 @@ const DEFAULT_EXHIBITOR_FIELDS = [
 /* ---------- Component ---------- */
 export default function Exhibitors() {
   const [config, setConfig] = useState(null);
+  const [canonicalEvent, setCanonicalEvent] = useState(null);
   const [form, setForm] = useState({});
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -359,11 +363,54 @@ export default function Exhibitors() {
     }
   }
 
+  const fetchCanonicalEvent = async () => {
+    try {
+      const url = apiUrl("/api/configs/event-details");
+      const r = await fetch(`${url}?cb=${Date.now()}`, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+      if (r.ok) {
+        const js = await r.json().catch(() => ({}));
+        const val = js && js.value !== undefined ? js.value : js;
+        if (val && typeof val === "object" && Object.keys(val).length) {
+          setCanonicalEvent({
+            name: val.name || "",
+            date: val.date || val.dates || "",
+            venue: val.venue || "",
+            time: val.time || "",
+            tagline: val.tagline || "",
+          });
+          return;
+        }
+      }
+      // fallback legacy
+      const r2 = await fetch(apiUrl("/api/event-details?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } }).catch(() => null);
+      if (r2 && r2.ok) {
+        const js2 = await r2.json().catch(() => ({}));
+        setCanonicalEvent({ name: js2.name || "", date: js2.date || js2.dates || "", venue: js2.venue || "", time: js2.time || "", tagline: js2.tagline || "" });
+        return;
+      }
+      setCanonicalEvent(null);
+    } catch (e) {
+      console.warn("[Exhibitors] fetchCanonicalEvent failed", e);
+      setCanonicalEvent(null);
+    }
+  };
+
   useEffect(() => {
     fetchConfig();
-    const onCfg = () => fetchConfig();
+    fetchCanonicalEvent();
+    const onCfg = () => { fetchConfig(); fetchCanonicalEvent(); };
+    const onConfigUpdated = (e) => {
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details") fetchCanonicalEvent().catch(()=>{});
+    };
     window.addEventListener("exhibitor-config-updated", onCfg);
-    return () => window.removeEventListener("exhibitor-config-updated", onCfg);
+    window.addEventListener("config-updated", onConfigUpdated);
+    window.addEventListener("event-details-updated", fetchCanonicalEvent);
+    return () => {
+      window.removeEventListener("exhibitor-config-updated", onCfg);
+      window.removeEventListener("config-updated", onConfigUpdated);
+      window.removeEventListener("event-details-updated", fetchCanonicalEvent);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -408,7 +455,7 @@ export default function Exhibitors() {
       const poll = setInterval(async () => {
         attempts += 1;
         try {
-          const st = await fetch(apiUrl(`/api/payment/status?reference_id=${encodeURIComponent(String(payload.reference_id))}`));
+          const st = await fetch(apiUrl(`/api/payment/status?reference_id=${encodeURIComponent(String(payload.reference_id))}`), { headers: { "ngrok-skip-browser-warning": "69420" } });
           if (!st.ok) return;
           const js2 = await st.json().catch(() => ({}));
           const status = (js2.status || "").toString().toLowerCase();
@@ -439,7 +486,7 @@ export default function Exhibitors() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const r = await fetch(apiUrl("/api/upload-asset"), { method: "POST", body: fd });
+      const r = await fetch(apiUrl("/api/upload-asset"), { method: "POST", headers: { "ngrok-skip-browser-warning": "69420" }, body: fd });
       if (!r.ok) { console.warn("proof upload failed", await r.text().catch(() => "")); return ""; }
       const js = await r.json().catch(() => null);
       return js?.imageUrl || js?.fileUrl || js?.url || js?.path || "";
@@ -528,7 +575,7 @@ export default function Exhibitors() {
               {loading ? <div className="text-[#21809b] text-2xl font-bold">Loading...</div> : <ImageSlider images={config?.images || []} />}
             </div>
             <div className="sm:w-[40%] w-full flex items-center justify-center">
-              {loading ? <div className="text-[#21809b] text-xl font-semibold">Loading event details...</div> : <EventDetailsBlock event={config?.eventDetails || null} />}
+              {loading ? <div className="text-[#21809b] text-xl font-semibold">Loading event details...</div> : <EventDetailsBlock event={canonicalEvent || config?.eventDetails || null} />}
             </div>
           </div>
 
@@ -565,7 +612,7 @@ export default function Exhibitors() {
 
           {error && <div className="text-red-600 font-semibold mb-2 text-center">{error}</div>}
 
-          <footer className="mt-16 text-center text-[#21809b] font-semibold py-6 text-lg">© {new Date().getFullYear()} RailTrans Expo</footer>
+          <footer className="mt-16 text-center text-[#21809b] font-semibold py-6 text-lg">© {new Date().getFullYear()} { (canonicalEvent && canonicalEvent.name) || config?.eventDetails?.name || "RailTrans Expo" }</footer>
         </div>
       </div>
     </div>

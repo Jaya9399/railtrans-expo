@@ -84,19 +84,19 @@ function canonicalizeConfig(cfg = {}) {
 router.get('/', async (req, res) => {
   try {
     const db = await obtainDb();
-    if (!db) return res.json({ fields: DEFAULT_AWARDEE_FIELDS.slice(), images: [], eventDetails: {} });
+    if (!db) return res.json({ fields: DEFAULT_AWARDEE_FIELDS.slice(), images: [] });
 
     const col = db.collection('registration_configs');
     const doc = await col.findOne({ page: 'awardee' });
     if (!doc || !doc.config) {
-      const fallback = canonicalizeConfig({ fields: DEFAULT_AWARDEE_FIELDS.slice(), images: [], eventDetails: {} });
+      const fallback = canonicalizeConfig({ fields: DEFAULT_AWARDEE_FIELDS.slice(), images: [] });
       return res.json(fallback);
     }
     const canonical = canonicalizeConfig(doc.config || {});
     return res.json(canonical);
   } catch (err) {
     console.error('[awardee-config-mongo] GET error', err && (err.stack || err));
-    const fallback = canonicalizeConfig({ fields: DEFAULT_AWARDEE_FIELDS.slice(), images: [], eventDetails: {} });
+    const fallback = canonicalizeConfig({ fields: DEFAULT_AWARDEE_FIELDS.slice(), images: [] });
     return res.status(500).json(fallback);
   }
 });

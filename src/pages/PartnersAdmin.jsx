@@ -345,6 +345,28 @@ export default function PartnersAdmin() {
         <button onClick={addCheckboxField} className="px-4 py-2 bg-yellow-100">Add Checkbox Field</button>
       </div>
 
+      {/* Terms */}
+      <h3 className="font-bold mb-2 mt-8">Terms &amp; Conditions (appears at end of form)</h3>
+      <div className="mb-2">
+        <label className="block mb-1">Label shown to users</label>
+        <input type="text" value={config.termsLabel || "Terms & Conditions"} onChange={(e) => setConfig(clone({ ...config, termsLabel: e.target.value }))} className="border px-2 w-full mb-2" />
+
+        <label className="block mb-1">Link to Terms (paste URL)</label>
+        <input type="text" placeholder="https://..." value={config.termsUrl || ""} onChange={(e) => setConfig(clone({ ...config, termsUrl: e.target.value }))} className="border px-2 w-full mb-2" />
+
+        <div className="flex items-center gap-3 mb-2">
+          <input type="file" accept=".pdf,.txt,.doc,.docx" onChange={(e) => handleAssetUpload(e, "termsUrl")} disabled={uploading} />
+          <button type="button" onClick={removeTermsFile} className="px-3 py-1 border">Remove Terms File</button>
+          <label className="ml-2"><input type="checkbox" checked={!!config.termsRequired} onChange={(e) => setConfig(clone({ ...config, termsRequired: e.target.checked }))} /><span className="ml-2">Require acceptance on registration</span></label>
+        </div>
+
+        <div className="mb-2">
+          <strong>Preview:</strong>
+          {config.termsUrl ? (<div className="mt-1"><a href={config.termsUrl} target="_blank" rel="noreferrer" className="text-indigo-700 underline">{config.termsUrl}</a></div>) : null}
+          {config.termsText ? (<div className="mt-2 p-3 border rounded bg-gray-50" style={{ whiteSpace: "pre-wrap" }}>{config.termsText}</div>) : null}
+        </div>
+      </div>
+
       <div className="mt-6">
         <button onClick={saveConfig} className="px-6 py-3 bg-blue-600 text-white font-bold rounded" disabled={uploading}>Save Changes</button>
         {msg && <div className="mt-2 text-green-600 font-bold">{msg}</div>}

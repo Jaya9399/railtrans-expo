@@ -1,16 +1,10 @@
-// src/utils/emailTemplate.js
 // Email template for ticket / e-badge delivery
-// - Uses event details strictly from the registration `form` (form.event / form.eventDetails / flat fields).
-// - Shows Event Details as labeled fields (Name, Dates, Time, Venue) below the action card, like the screenshot.
-// - Download E‑Badge always present. Upgrade Ticket shown only for entity === 'visitors' and links to TicketUpgrade page if no explicit upgradeUrl supplied.
-// - Adds clear spacing between the two buttons.
-// - Does not show registration/ticket number in the body.
-// - Server may replace resolvedLogo with cid:... when sending (inline image).
+// - Now prefers the admin-config logo (GET /api/admin-config) when resolving the logo used in emails.
+// - Falls back to (in order): passed logoUrl parameter, /api/admin/logo-url, localStorage ("admin:topbar").
+// - Keeps previous behavior for canonical event-details and other features.
 //
-// Usage:
-//   buildTicketEmail({ form: registrationObject, entity: "visitors", logoUrl, ... })
-//
-// Returns: { subject, text, html, attachments }
+// This file is intended to be used both in-browser and server-side (mailer).
+// When used server-side, pass frontendBase if the mailer process needs absolute endpoints.
 
 function normalizeBase64(b) {
   if (!b) return "";
@@ -35,9 +29,6 @@ function normalizeForEmailUrl(url, frontendBase) {
 
 /**
  * Extract event details from the registration form ONLY.
- * Accepts form.event, form.eventDetails or flat keys:
- * eventName/event_name/eventTitle, eventDates/event_dates/dates/date, eventTime, eventVenue/venue.
- * Returns object { name, dates, time, venue, tagline } with values as strings or empty strings.
  */
 function getEventFromFormStrict(form) {
   const out = { name: "", dates: "", time: "", venue: "", tagline: "" };
@@ -55,11 +46,9 @@ function getEventFromFormStrict(form) {
     if (obj.tagline && !out.tagline) out.tagline = String(obj.tagline);
   };
 
-  // nested
   if (form.event && typeof form.event === "object") pickFromObj(form.event);
   if (form.eventDetails && typeof form.eventDetails === "object") pickFromObj(form.eventDetails);
 
-  // flat keys on form
   const name = form.eventName || form.event_name || form.eventTitle || form.eventtitle;
   const dates = form.eventDates || form.event_dates || form.dates || form.date;
   const time = form.eventTime || form.event_time;
@@ -75,8 +64,112 @@ function getEventFromFormStrict(form) {
   return out;
 }
 
+/**
+ * Try to fetch canonical event-details from the admin endpoint(s).
+ */
+async function fetchCanonicalEventDetails(frontendBase) {
+  const tryUrls = [];
+  tryUrls.push("/api/configs/event-details");
+  tryUrls.push("/api/event-details");
+  if (frontendBase) {
+    const base = String(frontendBase).replace(/\/$/, "");
+    tryUrls.push(base + "/api/configs/event-details");
+    tryUrls.push(base + "/api/event-details");
+  }
+
+  let _fetch = null;
+  if (typeof fetch !== "undefined") _fetch = fetch;
+  else {
+    try {
+      const nodeFetch = require("node-fetch");
+      _fetch = nodeFetch;
+    } catch (e) {
+      _fetch = null;
+    }
+  }
+  if (!_fetch) return null;
+
+  for (const u of tryUrls) {
+    try {
+      const res = await _fetch(u + (u.includes("?") ? "&" : "?") + "cb=" + Date.now(), { headers: { Accept: "application/json" } });
+      if (!res) continue;
+      let js = null;
+      try { js = await res.json(); } catch (e) {
+        try {
+          const txt = await res.text();
+          js = txt ? JSON.parse(txt) : null;
+        } catch (e2) { js = null; }
+      }
+      if (!js) continue;
+      const val = js && js.value !== undefined ? js.value : js;
+      if (val && typeof val === "object" && Object.keys(val).length) return val;
+    } catch (e) { continue; }
+  }
+  return null;
+}
+
+/**
+ * Try to fetch admin-config logo (preferred source for logo):
+ * - /api/admin-config (returns { logoUrl, primaryColor }) OR
+ * - /api/admin/logo-url (legacy)
+ * Try relative endpoints first, then absolute using frontendBase if provided.
+ * Returns string (url or relative path) or empty string.
+ */
+async function fetchAdminLogo(frontendBase) {
+  const tryUrls = [];
+  tryUrls.push("/api/admin-config");
+  tryUrls.push("/api/admin/logo-url");
+  if (frontendBase) {
+    const base = String(frontendBase).replace(/\/$/, "");
+    tryUrls.push(base + "/api/admin-config");
+    tryUrls.push(base + "/api/admin/logo-url");
+  }
+
+  let _fetch = null;
+  if (typeof fetch !== "undefined") _fetch = fetch;
+  else {
+    try { const nodeFetch = require("node-fetch"); _fetch = nodeFetch; } catch (e) { _fetch = null; }
+  }
+  if (!_fetch) return "";
+
+  for (const u of tryUrls) {
+    try {
+      const res = await _fetch(u + (u.includes("?") ? "&" : "?") + "cb=" + Date.now(), { headers: { Accept: "application/json" } });
+      if (!res) continue;
+      let js = null;
+      try { js = await res.json(); } catch (e) {
+        try { const txt = await res.text(); js = txt ? JSON.parse(txt) : null; } catch { js = null; }
+      }
+      if (!js) continue;
+      // /api/admin-config returns { logoUrl, primaryColor }
+      if (js.logoUrl || js.logo_url || js.logo) {
+        return js.logoUrl || js.logo_url || js.logo;
+      }
+      // /api/admin/logo-url may return { logo_url: "..."} or a string
+      if (typeof js === "string" && js.trim()) return js.trim();
+      if (js.url) return js.url;
+      if (js.logo_url) return js.logo_url;
+    } catch (e) {
+      continue;
+    }
+  }
+
+  // last-ditch: try localStorage if available (client-side)
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const raw = window.localStorage.getItem("admin:topbar");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.logoUrl) return parsed.logoUrl;
+      }
+    }
+  } catch (e) {}
+
+  return "";
+}
+
 export async function buildTicketEmail({
-  frontendBase = (typeof window !== "undefined" && window.location ? window.location.origin : "https://railtransexpo.com"),
+  frontendBase = (typeof window !== "undefined" && window.location ? window.location.origin : ""),
   entity = "attendee",
   id = "",
   name = "",
@@ -85,21 +178,33 @@ export async function buildTicketEmail({
   badgePreviewUrl = "",
   downloadUrl = "",
   upgradeUrl = "",
-  logoUrl = "",
-  form = null, // registration form object (we will take event details from here only)
+  logoUrl = "", // optional param (will be used only if admin logo not found)
+  form = null,
   pdfBase64 = null,
 } = {}) {
   const frontend = String(frontendBase || "").replace(/\/$/, "");
 
-  // Event details strictly from form
-  const ev = getEventFromFormStrict(form);
+  // 1) Fetch canonical event-details
+  let canonicalEvent = null;
+  try { canonicalEvent = await fetchCanonicalEventDetails(frontend || undefined); } catch { canonicalEvent = null; }
 
-  // Normalize URLs
-  const resolvedLogo = normalizeForEmailUrl(logoUrl || "", frontend) || "";
+  const ev = canonicalEvent && typeof canonicalEvent === "object" ? {
+    name: canonicalEvent.name || canonicalEvent.eventName || canonicalEvent.title || "",
+    dates: canonicalEvent.dates || canonicalEvent.date || canonicalEvent.eventDates || "",
+    time: canonicalEvent.time || canonicalEvent.startTime || canonicalEvent.eventTime || "",
+    venue: canonicalEvent.venue || canonicalEvent.location || canonicalEvent.eventVenue || "",
+    tagline: canonicalEvent.tagline || canonicalEvent.subtitle || "",
+  } : getEventFromFormStrict(form);
+
+  // 2) Resolve logo: prefer admin-config logo, then passed logoUrl, then empty
+  let adminLogo = "";
+  try { adminLogo = await fetchAdminLogo(frontend || undefined); } catch (e) { adminLogo = ""; }
+  const chosenLogoSource = adminLogo || logoUrl || "";
+  const resolvedLogo = normalizeForEmailUrl(chosenLogoSource, frontend) || "";
+
   const resolvedBadgePreview = normalizeForEmailUrl(badgePreviewUrl || "", frontend);
   const resolvedDownload = normalizeForEmailUrl(downloadUrl || "", frontend) || `${frontend}/ticket-download?entity=${encodeURIComponent(entity)}&${id ? `id=${encodeURIComponent(String(id))}` : `ticket_code=${encodeURIComponent(String(form?.ticket_code || ""))}`}`;
 
-  // Upgrade link only for visitors; prefer provided upgradeUrl, otherwise link to TicketUpgrade
   let resolvedUpgrade = normalizeForEmailUrl(upgradeUrl || "", frontend);
   if (entity === "visitors" && !resolvedUpgrade) {
     resolvedUpgrade = `${frontend}/ticket-upgrade?entity=visitors&${id ? `id=${encodeURIComponent(String(id))}` : `ticket_code=${encodeURIComponent(String(form?.ticket_code || ""))}`}`;
@@ -107,7 +212,6 @@ export async function buildTicketEmail({
 
   const subject = `RailTrans Expo — Your E‑Badge & Registration`;
 
-  // Plain-text body (no registration number)
   const text = [
     `Dear ${name || "Participant"},`,
     "",
@@ -119,7 +223,7 @@ export async function buildTicketEmail({
     `Download your E‑Badge: ${resolvedDownload}`,
     entity === "visitors" && resolvedUpgrade ? `Upgrade your ticket: ${resolvedUpgrade}` : "",
     "",
-    "Event Details (from your registration):",
+    "Event Details (from canonical admin record):",
     ev.name ? `- ${ev.name}` : "- ",
     ev.dates ? `- Dates: ${ev.dates}` : "- Dates: ",
     ev.time ? `- Time: ${ev.time}` : "- Time: ",
@@ -141,7 +245,6 @@ export async function buildTicketEmail({
     "Team RailTrans Expo 2026",
   ].filter(Boolean).join("\n");
 
-  // HTML
   const showUpgradeButton = entity === "visitors" && Boolean(resolvedUpgrade);
   const upgradeButtonHtml = showUpgradeButton ? `<a href="${resolvedUpgrade}" class="cta-outline" target="_blank" rel="noopener noreferrer">Upgrade Ticket</a>` : "";
 
@@ -167,9 +270,9 @@ export async function buildTicketEmail({
       .details h4 { margin:12px 0 6px; color:#0b4f60; }
       .details ul { padding-left:18px; color:#374151; }
       .event-details { margin-top:18px; border-top:1px solid #eef2f7; padding-top:14px; }
-      .event-row { display:flex; gap:12px; margin-bottom:8px; }
+      .event-row { display:flex; gap:12px; margin-bottom:8px; align-items:flex-start; }
       .label { width:110px; color:#475569; font-weight:600; }
-      .value { color:#111827; }
+      .value { color:#111827; white-space:pre-wrap; word-break:break-word; }
       .guidelines { margin-top:18px; }
       .guidelines h4 { margin:0 0 8px; color:#0b4f60; }
       .guidelines ul { padding-left:18px; color:#374151; }
@@ -214,13 +317,12 @@ export async function buildTicketEmail({
         </div>
       </div>
 
-      <!-- Event details (from registration form ONLY) -->
       <div class="event-details">
         <h4 style="margin:0 0 8px 0; color:#0b4f60;">Event Details</h4>
-        <div class="event-row"><div class="label">Name:</div><div class="value">${ev.name || ""}</div></div>
-        <div class="event-row"><div class="label">Dates:</div><div class="value">${ev.dates || ""}</div></div>
-        <div class="event-row"><div class="label">Time:</div><div class="value">${ev.time || ""}</div></div>
-        <div class="event-row"><div class="label">Venue:</div><div class="value">${ev.venue || ""}</div></div>
+        <div class="event-row"><div class="label">Name:</div><div class="value">${(ev && ev.name) ? ev.name : ""}</div></div>
+        <div class="event-row"><div class="label">Dates:</div><div class="value">${(ev && ev.dates) ? ev.dates : ""}</div></div>
+        <div class="event-row"><div class="label">Time:</div><div class="value">${(ev && ev.time) ? ev.time : ""}</div></div>
+        <div class="event-row"><div class="label">Venue:</div><div class="value">${(ev && ev.venue) ? ev.venue : ""}</div></div>
       </div>
 
       <div class="guidelines">

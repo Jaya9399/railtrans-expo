@@ -33,6 +33,7 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
     { label: "Speakers", icon: HiOutlineSpeakerphone, path: "/SpeakersAdmin" },
     { label: "Awardees", icon: HiOutlineUserCircle, path: "/AwardeesAdmin" },
     { label: "Topbar-setting", icon: HiOutlineUserCircle, path: "/admin/topbar-settings" },
+    { label: "Event details", icon: HiOutlineTable, path: "/event-details-admin" },
     { label: "Ticket Categories", icon: HiOutlineTable, path: "/payments-summary" },
   ];
 

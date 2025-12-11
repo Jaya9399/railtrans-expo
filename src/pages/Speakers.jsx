@@ -8,18 +8,19 @@ import { generateVisitorBadgePDF } from "../utils/pdfGenerator";
 import { buildTicketEmail } from "../utils/emailTemplate";
 
 /*
-  Speakers.jsx (ngrok header + reminder/mail fixes)
+  Speakers.jsx (ngrok header + canonical event-details + mail safety)
 
-  What changed:
-  - All client fetches to your backend that previously omitted the ngrok bypass header
-    now include "ngrok-skip-browser-warning": "69420" so requests through ngrok-free don't get blocked.
-    This matches other pages (Visitors/Exhibitors/Awardees).
-  - scheduleReminder now tries the single canonical endpoint /api/reminders/send first (with header),
-    and falls back to /api/reminders/create if the former 404s. The function returns structured info.
-  - sendTemplatedEmail and the mail helper now log the built payload (console.debug) and will log
-    response body when mailer returns non-2xx so you can see the server error (400). This helps debug mailer 400s.
-  - notify/whatsapp calls include the ngrok header now.
-  - Telemetry POST to /api/speakers/step is left commented (it caused 404 noise previously).
+  Changes made:
+  - All backend fetches include the ngrok skip header where appropriate.
+  - Added fetchCanonicalEvent() which reads canonical event details from:
+      GET /api/configs/event-details  (preferred)
+      fallback GET /api/event-details
+    and stored in state `canonicalEvent`.
+  - UI: EventDetailsBlock and HeroBlock prefer canonicalEvent when present.
+  - Email sending: we do NOT include eventDetails in the email model. We strip any eventDetails
+    from the form before building the mail model so the server-side mailer (emailTemplate)
+    can fetch canonical event-details itself.
+  - scheduleReminder and sendTemplatedEmail use ngrok header and log helpful info for debugging.
 */
 
 function getApiBaseFromEnvOrWindow() {
@@ -128,7 +129,6 @@ async function scheduleReminder(entityId, eventDate) {
   if (!entityId || !eventDate) return { ok: false, error: "missing" };
   const payload = { entity: "speakers", entityId, eventDate };
   try {
-    // primary: /api/reminders/send (used by Visitors/Exhibitors/Awardees)
     const res = await fetch(apiUrl("/api/reminders/send"), {
       method: "POST",
       headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
@@ -137,7 +137,6 @@ async function scheduleReminder(entityId, eventDate) {
     const text = await res.text().catch(() => "");
     try { const parsed = text ? JSON.parse(text) : null; if (res.ok) return { ok: true, status: res.status, body: parsed || text }; } catch {}
     if (res.ok) return { ok: true, status: res.status, body: text || null };
-    // fallback to /api/reminders/create (some backends expose this)
     const r2 = await fetch(apiUrl("/api/reminders/create"), {
       method: "POST",
       headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
@@ -153,13 +152,16 @@ async function scheduleReminder(entityId, eventDate) {
 
 /* sendTemplatedEmail: build HTML via buildTicketEmail then POST to /api/mailer with ngrok header.
    Console.debug the payload before sending and log response body on failure to aid debugging.
+   IMPORTANT: we deliberately DO NOT include eventDetails in the model. Server-side email builder
+   should fetch canonical event-details itself.
 */
 async function sendTemplatedEmail({ recipientEmail, model, pdfBlob = null }) {
   if (!recipientEmail) return { ok: false, error: "no-recipient" };
   try {
+    // buildTicketEmail may be synchronous or asynchronous depending on implementation
     const { subject, text, html, attachments: templateAttachments = [] } = buildTicketEmail(model);
+
     const payload = { to: recipientEmail, subject, text, html, attachments: [] };
-    // include template attachments (if any)
     if (Array.isArray(templateAttachments) && templateAttachments.length) {
       payload.attachments.push(...templateAttachments);
     }
@@ -168,17 +170,10 @@ async function sendTemplatedEmail({ recipientEmail, model, pdfBlob = null }) {
       if (b64) payload.attachments.push({ filename: "Ticket.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
     }
 
-    // debug: show payload summary (not full large attachments)
     try {
-      console.debug("[sendTemplatedEmail] mailPayload preview:", {
-        to: payload.to,
-        subject: payload.subject,
-        htmlStart: String(payload.html || "").slice(0, 240),
-        attachmentsCount: payload.attachments ? payload.attachments.length : 0,
-      });
+      console.debug("[sendTemplatedEmail] preview:", { to: payload.to, subject: payload.subject, htmlStart: String(payload.html || "").slice(0, 240), attachmentsCount: payload.attachments.length });
     } catch (e) {}
 
-    // send with ngrok header
     const res = await fetch(apiUrl("/api/mailer"), {
       method: "POST",
       headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
@@ -235,6 +230,7 @@ function ImageSlider({ images = [], intervalMs = 3500 }) {
 /* ---------- Component ---------- */
 export default function Speakers() {
   const [config, setConfig] = useState(null);
+  const [canonicalEvent, setCanonicalEvent] = useState(null);
   const [form, setForm] = useState({});
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -269,14 +265,39 @@ export default function Speakers() {
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", onChange); else mq.removeListener(onChange); };
   }, []);
 
+  const fetchCanonicalEvent = useCallback(async () => {
+    try {
+      const url = `${apiUrl("/api/configs/event-details")}`;
+      const res = await fetch(`${url}?cb=${Date.now()}`, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+      if (res.ok) {
+        const js = await res.json().catch(() => ({}));
+        const val = js && js.value !== undefined ? js.value : js;
+        if (val && typeof val === "object" && Object.keys(val).length) {
+          setCanonicalEvent({ name: val.name || "", date: val.date || "", venue: val.venue || "", time: val.time || "", tagline: val.tagline || "" });
+          return;
+        }
+      }
+      // fallback
+      const legacy = await fetch(`${apiUrl("/api/event-details")}?cb=${Date.now()}`, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } }).catch(()=>null);
+      if (legacy && legacy.ok) {
+        const ljs = await legacy.json().catch(()=>({}));
+        setCanonicalEvent({ name: ljs.name || "", date: ljs.date || "", venue: ljs.venue || "", time: ljs.time || "", tagline: ljs.tagline || "" });
+        return;
+      }
+      setCanonicalEvent(null);
+    } catch (e) {
+      console.warn("fetchCanonicalEvent failed", e);
+      setCanonicalEvent(null);
+    }
+  }, []);
+
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(apiUrl("/api/speaker-config?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
-      const cfg = res.ok ? await res.json() : {};
+      const cfg = res.ok ? await res.json().catch(()=>({})) : {};
       const normalized = { ...(cfg || {}) };
 
-      // backgroundMedia normalization
       if (normalized.backgroundMedia && normalized.backgroundMedia.url) {
         normalized.backgroundMedia = { type: normalized.backgroundMedia.type || "image", url: normalizeAdminUrl(normalized.backgroundMedia.url) };
       } else {
@@ -295,7 +316,6 @@ export default function Speakers() {
       normalized.termsRequired = !!normalized.termsRequired;
       normalized.fields = Array.isArray(normalized.fields) ? normalized.fields : [];
 
-      // strip accept_terms-like fields
       normalized.fields = normalized.fields.filter(f => {
         if (!f || typeof f !== "object") return false;
         const name = (f.name || "").toString().toLowerCase().replace(/\s+/g,"");
@@ -305,7 +325,6 @@ export default function Speakers() {
         return true;
       });
 
-      // ensure email fields show OTP UI
       normalized.fields = normalized.fields.map((f) => {
         if (!f || !f.name) return f;
         const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
@@ -332,10 +351,26 @@ export default function Speakers() {
 
   useEffect(() => {
     fetchConfig();
-    const onCfg = () => fetchConfig();
+    fetchCanonicalEvent();
+
+    const onCfg = () => { fetchConfig(); fetchCanonicalEvent(); };
+    const onConfigUpdated = (e) => {
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details") fetchCanonicalEvent().catch(()=>{});
+    };
+
     window.addEventListener("speaker-config-updated", onCfg);
-    return () => window.removeEventListener("speaker-config-updated", onCfg);
-  }, [fetchConfig]);
+    window.addEventListener("visitor-config-updated", onCfg); // keep parity
+    window.addEventListener("config-updated", onConfigUpdated);
+    window.addEventListener("event-details-updated", fetchCanonicalEvent);
+
+    return () => {
+      window.removeEventListener("speaker-config-updated", onCfg);
+      window.removeEventListener("visitor-config-updated", onCfg);
+      window.removeEventListener("config-updated", onConfigUpdated);
+      window.removeEventListener("event-details-updated", fetchCanonicalEvent);
+    };
+  }, [fetchConfig, fetchCanonicalEvent]);
 
   // background video autoplay best-effort
   useEffect(() => {
@@ -381,10 +416,6 @@ export default function Speakers() {
       setForm(payload || {});
       const ref = (payload.email && payload.email.trim()) ? payload.email.trim() : `guest-${Date.now()}`;
       setPaymentReferenceId(ref);
-
-      // telemetry / step endpoint - keep commented to avoid 404s until backend provides it
-      // try { await fetch(apiUrl("/api/speakers/step"), { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify({ step: "registration_attempt", data: { form: payload } }) }); } catch {}
-
       setStep(2);
     } catch (e) {
       setError("Failed to continue. Try again.");
@@ -564,11 +595,15 @@ export default function Speakers() {
         } catch {}
       }
 
-      // send templated email (pass form so template reads event details from registration form)
+      // send templated email
       try {
         setAckLoading(true);
         const frontendBase = (typeof window !== "undefined" && (window.__FRONTEND_BASE__ || window.location.origin)) || "";
         const bannerUrl = (config?.images && config.images.length) ? config.images[0] : "";
+        // IMPORTANT: strip eventDetails from form before sending so server mailer composes canonical event-details itself
+        const safeForm = { ...(form || {}) };
+        if (safeForm.eventDetails) delete safeForm.eventDetails;
+
         const emailModel = {
           frontendBase,
           entity: "speakers",
@@ -581,8 +616,8 @@ export default function Speakers() {
           badgePreviewUrl: "",
           downloadUrl: "",
           logoUrl,
-          // CRUCIAL: pass registration form so email includes event details from the registration page
-          form: form || {},
+          // pass form without eventDetails
+          form: safeForm || {},
           pdfBase64: null,
         };
         const mailRes = await sendTemplatedEmail({ recipientEmail: payload.email, model: emailModel, pdfBlob: pdf });
@@ -599,9 +634,9 @@ export default function Speakers() {
         console.warn("templated email send error", e);
       }
 
-      // schedule reminder using POST /api/reminders/send (same as visitors/exhibitors)
+      // schedule reminder using canonical event date when possible
       try {
-        const evDate = (form && (form.eventDetails?.date || form.eventDates || form.date)) || config?.eventDetails?.date || null;
+        const evDate = config?.eventDetails?.date || (canonicalEvent && canonicalEvent.date) || (form && (form.eventDates || form.date)) || null;
         if (insertedId && evDate) {
           const sch = await scheduleReminder(insertedId, evDate);
           if (sch && sch.ok) {
@@ -649,7 +684,7 @@ export default function Speakers() {
 
   /* UI helpers */
   function HeroBlock() {
-    const event = config?.eventDetails || {};
+    const event = canonicalEvent || config?.eventDetails || {};
     return (
       <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex flex-col items-center justify-center mt-6 sm:mt-10 p-4">
         <img src={config?.images?.[0] || "/images/speaker_placeholder.jpg"} alt="hero" className="object-cover w-full h-full" style={{ maxHeight: 220 }} />
@@ -657,16 +692,6 @@ export default function Speakers() {
           <div className="text-lg font-bold text-[#196e87]">{event.name || ""}</div>
           <div className="text-sm text-[#21809b]">{event.date || ""}</div>
         </div>
-      </div>
-    );
-  }
-
-  function TicketSelectionCard() {
-    return (
-      <div className="bg-white rounded-2xl shadow p-6 mb-6">
-        <h3 className="text-lg font-semibold text-[#196e87] mb-3">Choose Ticket</h3>
-        <TicketCategorySelector role="speakers" value={ticketCategory} onChange={handleTicketSelect} />
-        {!isEmailLike(form.email) && <div className="text-red-600 mt-3">No email available on your registration — go back and add email.</div>}
       </div>
     );
   }
@@ -699,7 +724,7 @@ export default function Speakers() {
             </div>
 
             <div className="sm:w-[40%] w-full flex items-center justify-center">
-              {loading ? <span className="text-[#21809b] text-xl font-semibold">Loading event details...</span> : <div className="w-full px-4"><EventDetailsBlock event={config?.eventDetails || null} /></div>}
+              {loading ? <span className="text-[#21809b] text-xl font-semibold">Loading event details...</span> : <div className="w-full px-4"><EventDetailsBlock event={canonicalEvent || config?.eventDetails || null} /></div>}
             </div>
           </div>
 
@@ -727,7 +752,7 @@ export default function Speakers() {
           )}
 
           {/* Step 2 */}
-          {step === 2 && <div className="max-w-3xl mx-auto">{TicketSelectionCard()}</div>}
+          {step === 2 && <div className="max-w-3xl mx-auto"><div className="bg-white rounded-2xl shadow p-6 mb-6"><h3 className="text-lg font-semibold text-[#196e87] mb-3">Choose Ticket</h3><TicketCategorySelector role="speakers" value={ticketCategory} onChange={handleTicketSelect} /></div></div>}
 
           {/* Step 3 */}
           {step === 3 && (
@@ -765,7 +790,10 @@ export default function Speakers() {
             </div>
           )}
 
-          <footer className="mt-12 text-center text-[#21809b] font-semibold py-6">© {new Date().getFullYear()} {config?.eventDetails?.name || "RailTrans Expo"} | All rights reserved.</footer>
+          {!isMobile && config?.backgroundMedia?.type === "video" && !loading && <div className="mt-4 p-3 text-sm text-gray-600">Background video active</div>}
+          {error && <div className="text-red-400 text-center mt-4">{error}</div>}
+
+          <footer className="mt-12 text-center text-[#21809b] font-semibold py-6">© {new Date().getFullYear()} { (canonicalEvent && canonicalEvent.name) || config?.eventDetails?.name || "RailTrans Expo" } | All rights reserved.</footer>
         </div>
       </div>
     </div>

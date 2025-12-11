@@ -107,7 +107,7 @@ router.get('/', async (req, res) => {
     if (!db) {
       console.warn('[speaker-config] mongo db not available');
       // return a minimal canonical object including default fields
-      const fallback = canonicalizeConfig({ fields: DEFAULT_SPEAKER_FIELDS.slice(), images: [], eventDetails: {} });
+      const fallback = canonicalizeConfig({ fields: DEFAULT_SPEAKER_FIELDS.slice(), images: [] });
       return res.json(fallback);
     }
 
@@ -116,7 +116,7 @@ router.get('/', async (req, res) => {
 
     if (!doc || !doc.config) {
       // return defaults so admin UI shows fields
-      const fallback = canonicalizeConfig({ fields: DEFAULT_SPEAKER_FIELDS.slice(), images: [], eventDetails: {} });
+      const fallback = canonicalizeConfig({ fields: DEFAULT_SPEAKER_FIELDS.slice(), images: [] });
       return res.json(fallback);
     }
 
@@ -136,7 +136,7 @@ router.get('/', async (req, res) => {
     return res.json(canonical);
   } catch (err) {
     console.error('[speaker-config] GET error', err && (err.stack || err));
-    const fallback = canonicalizeConfig({ fields: DEFAULT_SPEAKER_FIELDS.slice(), images: [], eventDetails: {} });
+    const fallback = canonicalizeConfig({ fields: DEFAULT_SPEAKER_FIELDS.slice(), images: []  });
     return res.status(500).json(fallback);
   }
 });

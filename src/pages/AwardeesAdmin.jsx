@@ -336,9 +336,6 @@ export default function AwardeesAdmin() {
           <label className="ml-2"><input type="checkbox" checked={!!config.termsRequired} onChange={(e) => setConfig(clone({ ...config, termsRequired: e.target.checked }))} /><span className="ml-2">Require acceptance on registration</span></label>
         </div>
 
-        <label className="block mb-1 mt-3">Terms Text (editable):</label>
-        <textarea value={config.termsText || ""} onChange={(e) => updateTermsText(e.target.value)} rows={8} className="border px-2 w-full mb-2" placeholder="Paste or write full terms / T&C text here (optional)"></textarea>
-
         <div className="mb-2">
           <strong>Preview:</strong>
           {config.termsUrl ? (
@@ -350,14 +347,7 @@ export default function AwardeesAdmin() {
         </div>
       </div>
 
-      {/* Event Details */}
-      <h3 className="font-bold mb-2 mt-8">Event Details</h3>
-      <input value={config.eventDetails?.name || ""} onChange={e => updateEventDetail("name", e.target.value)} placeholder="Event Name" className="border px-2 mb-2 block" />
-      <input value={config.eventDetails?.date || ""} onChange={e => updateEventDetail("date", e.target.value)} placeholder="Date" className="border px-2 mb-2 block" />
-      <input value={config.eventDetails?.venue || ""} onChange={e => updateEventDetail("venue", e.target.value)} placeholder="Venue/Address" className="border px-2 mb-2 block" />
-      <input value={config.eventDetails?.tagline || ""} onChange={e => updateEventDetail("time", e.target.value)} placeholder="Time" className="border px-2 mb-2 block" />
-      <input value={config.eventDetails?.tagline || ""} onChange={e => updateEventDetail("tagline", e.target.value)} placeholder="Tagline" className="border px-2 mb-2 block" />
-
+      
       <div className="mt-6">
         <button onClick={saveConfig} className="px-6 py-3 bg-blue-600 text-white font-bold rounded" disabled={uploading}>Save Changes</button>
         {msg && <div className="mt-2 text-green-600 font-bold">{msg}</div>}

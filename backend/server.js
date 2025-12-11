@@ -57,6 +57,16 @@ app.use((req, res, next) => {
 let mongoClient = null;
 try { mongoClient = require('./utils/mongoClient'); } catch (e) { mongoClient = null; }
 
+// --- helper obtainDb for in-file small endpoints (supports mongoClient.getDb() or .db) ---
+async function obtainDb() {
+  if (!mongoClient) return null;
+  if (typeof mongoClient.getDb === 'function') {
+    return await mongoClient.getDb();
+  }
+  if (mongoClient.db) return mongoClient.db;
+  return null;
+}
+
 // --- Routes ---
 // Load core routers (some may be SQL or Mongo variants)
 let visitorsRouter = null;
@@ -186,6 +196,61 @@ if (imageUploadRouter) app.use('/api', imageUploadRouter); else console.warn('No
 
 if (adminRouter) app.use('/api', adminRouter);
 
+// --- Unified configs route (new) ---
+let configsRouter = null;
+try {
+  configsRouter = require('./routes/configs');
+} catch (e) {
+  configsRouter = null;
+  console.warn('No configs router found at ./routes/configs.js; falling back to in-file handlers for event-details.');
+}
+if (configsRouter) {
+  app.use('/api/configs', configsRouter);
+  console.log('Mounted /api/configs');
+}
+
+// --- Backwards-compatible event-details endpoints (use unified configs collection if configsRouter missing or in addition) ---
+app.get('/api/event-details', async (req, res) => {
+  try {
+    // prefer reading via DB directly, using obtainDb
+    const db = await obtainDb();
+    if (!db) return res.status(200).json({ name: "", date: "", venue: "", time: "", tagline: "" });
+    const col = db.collection('app_configs');
+    const doc = await col.findOne({ key: 'event-details' });
+    if (!doc || !doc.value) return res.json({ name: "", date: "", venue: "", time: "", tagline: "" });
+    return res.json(doc.value);
+  } catch (err) {
+    console.error('GET /api/event-details error', err && (err.stack || err));
+    return res.status(500).json({ error: 'Failed to read event details' });
+  }
+});
+
+app.post('/api/event-details/config', async (req, res) => {
+  try {
+    const db = await obtainDb();
+    if (!db) return res.status(500).json({ success: false, message: 'database not available' });
+    const payload = req.body || {};
+    const col = db.collection('app_configs');
+    const update = { $set: { key: 'event-details', value: payload, updatedAt: new Date() } };
+    await col.updateOne({ key: 'event-details' }, update, { upsert: true });
+    const after = await col.findOne({ key: 'event-details' });
+    // notify via server logs; frontend listeners are triggered by client dispatch after save
+    return res.json({ success: true, key: after.key, value: after.value, updatedAt: after.updatedAt });
+  } catch (err) {
+    console.error('POST /api/event-details/config error', err && (err.stack || err));
+    return res.status(500).json({ success: false, message: 'Failed to save event details' });
+  }
+});
+
+// If configsRouter is mounted, also provide a small convenience alias for GET/POST event-details to configs route (redirect style)
+if (configsRouter) {
+  // keep compatibility but prefer DB-backed handlers above; we keep these for clear routing if needed
+  app.get('/api/configs/event-details', (req, res, next) => {
+    // letting configsRouter handle it (mounted at /api/configs)
+    next();
+  });
+}
+
 // --- Health & root ---
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 app.get('/', (req, res) => res.send('API server is running'));
@@ -227,6 +292,7 @@ const PORT = process.env.PORT || 5000;
       console.log(' - /api/awardee-config ->', awardeeConfigRouter ? 'mounted' : 'fallback/none');
       console.log(' - /api/otp ->', otpRouter ? 'mounted' : 'fallback/none');
       console.log(' - /api/mailer ->', emailRouter ? 'mounted' : 'fallback/none');
+      console.log(' - /api/configs ->', configsRouter ? 'mounted' : 'fallback/none');
       if (process.env.REACT_APP_API_BASE_URL) console.log('Front-end API base env:', process.env.REACT_APP_API_BASE_URL);
     });
   } catch (e) {

@@ -75,19 +75,19 @@ router.get('/', async (req, res) => {
     const db = await obtainDb();
     if (!db) {
       console.warn('[partner-config-mongo] db not available');
-      return res.json({ fields: [], images: [], eventDetails: {} });
+      return res.json({ fields: [], images: []  });
     }
     const col = db.collection('registration_configs');
     const doc = await col.findOne({ page: 'partner' });
     if (!doc || !doc.config) {
       console.log('[partner-config] no config document found for page=partner');
-      return res.json({ fields: [], images: [], eventDetails: {} });
+      return res.json({ fields: [], images: []  });
     }
     const canonical = canonicalizeConfig(doc.config || {});
     return res.json(canonical);
   } catch (err) {
     console.error('[partner-config-mongo] GET error', err && (err.stack || err));
-    return res.status(500).json({ fields: [], images: [], eventDetails: {} });
+    return res.status(500).json({ fields: [], images: [] });
   }
 });
 

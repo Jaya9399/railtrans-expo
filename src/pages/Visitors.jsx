@@ -184,7 +184,10 @@ async function postMailer(payload) {
   return { ok: false, error: lastErr || "all endpoints failed" };
 }
 
-/* ---------- email/send helper (client-side) ---------- */
+/* ---------- email/send helper (client-side) ----------
+   NOTE: event details are intentionally NOT included here. The emailTemplate
+   code (server-side) should fetch canonical event-details directly when composing emails.
+*/
 async function sendTicketEmailUsingTemplate({
   visitor,
   badgePreviewUrl,
@@ -206,12 +209,6 @@ async function sendTicketEmailUsingTemplate({
       ? `id=${encodeURIComponent(String(visitorId))}`
       : `ticket_code=${encodeURIComponent(String(ticketCode || ""))}`
   }`;
-
-  const resolvedEvent =
-    (config && config.eventDetails) ||
-    visitor?.eventDetails ||
-    visitor?.event ||
-    {};
 
   // 1) Try server endpoint that returns the persisted (absolute) logo URL
   let logoUrl = "";
@@ -267,7 +264,7 @@ async function sendTicketEmailUsingTemplate({
     ticket_category: visitor?.ticket_category || visitor?.ticketCategory || "",
     badgePreviewUrl: badgePreviewUrl || "",
     downloadUrl,
-    event: resolvedEvent || {},
+    // event intentionally omitted here
     form: visitor || null,
     logoUrl,
   };
@@ -283,7 +280,6 @@ async function sendTicketEmailUsingTemplate({
     attachments: [],
   };
 
-  // Use postMailer which will try /api/mailer then /api/email and fall back to relative paths.
   const result = await postMailer(mailPayload);
   if (!result.ok) {
     const errMsg = result.body?.error || result.error || `Mailer failed (${result.status || "unknown"})`;
@@ -291,10 +287,12 @@ async function sendTicketEmailUsingTemplate({
   }
   return result.body;
 }
+
 /* ---------- Visitors component ---------- */
 export default function Visitors() {
   const [step, setStep] = useState(1);
   const [config, setConfig] = useState(null);
+  const [canonicalEvent, setCanonicalEvent] = useState(null); // canonical event-details fetched from /api/configs/event-details
   const [form, setForm] = useState({ email: "" });
   const [ticketCategory, setTicketCategory] = useState("");
   const [ticketMeta, setTicketMeta] = useState({
@@ -330,6 +328,47 @@ export default function Visitors() {
     return () => {
       mq.removeEventListener ? mq.removeEventListener("change", onChange) : mq.removeListener(onChange);
     };
+  }, []);
+
+  const normalizeEvent = (raw = {}) => ({
+    name: raw.name || raw.eventName || raw.title || "",
+    date: raw.date || raw.dates || "",
+    venue: raw.venue || raw.location || "",
+    time: raw.time || raw.startTime || "",
+    tagline: raw.tagline || raw.subtitle || "",
+  });
+
+  const fetchCanonicalEvent = useCallback(async () => {
+    try {
+      const url = `${API_BASE}/api/configs/event-details`;
+      const res = await fetch(`${url}?cb=${Date.now()}`, {
+        cache: "no-store",
+        headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" },
+      });
+      if (res.ok) {
+        const js = await res.json().catch(() => ({}));
+        const val = js && js.value !== undefined ? js.value : js;
+        if (val && typeof val === "object" && Object.keys(val).length) {
+          setCanonicalEvent(normalizeEvent(val));
+          return;
+        }
+      }
+      // fallback to legacy endpoint
+      const legacyUrl = `${API_BASE}/api/event-details`;
+      try {
+        const r2 = await fetch(`${legacyUrl}?cb=${Date.now()}`, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+        if (r2.ok) {
+          const js2 = await r2.json().catch(() => ({}));
+          setCanonicalEvent(normalizeEvent(js2 || {}));
+          return;
+        }
+      } catch {}
+      // nothing found
+      setCanonicalEvent(null);
+    } catch (e) {
+      console.warn("[Visitors] fetchCanonicalEvent failed", e);
+      setCanonicalEvent(null);
+    }
   }, []);
 
   const fetchConfig = useCallback(async () => {
@@ -388,10 +427,26 @@ export default function Visitors() {
 
   useEffect(() => {
     fetchConfig();
-    const onCfg = () => fetchConfig();
+    fetchCanonicalEvent();
+
+    const onCfg = () => {
+      fetchConfig();
+      fetchCanonicalEvent();
+    };
     window.addEventListener("visitor-config-updated", onCfg);
-    return () => window.removeEventListener("visitor-config-updated", onCfg);
-  }, [fetchConfig]);
+    window.addEventListener("config-updated", (e) => {
+      // reload canonical event when EventDetailsAdmin saves
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details") fetchCanonicalEvent().catch(()=>{});
+    });
+    window.addEventListener("event-details-updated", fetchCanonicalEvent);
+
+    return () => {
+      window.removeEventListener("visitor-config-updated", onCfg);
+      window.removeEventListener("config-updated", fetchCanonicalEvent);
+      window.removeEventListener("event-details-updated", fetchCanonicalEvent);
+    };
+  }, [fetchConfig, fetchCanonicalEvent]);
 
   const startVideoManually = useCallback(async () => {
     const el = videoRef.current;
@@ -625,7 +680,7 @@ export default function Visitors() {
         ticket_price: ticketMeta.price,
         ticket_gst: ticketMeta.gstAmount,
         ticket_total: ticketMeta.total,
-        eventDetails: config?.eventDetails || {},
+        // eventDetails intentionally omitted
       };
       setVisitor(fullVisitor);
 
@@ -644,22 +699,6 @@ export default function Visitors() {
           console.error("Email failed:", mailErr);
           setError("Saved but email failed");
         }
-      }
-
-      try {
-        if (savedVisitorId && config?.eventDetails?.date) {
-          const payload = {
-            entity: "visitors",
-            filter: { limit: 1, where: `id=${encodeURIComponent(String(savedVisitorId))}` },
-          };
-          await fetch(`${API_BASE}/api/reminders/send`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69440" },
-            body: JSON.stringify(payload),
-          }).catch(() => {});
-        }
-      } catch (e) {
-        console.warn("scheduling reminder failed", e);
       }
 
       setStep(4);
@@ -690,7 +729,7 @@ export default function Visitors() {
     }
   }, [step, ticketMeta, processing, completeRegistrationAndEmail]);
 
-  /* ---------- render (unchanged) ---------- */
+  /* ---------- render (modified to show canonical event details but still not send them) ---------- */
   if (isMobile) {
     return (
       <div className="min-h-screen w-full bg-white flex items-start justify-center p-4">
@@ -826,21 +865,24 @@ export default function Visitors() {
               )}
             </div>
             <div className="sm:w-[40%] w-full flex items-center justify-center">
-              {loading ? (
-                <div className="text-[#21809b] text-xl font-semibold">Loading event details...</div>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full w-full mt-6">
-                  <div className="font-extrabold text-3xl sm:text-5xl mb-3 text-center" style={{ background: "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
-                    {config?.eventDetails?.name || "Event Name"}
-                  </div>
-                  <div className="text-xl sm:text-2xl font-bold mb-1 text-center text-[#21809b]">
-                    {config?.eventDetails?.date || config?.eventDetails?.dates || "Event Date"}
-                  </div>
-                  <div className="text-base sm:text-xl font-semibold text-center text-[#196e87]">
-                    {config?.eventDetails?.venue || "Event Venue"}
-                  </div>
+              <div className="flex flex-col items-center justify-center h-full w-full mt-6">
+                <div className="font-extrabold text-3xl sm:text-5xl mb-3 text-center" style={{ background: "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
+                  { (canonicalEvent && canonicalEvent.name) || config?.title || "Welcome" }
                 </div>
-              )}
+
+                <div className="text-xl sm:text-2xl font-bold mb-1 text-center text-[#21809b]">
+                  { (canonicalEvent && (canonicalEvent.date || canonicalEvent.dates)) || config?.eventDetails?.date || "Event Date" }
+                </div>
+                <div className="text-base sm:text-xl font-semibold text-center text-[#196e87]">
+                  { (canonicalEvent && canonicalEvent.venue) || config?.eventDetails?.venue || "Event Venue" }
+                </div>
+                {/* optional time/tagline */}
+                { (canonicalEvent && canonicalEvent.time) || (config?.eventDetails && config.eventDetails.time) ? (
+                  <div className="text-sm mt-2 text-center text-gray-700">
+                    { (canonicalEvent && canonicalEvent.time) || (config?.eventDetails && config.eventDetails.time) }
+                  </div>
+                ) : null }
+              </div>
             </div>
           </div>
 

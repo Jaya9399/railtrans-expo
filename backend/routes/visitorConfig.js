@@ -81,13 +81,13 @@ router.get('/', async (req, res) => {
     const configs = db.collection('registration_configs');
     const doc = await configs.findOne({ page: 'visitor' });
     if (!doc || !doc.config) {
-      return res.json({ fields: [], images: [], eventDetails: {} });
+      return res.json({ fields: [], images: [] });
     }
     const canonical = canonicalizeConfig(doc.config || {});
     return res.json(canonical);
   } catch (err) {
     console.error('[visitor-config-mongo] GET error', err && (err.stack || err));
-    return res.status(500).json({ fields: [], images: [], eventDetails: {} });
+    return res.status(500).json({ fields: [], images: [] });
   }
 });
 

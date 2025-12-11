@@ -154,7 +154,7 @@ export default function DashboardContent() {
     });
   }, [report]);
 
-  // --- send templated email using buildTicketEmail; supports premium flag to suppress upgrade button
+  // --- send templated email using buildTicketEmail; no extra event metadata passed (template will fetch canonical event details)
   const sendTemplatedEmail = useCallback(async ({ entity, id, row, premium = false }) => {
     try {
       const email = (row && (row.email || row.email_address || row.contact || row.contactEmail)) || "";
@@ -168,8 +168,8 @@ export default function DashboardContent() {
       }
       const frontendBase = (typeof window !== "undefined" && window.location && window.location.origin) ? window.location.origin : "";
       const bannerUrl = (configs && configs[entity] && Array.isArray(configs[entity].images) && configs[entity].images.length) ? configs[entity].images[0] : "";
-      // include event details from the corresponding registration config (if any)
-      const eventDetails = (configs && configs[entity] && configs[entity].eventDetails) ? configs[entity].eventDetails : (row && row.eventDetails ? row.eventDetails : {});
+
+      // model: DO NOT attach event details here — email template will fetch canonical event-details itself
       const model = {
         frontendBase,
         entity,
@@ -183,7 +183,6 @@ export default function DashboardContent() {
         logoUrl: bannerUrl,
         form: row || null,
         pdfBase64: row?.pdfBase64 || null,
-        event: eventDetails || {},
       };
 
       // build template
@@ -194,12 +193,12 @@ export default function DashboardContent() {
       // fallback to minimal content if template returned nothing
       if ((!subject || !String(subject).trim()) && (!text && !html)) {
         subject = subject || `RailTrans Expo — Your E‑Badge`;
-        text = text || `Hello ${model.name || "Participant"},\n\nYour ticket code: ${model.ticket_category || ""}\n\nDownload: ${model.downloadUrl || frontendBase}`;
+        text = text || `Hello ${model.name || "Participant"},\n\nYour ticket category: ${model.ticket_category || ""}\n\nDownload: ${model.downloadUrl || frontendBase}`;
         html = html || `<p>Hello ${model.name || "Participant"},</p><p>Your ticket info has been generated.</p><p><a href="${model.downloadUrl || frontendBase}">Download E‑Badge</a></p>`;
       }
 
       const mailPayload = { to: email, subject, text, html, attachments, logoUrl: bannerUrl };
-      console.debug("[sendTemplatedEmail] mailPayload preview:", { to: mailPayload.to, subject: mailPayload.subject, attachments: (mailPayload.attachments || []).length, logoUrl: mailPayload.logoUrl, event: model.event });
+      console.debug("[sendTemplatedEmail] mailPayload preview:", { to: mailPayload.to, subject: mailPayload.subject, attachments: (mailPayload.attachments || []).length, logoUrl: mailPayload.logoUrl });
 
       const r = await fetch("/api/mailer", { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(mailPayload) });
       const body = await parseErrorBody(r);
@@ -269,8 +268,7 @@ export default function DashboardContent() {
         }
       } catch(e){}
 
-      // ensure workingRow has event details from its registration config
-      workingRow.eventDetails = workingRow.eventDetails || (configs[tableKey] && configs[tableKey].eventDetails) || {};
+      // DO NOT attach eventDetails here — template will fetch canonical event-details itself
 
       // send email; pass premium flag so template hides upgrade button
       const mailResult = await sendTemplatedEmail({ entity: tableKey, id: String(id), row: workingRow, premium });
@@ -288,7 +286,7 @@ export default function DashboardContent() {
       setActionMsg("Generation failed");
       return { ok: false, error: String(e) };
     }
-  }, [sendTemplatedEmail, pendingPremium, configs]);
+  }, [sendTemplatedEmail, pendingPremium]);
 
   // --- Handlers (create, update, delete, refresh) ---
   const handleEdit = useCallback((table, row) => {
@@ -306,9 +304,13 @@ export default function DashboardContent() {
     if (!meta.some(m => m.name === "email" || m.name === "email_address")) {
       meta.push({ name: "email", label: "Email", type: "text" });
     }
-    setModalColumns(meta);
+
+    // IMPORTANT: sanitize row values so modal inputs receive strings, not nested objects
+    const sanitized = sanitizeRow(row || {});
     const prepared = {};
-    meta.forEach(f => prepared[f.name] = row && f.name in row ? row[f.name] : "");
+    meta.forEach(f => prepared[f.name] = (sanitized[f.name] !== undefined ? sanitized[f.name] : ""));
+
+    setModalColumns(meta);
     setNewIsPremium(false); // editing existing => not a new premium creation
     setEditTable(key);
     setEditRow(prepared);
@@ -334,9 +336,8 @@ export default function DashboardContent() {
     setModalColumns(meta);
     const empty = {};
     meta.forEach(m => empty[m.name] = "");
-    // Prefill event details for Add New from the corresponding registration page config (if available)
-    const eventDetails = (configs[key] && configs[key].eventDetails) ? configs[key].eventDetails : {};
-    empty.eventDetails = eventDetails;
+
+    // DO NOT prefill eventDetails — template will fetch canonical event-details itself
     setEditTable(key);
     setEditRow(empty);
     setIsCreating(true);
@@ -406,8 +407,8 @@ export default function DashboardContent() {
       if (!base) { setActionMsg("Unknown table"); return; }
 
       if (isCreating) {
-        // attach eventDetails from registration config (if available) before creating
-        const payload = { ...edited, eventDetails: (configs[editTable] && configs[editTable].eventDetails) ? configs[editTable].eventDetails : (edited.eventDetails || {}) };
+        // create payload as-is (do NOT attach eventDetails)
+        const payload = { ...edited };
 
         const res = await fetch(base, { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
         const createdRaw = await res.json().catch(() => null);
@@ -440,17 +441,19 @@ export default function DashboardContent() {
           await fetchAll();
           setActionMsg("Created");
         } else {
-          // ensure createdRow has eventDetails from config (so email template receives it)
-          createdRow.eventDetails = createdRow.eventDetails || (configs[editTable] && configs[editTable].eventDetails) || {};
-          // insert newRow into report
+          // insert sanitized row into report
           setReport(prev => ({ ...prev, [editTable]: [createdRow, ...(prev[editTable] || [])] }));
+
           // set pending premium for quick generate UI; include premium flag from newIsPremium
           setPendingPremium({ table: editTable, id: String(newId || createdRow.id || createdRow._id || ""), email: createdRow.email || createdRow.email_address || createdRow.contact || "", premium: !!newIsPremium });
+
           // if email present, attempt to send templated email immediately with premium info
           const email = createdRow.email || createdRow.email_address || createdRow.contact || "";
           if (email) {
             setActionMsg("Created — sending email...");
-            const mailResult = await sendTemplatedEmail({ entity: editTable, id: String(newId || createdRow.id || createdRow._id || ""), row: createdRow, premium: !!newIsPremium });
+            // pass createdRaw if available (original object), otherwise pass sanitized createdRow
+            const emailRow = createdRaw && typeof createdRaw === "object" ? (createdRaw) : createdRow;
+            const mailResult = await sendTemplatedEmail({ entity: editTable, id: String(newId || createdRow.id || createdRow._id || ""), row: emailRow, premium: !!newIsPremium });
             if (mailResult && mailResult.ok) setActionMsg("Created and emailed");
             else setActionMsg((mailResult && mailResult.reason) ? `Created but email failed (${mailResult.reason})` : "Created but email failed");
           }
@@ -485,7 +488,7 @@ export default function DashboardContent() {
         }
       }
     } catch (e) { console.error(e); setActionMsg("Save failed"); } finally { setIsCreating(false); fetchAll(); }
-  }, [editTable, isCreating, fetchAll, parseErrorBody, sendTemplatedEmail, newIsPremium, configs]);
+  }, [editTable, isCreating, fetchAll, parseErrorBody, sendTemplatedEmail, newIsPremium]);
 
   const stats = useMemo(() => ({
     visitors: (report.visitors || []).length,
@@ -587,8 +590,6 @@ export default function DashboardContent() {
                                   {cols.slice(0, 5).map(c => <td key={c} className="px-3 py-3 text-sm text-gray-700 align-top whitespace-pre-wrap break-words">{r[c] ?? ""}</td>)}
                                   <td className="px-3 py-3">
                                     <div className="flex items-center gap-2">
-                                      {/* Only show Generate button for the row that was just created via Add New (pendingPremium match).
-                                          This avoids showing Generate on every existing row. */}
                                       {pendingPremium && pendingPremium.table === key && String(pendingPremium.id) === String(canonicalId) ? (
                                         <button className="px-2 py-1 border rounded text-sm" onClick={() => generateAndEmailTicket({ tableKey: key, row: r, premium: premiumFlag })}>
                                           {premiumFlag ? "Generate (Premium)" : "Generate"}

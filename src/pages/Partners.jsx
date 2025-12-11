@@ -4,46 +4,57 @@ import DynamicRegistrationForm from "./DynamicRegistrationForm";
 import TicketCategorySelector from "../components/TicketCategoryGenerator";
 import ManualPaymentStep from "../components/ManualPayemntStep";
 import ThankYouMessage from "../components/ThankYouMessage";
+import { generateVisitorBadgePDF } from "../utils/pdfGenerator";
 import { buildTicketEmail } from "../utils/emailTemplate";
 
 /*
  Partners.jsx
 
- Fixes applied:
- - Use /api/reminders/send for scheduling reminders (same as other pages).
- - Ensure email template is called with the registration form (model.form) so event details
-   appear in the email (buildTicketEmail reads form.event/form.eventDetails/flat keys).
- - Add ngrok bypass header ("ngrok-skip-browser-warning": "69420") to relevant fetches (postJSON, uploadAsset, payment status checks)
-   to match other pages and avoid ngrok blocking.
- - Resolve logo via /api/admin/logo-url (best-effort) and include in email model.
- - Attach PDF if provided (best-effort).
- - Keep failures in optional parts non-fatal and surface useful messages.
+ Fixes applied (matched to other admin pages):
+ - Fetch canonical event-details from GET /api/configs/event-details (fallback /api/event-details)
+   and show those in the UI (preview). Also listens for config-updated / event-details-updated events.
+ - All relevant fetches include the ngrok bypass header "ngrok-skip-browser-warning": "69420".
+ - Reminder scheduling uses /api/reminders/send (same as other pages).
+ - Email send builds a model containing the registration form (model.form) so buildTicketEmail
+   can prefer form-based event details if needed. We also resolve logo via /api/admin/logo-url.
+ - Uploads, payment status polls, mailer calls are non-fatal if they fail; we surface messages.
+ - Event title in the partners preview uses the same gradient text style as other pages.
+ - Added missing helpers (clone, ImageSlider) and imported generateVisitorBadgePDF to fix ESLint errors.
+ - Fixed sendTemplatedAckEmail to avoid attaching image attachments (only PDFs), and added toBase64 helper.
 */
 
 function getApiBaseFromEnvOrWindow() {
-  if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE) return process.env.REACT_APP_API_BASE.replace(/\/$/, "");
+  if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE)
+    return process.env.REACT_APP_API_BASE.replace(/\/$/, "");
+  if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE_URL)
+    return process.env.REACT_APP_API_BASE_URL.replace(/\/$/, "");
   if (typeof window !== "undefined" && window.__API_BASE__) return String(window.__API_BASE__).replace(/\/$/, "");
   if (typeof window !== "undefined" && window.__CONFIG__ && window.__CONFIG__.backendUrl) return String(window.__CONFIG__.backendUrl).replace(/\/$/, "");
   if (typeof window !== "undefined" && window.location && window.location.origin) return window.location.origin.replace(/\/$/, "");
   return "/api";
 }
+const API_BASE = getApiBaseFromEnvOrWindow();
+
 function apiUrl(path) {
-  const base = getApiBaseFromEnvOrWindow();
-  if (!path) return base;
-  if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+  if (!path) return API_BASE;
+  if (/^https?:\/\//i.test(path)) return path;
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE.replace(/\/$/, "")}${p}`;
 }
+
 function normalizeAdminUrl(url) {
   if (!url) return "";
-  const trimmed = String(url).trim();
-  if (!trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (trimmed.startsWith("//")) return window.location.protocol + trimmed;
-  if (trimmed.startsWith("/")) return apiUrl(trimmed);
-  return apiUrl(trimmed);
+  const t = String(url).trim();
+  if (!t) return "";
+  if (/^https?:\/\//i.test(t)) return t;
+  if (t.startsWith("//")) return (typeof window !== "undefined" ? window.location.protocol : "https:") + t;
+  if (t.startsWith("/")) return apiUrl(t);
+  return apiUrl(`/${t}`);
 }
 
 /* small helpers */
+function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
 function pickFirstString(obj, candidates = []) {
   if (!obj || typeof obj !== "object") return "";
   for (const cand of candidates) {
@@ -84,8 +95,8 @@ async function postJSON(url, body) {
     },
     body: JSON.stringify(body),
   });
-  let json = null;
   let text = null;
+  let json = null;
   try { text = await res.text(); } catch {}
   try { json = text ? JSON.parse(text) : null; } catch {}
   return { ok: res.ok, status: res.status, body: json || text || null };
@@ -115,12 +126,34 @@ async function uploadAsset(file) {
   }
 }
 
+/* convert Blob/ArrayBuffer to base64 string (used for attaching PDFs) */
+async function toBase64(pdf) {
+  if (!pdf) return "";
+  if (typeof pdf === "string") {
+    const m = pdf.match(/^data:application\/pdf;base64,(.*)$/i);
+    if (m) return m[1];
+    if (/^[A-Za-z0-9+/=]+$/.test(pdf)) return pdf;
+    return "";
+  }
+  if (pdf instanceof ArrayBuffer) pdf = new Blob([pdf], { type: "application/pdf" });
+  if (pdf instanceof Blob) {
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result || "";
+        resolve(String(result).split(",")[1] || "");
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(pdf);
+    });
+  }
+  return "";
+}
+
 /* resolve logo url from server / fallback localStorage */
 async function resolveLogoUrl(config = {}) {
   try {
-    const r = await fetch(apiUrl("/api/admin/logo-url"), {
-      headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" },
-    });
+    const r = await fetch(apiUrl("/api/admin/logo-url"), { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
     if (r.ok) {
       const js = await r.json().catch(() => null);
       const candidate = js?.logo_url || js?.logoUrl || js?.url || "";
@@ -140,10 +173,21 @@ async function resolveLogoUrl(config = {}) {
   return "";
 }
 
-/* templated email helper using buildTicketEmail
-   - Passes the registration form as `form` in the model so buildTicketEmail reads event details from the form.
-   - Includes resolved logoUrl in model (mailer may inline).
-   - Attaches pdfBase64 when provided (pdfBlob may be base64 string).
+/* schedule reminder wrapper using /api/reminders/send */
+async function scheduleReminder(partnerId, eventDate) {
+  try {
+    if (!partnerId || !eventDate) return { ok: false, error: "missing" };
+    const payload = { entity: "partners", entityId: partnerId, eventDate };
+    return await postJSON(apiUrl("/api/reminders/send"), payload);
+  } catch (e) {
+    console.warn("scheduleReminder failed", e);
+    return { ok: false, error: String(e) };
+  }
+}
+
+/* send templated acknowledgement email (uses buildTicketEmail)
+   - Passes registration form in model.form so template can read event details from form
+   - Filters out image attachments returned by template (so Gmail won't show them as attachments)
 */
 async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = [], pdfBlob = null, cfg = {}) {
   try {
@@ -152,10 +196,8 @@ async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = 
 
     const frontendBase = (typeof window !== "undefined" && (window.__FRONTEND_BASE__ || window.location.origin)) || "";
     const bannerUrl = Array.isArray(images) && images.length ? images[0] : "";
-
     const logoUrl = await resolveLogoUrl(cfg);
 
-    // IMPORTANT: pass form so email template reads event details from registration form
     const formObj = partnerPayload._rawForm || partnerPayload.form || partnerPayload || {};
 
     const model = {
@@ -170,75 +212,139 @@ async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = 
       badgePreviewUrl: "",
       downloadUrl: "",
       logoUrl: logoUrl || "",
-      form: formObj, // <-- this ensures event details (form.event / form.eventDetails / flat fields) are used by template
+      form: formObj, // ensures template can find event details via form
       pdfBase64: null,
     };
 
-    const { subject, text, html, attachments: templateAttachments = [] } = buildTicketEmail(model);
+    const { subject, text, html, attachments: templateAttachments = [] } = await buildTicketEmail(model);
 
     const payload = { to, subject, text, html, attachments: [] };
 
-    // include template attachments if any
     if (Array.isArray(templateAttachments) && templateAttachments.length) {
-      payload.attachments.push(...templateAttachments);
+      for (const att of templateAttachments) {
+        const ct = String((att.contentType || att.content_type || att.type || "").toLowerCase());
+        const filename = att.filename || att.name || "";
+        // Skip image attachments (image/*). Include PDFs and other non-image attachments.
+        if (ct.includes("image/")) {
+          console.debug("[Partners] skipping image attachment from template:", filename, ct);
+          continue;
+        }
+        if (!ct && filename) {
+          const lower = filename.toLowerCase();
+          if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif") || lower.endsWith(".webp") || lower.endsWith(".svg")) {
+            console.debug("[Partners] skipping image attachment inferred from filename:", filename);
+            continue;
+          }
+        }
+        payload.attachments.push(att);
+      }
     }
 
-    // attach provided PDF (if base64)
     if (pdfBlob) {
       if (typeof pdfBlob === "string") {
-        // if already data URI or base64
         const m = pdfBlob.match(/^data:application\/pdf;base64,(.*)$/i);
         const b64 = m ? m[1] : ( /^[A-Za-z0-9+/=]+$/.test(pdfBlob) ? pdfBlob : null );
         if (b64) {
           payload.attachments.push({ filename: "e-badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
         }
+      } else {
+        try {
+          const b64 = await toBase64(pdfBlob);
+          if (b64) payload.attachments.push({ filename: "e-badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
+        } catch (e) { console.warn("[Partners] pdf conversion failed", e); }
       }
     }
 
-    // debug preview (avoid logging full attachments)
-    try {
-      console.debug("[Partners] mailPayload preview:", { to: payload.to, subject: payload.subject, htmlStart: String(payload.html || "").slice(0, 240), attachmentsCount: payload.attachments.length });
-    } catch (e) {}
+    try { console.debug("[Partners] mailPayload preview:", { to: payload.to, subject: payload.subject, htmlStart: String(payload.html || "").slice(0, 240), attachmentsCount: payload.attachments.length }); } catch (e) {}
 
-    // send to mailer with ngrok header
-    const res = await fetch(apiUrl("/api/mailer"), {
+    const r = await fetch(apiUrl("/api/mailer"), {
       method: "POST",
       headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
       body: JSON.stringify(payload),
     });
-    const txt = await res.text().catch(() => "");
+    const txt = await r.text().catch(() => "");
     let js = null;
     try { js = txt ? JSON.parse(txt) : null; } catch {}
-    if (!res.ok) {
-      console.warn("[Partners] mailer failed:", res.status, js || txt);
-      return { ok: false, status: res.status, body: js || txt, error: `mailer failed (${res.status})` };
+    if (!r.ok) {
+      console.warn("[Partners] mailer failed:", r.status, js || txt);
+      return { ok: false, status: r.status, body: js || txt, error: `mailer failed (${r.status})` };
     }
-    return { ok: true, status: res.status, body: js || txt };
+    return { ok: true, status: r.status, body: js || txt };
   } catch (e) {
     console.warn("sendTemplatedAckEmail failed", e);
     return { ok: false, error: String(e) };
   }
 }
 
-/* schedule reminder wrapper using /api/reminders/send (same as other pages) */
-async function scheduleReminder(partnerId, eventDate) {
+/* API helpers */
+async function postJSONSimple(url, body) {
+  return await postJSON(url, body);
+}
+async function savePartnerApi(payload) {
+  const res = await fetch(apiUrl("/api/partners"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+    body: JSON.stringify(payload),
+  });
+  const txt = await res.text().catch(() => null);
+  let json = null;
+  try { json = txt ? JSON.parse(txt) : null; } catch { json = { raw: txt }; }
+  if (!res.ok) {
+    const errMsg = (json && (json.message || json.error)) || `Save failed (${res.status})`;
+    throw new Error(errMsg);
+  }
+  return json;
+}
+
+async function saveStep(stepName, data = {}, meta = {}) {
   try {
-    if (!partnerId || !eventDate) return { ok: false, error: "missing" };
-    const payload = { entity: "partners", entityId: partnerId, eventDate };
-    return await postJSON(apiUrl("/api/reminders/send"), payload);
+    await fetch(apiUrl("/api/partners/step"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+      body: JSON.stringify({ step: stepName, data, meta }),
+    });
   } catch (e) {
-    console.warn("scheduleReminder failed", e);
-    return { ok: false, error: String(e) };
+    console.warn("[Partners] saveStep failed:", e);
   }
 }
 
-/* ---------- Component ---------- */
+/* defaults */
+const DEFAULT_PARTNER_FIELDS = [
+  { name: "company", label: "Company / Organisation", type: "text", required: true, visible: true },
+  { name: "name", label: "Contact person", type: "text", required: true, visible: true },
+  { name: "mobile", label: "Mobile No.", type: "text", required: true, visible: true, meta: { useOtp: false } },
+  { name: "email", label: "Email", type: "email", required: false, visible: true },
+  { name: "designation", label: "Designation", type: "text", required: false, visible: true },
+  { name: "businessType", label: "Business Type", type: "text", required: false, visible: true },
+  { name: "partnership", label: "Partnership Interested In", type: "text", required: false, visible: true },
+];
+
+/* small image slider helper used in multiple pages */
+function ImageSlider({ images = [], intervalMs = 4000 }) {
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    if (!images || images.length === 0) return;
+    const t = setInterval(() => setActive((p) => (p + 1) % images.length), intervalMs);
+    return () => clearInterval(t);
+  }, [images, intervalMs]);
+  if (!images || images.length === 0) return null;
+  return (
+    <div className="flex flex-col items-center justify-center w-full h-full">
+      <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center mt-6 sm:mt-10">
+        <img src={images[active]} alt={`Slide ${active + 1}`} className="object-cover w-full h-full" loading="lazy" />
+      </div>
+    </div>
+  );
+};
+
+/* component */
 export default function Partners() {
   const [config, setConfig] = useState(null);
+  const [canonicalEvent, setCanonicalEvent] = useState(null);
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [step, setStep] = useState(1); // 1=form, 2=ticket, 3=payment, 4=thankyou
+  const [step, setStep] = useState(1);
   const [error, setError] = useState("");
 
   const [ticketCategory, setTicketCategory] = useState("");
@@ -265,14 +371,52 @@ export default function Partners() {
     return () => { if (mq.removeEventListener) mq.removeEventListener("change", onChange); else mq.removeListener(onChange); };
   }, []);
 
-  const fetchConfig = useCallback(async () => {
+  const fetchCanonicalEvent = useCallback(async () => {
+    try {
+      const url = apiUrl("/api/configs/event-details");
+      const r = await fetch(`${url}?cb=${Date.now()}`, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+      if (r.ok) {
+        const js = await r.json().catch(() => ({}));
+        const val = js && js.value !== undefined ? js.value : js;
+        if (val && typeof val === "object" && Object.keys(val).length) {
+          setCanonicalEvent({
+            name: val.name || "",
+            date: val.date || val.dates || "",
+            venue: val.venue || "",
+            time: val.time || "",
+            tagline: val.tagline || "",
+          });
+          return;
+        }
+      }
+      const r2 = await fetch(apiUrl("/api/event-details?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } }).catch(() => null);
+      if (r2 && r2.ok) {
+        const js2 = await r2.json().catch(() => ({}));
+        setCanonicalEvent({ name: js2.name || "", date: js2.date || js2.dates || "", venue: js2.venue || "", time: js2.time || "", tagline: js2.tagline || "" });
+        return;
+      }
+      setCanonicalEvent(null);
+    } catch (e) {
+      console.warn("[Partners] fetchCanonicalEvent failed", e);
+      setCanonicalEvent(null);
+    }
+  }, []);
+
+  async function fetchConfig() {
     setLoading(true);
     try {
       const res = await fetch(apiUrl("/api/partner-config?cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
-      const cfg = res.ok ? await res.json() : {};
+      const cfg = res.ok ? await res.json().catch(() => ({})) : {};
       const normalized = { ...(cfg || {}) };
 
-      // background media normalization
+      normalized.fields = Array.isArray(normalized.fields) ? normalized.fields : [];
+      try {
+        const existing = new Set((normalized.fields || []).map(f => (f && f.name) ? f.name : ""));
+        DEFAULT_PARTNER_FIELDS.forEach(def => {
+          if (!existing.has(def.name)) normalized.fields.push(clone(def));
+        });
+      } catch (e) {}
+
       if (normalized.backgroundMedia && normalized.backgroundMedia.url) {
         normalized.backgroundMedia = { type: normalized.backgroundMedia.type || "image", url: normalizeAdminUrl(normalized.backgroundMedia.url) };
       } else {
@@ -290,18 +434,9 @@ export default function Partners() {
       normalized.termsLabel = normalized.termsLabel || "Terms & Conditions";
       normalized.termsRequired = !!normalized.termsRequired;
 
-      normalized.fields = Array.isArray(normalized.fields) ? normalized.fields : [];
-      // strip accept_terms-like fields
-      normalized.fields = normalized.fields.filter(f => {
-        if (!f || typeof f !== "object") return false;
-        const name = (f.name || "").toString().toLowerCase().replace(/\s+/g, "");
-        const label = (f.label || "").toString().toLowerCase();
-        if (["accept_terms","acceptterms","i_agree","agree"].includes(name)) return false;
-        if (f.type === "checkbox" && (label.includes("i agree") || label.includes("accept the terms") || label.includes("terms & conditions") || label.includes("terms and conditions"))) return false;
-        return true;
-      });
+      normalized.images = Array.isArray(normalized.images) ? normalized.images.map(normalizeAdminUrl) : [];
+      normalized.eventDetails = typeof normalized.eventDetails === "object" && normalized.eventDetails ? normalized.eventDetails : {};
 
-      // ensure email fields have OTP enabled
       normalized.fields = normalized.fields.map((f) => {
         if (!f || !f.name) return f;
         const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
@@ -314,61 +449,36 @@ export default function Partners() {
         return f;
       });
 
-      normalized.images = Array.isArray(normalized.images) ? normalized.images.map(normalizeAdminUrl) : [];
-      normalized.eventDetails = typeof normalized.eventDetails === "object" && normalized.eventDetails ? normalized.eventDetails : {};
-
       setConfig(normalized);
     } catch (e) {
-      console.error("fetchConfig error", e);
-      setConfig({ fields: [], images: [], backgroundMedia: { type: "image", url: "" }, eventDetails: {} });
+      console.error("[Partners] fetchConfig error:", e);
+      setConfig({ fields: DEFAULT_PARTNER_FIELDS.slice(), images: [], backgroundMedia: { type: "image", url: "" }, eventDetails: {} });
+      setError("Failed to load configuration.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }
 
   useEffect(() => {
     fetchConfig();
-    const onCfg = () => fetchConfig();
+    fetchCanonicalEvent();
+    const onCfg = () => { fetchConfig(); fetchCanonicalEvent(); };
+    const onConfigUpdated = (e) => {
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details") fetchCanonicalEvent().catch(()=>{});
+    };
     window.addEventListener("partner-config-updated", onCfg);
-    return () => window.removeEventListener("partner-config-updated", onCfg);
-  }, [fetchConfig]);
+    window.addEventListener("config-updated", onConfigUpdated);
+    window.addEventListener("event-details-updated", fetchCanonicalEvent);
+    return () => {
+      window.removeEventListener("partner-config-updated", onCfg);
+      window.removeEventListener("config-updated", onConfigUpdated);
+      window.removeEventListener("event-details-updated", fetchCanonicalEvent);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // autoplay video best-effort
-  useEffect(() => {
-    if (isMobile) return;
-    const v = videoRef.current;
-    if (!v || !config?.backgroundMedia?.url || config.backgroundMedia.type !== "video") return;
-    let mounted = true;
-    let attemptId = 0;
-    const prevSrc = { src: v.src || "" };
-    async function tryPlay() {
-      const myId = ++attemptId;
-      try {
-        const currentSrc = v.currentSrc || v.src || "";
-        if (prevSrc.src !== currentSrc) { try { v.load(); } catch {} prevSrc.src = currentSrc; }
-        await new Promise((resolve, reject) => {
-          if (!mounted) return reject(new Error("unmounted"));
-          if (v.readyState >= 3) return resolve();
-          const onCan = () => { cleanup(); resolve(); };
-          const onErr = () => { cleanup(); reject(new Error("media error")); };
-          const timer = setTimeout(() => { cleanup(); resolve(); }, 3000);
-          function cleanup() { clearTimeout(timer); v.removeEventListener("canplay", onCan); v.removeEventListener("error", onErr); }
-          v.addEventListener("canplay", onCan);
-          v.addEventListener("error", onErr);
-        });
-        if (!mounted || myId !== attemptId) return;
-        await v.play();
-      } catch (err) {}
-    }
-    const onCan = () => tryPlay();
-    const onErr = () => {};
-    v.addEventListener("canplay", onCan);
-    v.addEventListener("error", onErr);
-    tryPlay();
-    return () => { mounted = false; attemptId++; try { v.removeEventListener("canplay", onCan); v.removeEventListener("error", onErr); } catch {} };
-  }, [config?.backgroundMedia?.url, isMobile]);
-
-  // Step 1: don't save yet. Store form client-side and create payment reference id.
+  /* Step 1: client-only submit */
   async function handleFormSubmit(formData) {
     setError("");
     setSaving(true);
@@ -382,7 +492,6 @@ export default function Partners() {
       setForm(formData || {});
       const ref = email.trim() || `guest-${Date.now()}`;
       setPaymentReferenceId(ref);
-      // telemetry (best-effort)
       try { await postJSON(apiUrl("/api/partners/step"), { step: "registration_attempt", data: { form: formData } }); } catch {}
       setStep(2);
     } catch (e) {
@@ -393,7 +502,6 @@ export default function Partners() {
     }
   }
 
-  // Step 2: ticket selection
   function handleTicketSelect(value, meta = {}) {
     setTicketCategory(value);
     const price = Number(meta.price || 0);
@@ -403,7 +511,7 @@ export default function Partners() {
     setTicketMeta({ price, gstRate, gstAmount, total, label: meta.label || "" });
 
     if (total === 0) {
-      finalizeSave({ ticket_category: value, ticket_price: price, ticket_gst: gstAmount, ticket_total: total, referenceId: paymentReferenceId });
+      finalizeSave({ ticket_category: value, ticket_price: price, ticket_gst: gstAmount, ticket_total: total });
       return;
     }
     setStep(3);
@@ -433,7 +541,6 @@ export default function Partners() {
       const w = window.open(checkoutUrl, "_blank", "noopener,noreferrer");
       if (!w) { setError("Popup blocked. Allow popups to continue payment."); setSaving(false); return; }
 
-      // Poll payment status using reference (include ngrok header)
       let attempts = 0;
       const poll = setInterval(async () => {
         attempts += 1;
@@ -447,7 +554,7 @@ export default function Partners() {
             try { if (w && !w.closed) w.close(); } catch {}
             const providerPaymentId = js2.record?.provider_payment_id || js2.record?.payment_id || js2.record?.id || null;
             setTxId(providerPaymentId || "");
-            await finalizeSave({ ticket_category: ticketCategory, ticket_price: ticketMeta.price, ticket_gst: ticketMeta.gstAmount, ticket_total: ticketMeta.total, txId: providerPaymentId || null, referenceId: reference });
+            await finalizeSave({ ticket_category: ticketCategory, ticket_price: ticketMeta.price, ticket_gst: ticketMeta.gstAmount, ticket_total: ticketMeta.total });
           } else if (["failed","cancelled","void"].includes(status)) {
             clearInterval(poll);
             try { if (w && !w.closed) w.close(); } catch {}
@@ -481,9 +588,8 @@ export default function Partners() {
     }
   }
 
-  async function finalizeSave({ ticket_category, ticket_price = 0, ticket_gst = 0, ticket_total = 0, payment_proof_url = null, txId: providerTx = null, referenceId: ref = null } = {}) {
+  async function finalizeSave({ ticket_category, ticket_price = 0, ticket_gst = 0, ticket_total = 0 } = {}) {
     setError("");
-    setSaving(true);
     try {
       const payload = {
         ...form,
@@ -491,83 +597,45 @@ export default function Partners() {
         ticket_price,
         ticket_gst,
         ticket_total,
-        txId: providerTx || txId || null,
-        payment_proof_url: payment_proof_url || null,
-        referenceId: ref || paymentReferenceId || null,
+        txId: txId || null,
+        payment_proof_url: proofFile ? await uploadAsset(proofFile) : null,
         termsAccepted: !!form.termsAccepted,
         _rawForm: form
       };
 
-      const { ok, status, body } = await postJSON(apiUrl("/api/partners"), payload);
-      if (!ok) {
-        const msg = (body && (body.error || body.message)) || `Save failed (${status})`;
-        setError(msg);
-        setSaving(false);
-        return;
-      }
-
-      const insertedId = (body && body.insertedId) || null;
-      setSavedPartnerId(insertedId || null);
-
-      // attempt creating ticket (best-effort)
-      try {
-        const ticket_code = body?.ticket_code || payload.ticket_code || String(Math.floor(100000 + Math.random() * 900000));
-        await postJSON(apiUrl("/api/tickets/create"), {
-          ticket_code,
-          entity_type: "partner",
-          entity_id: insertedId || null,
-          name: payload.name || "",
-          email: payload.email || "",
-          company: payload.company || "",
-          category: payload.ticket_category || "",
-          meta: { createdFrom: "partner-frontend" }
-        });
-      } catch (e) { console.warn("create ticket failed", e); }
-
-      // send templated email (pass form so template reads event details)
-      try {
-        setAckLoading(true);
-        const mailRes = await sendTemplatedAckEmail(payload, insertedId, config?.images || [], null, config);
-        setAckLoading(false);
-        if (!mailRes || !mailRes.ok) {
-          setAckError(mailRes && (mailRes.error || (mailRes.body && (mailRes.body.error || mailRes.body.message))) || "Mailer failed");
-        } else {
-          setAckResult(mailRes.body || { ok: true });
-          setAckError("");
+      const json = await savePartnerApi(payload);
+      const insertedId = json?.insertedId || json?.id || null;
+      if (insertedId) {
+        setSavedPartnerId(insertedId);
+        const evDate = (form && (form.eventDetails?.date || form.eventDates || form.date)) || config?.eventDetails?.date || (canonicalEvent && canonicalEvent.date) || null;
+        if (evDate) {
+          const sch = await scheduleReminder(insertedId, evDate);
+          if (sch && sch.ok) { setReminderScheduled(true); setReminderError(""); } else { setReminderScheduled(false); setReminderError((sch && (sch.error || (sch.body && (sch.body.error || sch.body.message)))) || "Schedule failed"); }
         }
-      } catch (e) {
-        setAckLoading(false);
-        console.warn("templated mail failed", e);
-        setAckError("Acknowledgement email failed");
-      }
 
-      // schedule reminder using common endpoint
-      try {
-        if (insertedId) {
-          const evDate = (form && (form.eventDetails?.date || form.eventDates || form.date)) || config?.eventDetails?.date || null;
-          if (evDate) {
-            const sch = await scheduleReminder(insertedId, evDate);
-            if (sch && sch.ok) { setReminderScheduled(true); setReminderError(""); }
-            else { setReminderScheduled(false); setReminderError((sch && (sch.error || (sch.body && (sch.body.error || sch.body.message)))) || "Schedule failed"); }
+        let pdf = null;
+        try {
+          if (typeof generateVisitorBadgePDF === "function") {
+            pdf = await generateVisitorBadgePDF({ ...payload, id: insertedId }, config?.badgeTemplateUrl || "", { includeQRCode: true, qrPayload: { ticket_code: json?.ticket_code || payload.ticket_code || "" }, event: config?.eventDetails || {} });
           }
-        }
-      } catch (e) {
-        console.warn("schedule reminder failed", e);
+        } catch (e) { console.warn("PDF gen failed", e); }
+
+        try {
+          const mailRes = await sendTemplatedAckEmail(payload, insertedId, config?.eventDetails || {}, config?.images || [], pdf, config);
+          if (!mailRes || !mailRes.ok) console.warn("Ack mail returned:", mailRes);
+          else setAckResult(mailRes.body || { ok: true });
+        } catch (e) { console.warn("Ack email failed", e); }
+      } else {
+        try { await sendTemplatedAckEmail(payload, null, config?.eventDetails || {}, config?.images || [], null, config); } catch (e) { console.warn("Ack email failed", e); }
       }
-
-      // telemetry (best-effort)
-      try { await postJSON(apiUrl("/api/partners/step"), { step: "registration_completed", data: { id: insertedId, payload } }); } catch {}
-
+      try { await postJSON(apiUrl("/api/partners/step"), { step: "registration_completed", data: { id: json?.insertedId || null, payload } }); } catch {}
       setStep(4);
     } catch (err) {
-      console.error("finalizeSave error", err);
-      setError("Failed to save registration. Try again later.");
-    } finally {
-      setSaving(false);
+      console.error("[Partners] finalize save error:", err);
+      setError(err.message || "Failed to save registration");
     }
   }
 
-  /* Render */
   return (
     <div className="min-h-screen w-full relative">
       {!isMobile && config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url ? (
@@ -590,10 +658,41 @@ export default function Partners() {
         <div className="max-w-7xl mx-auto pt-8">
           <div className="flex flex-col sm:flex-row items-stretch mb-10" style={{ minHeight: 370 }}>
             <div className="sm:w-[60%] w-full flex items-center justify-center">
-              {loading ? <span className="text-[#21809b] text-2xl font-bold">Loading images...</span> : (config?.images && config.images.length ? <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center p-4"><img src={config.images[0]} alt="hero" className="object-cover w-full h-full" /></div> : <div className="text-[#21809b]"> </div>)}
+              {loading ? <span className="text-[#21809b] text-2xl font-bold">Loading images...</span> : (config?.images && config.images.length ? <ImageSlider images={config.images} /> : <div className="text-[#21809b]"> </div>)}
             </div>
+
             <div className="sm:w-[40%] w-full flex items-center justify-center">
-              {loading ? <span className="text-[#21809b] text-xl font-semibold">Loading event details...</span> : <div className="w-full px-4"><div className="font-extrabold text-3xl text-center text-[#21809b]">{config?.eventDetails?.name}</div><div className="text-center mt-2 text-[#196e87]">{config?.eventDetails?.date} • {config?.eventDetails?.venue}</div></div>}
+              {loading ? (
+                <span className="text-[#21809b] text-xl font-semibold">Loading event details...</span>
+              ) : (
+                <div className="w-full px-4">
+                  {/* Use gradient title styling consistent with other pages */}
+                  <div
+                    className="font-extrabold text-3xl sm:text-5xl mb-3 text-center"
+                    style={{
+                      background: "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)",
+                      WebkitBackgroundClip: "text",
+                      WebkitTextFillColor: "transparent",
+                    }}
+                  >
+                    {(canonicalEvent && canonicalEvent.name) || config?.eventDetails?.name || "Event Name"}
+                  </div>
+
+                  <div className="text-xl sm:text-2xl font-bold mb-1 text-center text-[#21809b]">
+                    {(canonicalEvent && (canonicalEvent.date || canonicalEvent.dates)) || config?.eventDetails?.date || "Event Date"}
+                  </div>
+
+                  <div className="text-base sm:text-xl font-semibold text-center text-[#196e87]">
+                    {(canonicalEvent && canonicalEvent.venue) || config?.eventDetails?.venue || "Event Venue"}
+                  </div>
+
+                  {(canonicalEvent && canonicalEvent.tagline) || config?.eventDetails?.tagline ? (
+                    <div className="text-sm mt-2 text-center text-gray-700">
+                      {(canonicalEvent && canonicalEvent.tagline) || config?.eventDetails?.tagline}
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
 
@@ -603,7 +702,6 @@ export default function Partners() {
             <div className="flex-grow border-t border-[#21809b]" />
           </div>
 
-          {/* Step 1 - form (client only) */}
           {!loading && step === 1 && config?.fields && (
             <div className="mx-auto w-full max-w-2xl">
               <DynamicRegistrationForm
@@ -618,14 +716,12 @@ export default function Partners() {
             </div>
           )}
 
-          {/* Step 2 - ticket selection */}
           {step === 2 && (
             <div className="mx-auto w-full max-w-4xl">
               <TicketCategorySelector role="partners" value={ticketCategory} onChange={handleTicketSelect} />
             </div>
           )}
 
-          {/* Step 3 - payment / proof */}
           {step === 3 && (
             <div className="mx-auto w-full max-w-2xl">
               <ManualPaymentStep
@@ -646,7 +742,6 @@ export default function Partners() {
             </div>
           )}
 
-          {/* Step 4 - thank you */}
           {step === 4 && (
             <div className="my-6">
               <ThankYouMessage email={form.email || ""} />
@@ -662,7 +757,7 @@ export default function Partners() {
 
           {error && <div className="text-red-600 font-semibold mb-2 text-center">{error}</div>}
 
-          <footer className="mt-16 text-center text-[#21809b] font-semibold py-6 text-lg">© {new Date().getFullYear()} RailTrans Expo | All rights reserved.</footer>
+          <footer className="mt-16 text-center text-[#21809b] font-semibold py-6 text-lg">© {new Date().getFullYear()} {(canonicalEvent && canonicalEvent.name) || config?.eventDetails?.name || "RailTrans Expo"}</footer>
         </div>
       </div>
     </div>
