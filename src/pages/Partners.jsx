@@ -20,7 +20,6 @@ import { buildTicketEmail } from "../utils/emailTemplate";
  - Uploads, payment status polls, mailer calls are non-fatal if they fail; we surface messages.
  - Event title in the partners preview uses the same gradient text style as other pages.
  - Added missing helpers (clone, ImageSlider) and imported generateVisitorBadgePDF to fix ESLint errors.
- - Fixed sendTemplatedAckEmail to avoid attaching image attachments (only PDFs), and added toBase64 helper.
 */
 
 function getApiBaseFromEnvOrWindow() {
@@ -126,30 +125,6 @@ async function uploadAsset(file) {
   }
 }
 
-/* convert Blob/ArrayBuffer to base64 string (used for attaching PDFs) */
-async function toBase64(pdf) {
-  if (!pdf) return "";
-  if (typeof pdf === "string") {
-    const m = pdf.match(/^data:application\/pdf;base64,(.*)$/i);
-    if (m) return m[1];
-    if (/^[A-Za-z0-9+/=]+$/.test(pdf)) return pdf;
-    return "";
-  }
-  if (pdf instanceof ArrayBuffer) pdf = new Blob([pdf], { type: "application/pdf" });
-  if (pdf instanceof Blob) {
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result || "";
-        resolve(String(result).split(",")[1] || "");
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(pdf);
-    });
-  }
-  return "";
-}
-
 /* resolve logo url from server / fallback localStorage */
 async function resolveLogoUrl(config = {}) {
   try {
@@ -187,7 +162,6 @@ async function scheduleReminder(partnerId, eventDate) {
 
 /* send templated acknowledgement email (uses buildTicketEmail)
    - Passes registration form in model.form so template can read event details from form
-   - Filters out image attachments returned by template (so Gmail won't show them as attachments)
 */
 async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = [], pdfBlob = null, cfg = {}) {
   try {
@@ -216,28 +190,12 @@ async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = 
       pdfBase64: null,
     };
 
-    const { subject, text, html, attachments: templateAttachments = [] } = await buildTicketEmail(model);
+    const { subject, text, html, attachments: templateAttachments = [] } = buildTicketEmail(model);
 
     const payload = { to, subject, text, html, attachments: [] };
 
     if (Array.isArray(templateAttachments) && templateAttachments.length) {
-      for (const att of templateAttachments) {
-        const ct = String((att.contentType || att.content_type || att.type || "").toLowerCase());
-        const filename = att.filename || att.name || "";
-        // Skip image attachments (image/*). Include PDFs and other non-image attachments.
-        if (ct.includes("image/")) {
-          console.debug("[Partners] skipping image attachment from template:", filename, ct);
-          continue;
-        }
-        if (!ct && filename) {
-          const lower = filename.toLowerCase();
-          if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif") || lower.endsWith(".webp") || lower.endsWith(".svg")) {
-            console.debug("[Partners] skipping image attachment inferred from filename:", filename);
-            continue;
-          }
-        }
-        payload.attachments.push(att);
-      }
+      payload.attachments.push(...templateAttachments);
     }
 
     if (pdfBlob) {
@@ -247,11 +205,6 @@ async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = 
         if (b64) {
           payload.attachments.push({ filename: "e-badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
         }
-      } else {
-        try {
-          const b64 = await toBase64(pdfBlob);
-          if (b64) payload.attachments.push({ filename: "e-badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
-        } catch (e) { console.warn("[Partners] pdf conversion failed", e); }
       }
     }
 
