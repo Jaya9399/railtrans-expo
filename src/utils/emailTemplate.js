@@ -1,10 +1,10 @@
 // Email template for ticket / e-badge delivery
-// - Now prefers the admin-config logo (GET /api/admin-config) when resolving the logo used in emails.
-// - Falls back to (in order): passed logoUrl parameter, /api/admin/logo-url, localStorage ("admin:topbar").
-// - Keeps previous behavior for canonical event-details and other features.
-//
-// This file is intended to be used both in-browser and server-side (mailer).
-// When used server-side, pass frontendBase if the mailer process needs absolute endpoints.
+// - Resolves logo and other relative URLs using (in order):
+//     1) explicit frontendBase arg
+//     2) process.env.REACT_APP_API_BASE_URL or process.env.PUBLIC_BASE_URL (server/mailer)
+//     3) window.__PUBLIC_BASE__ (client runtime override)
+//     4) window.location.origin (client fallback)
+// - Never attaches images; only PDF (pdfBase64) is attached.
 
 function normalizeBase64(b) {
   if (!b) return "";
@@ -15,13 +15,32 @@ function normalizeBase64(b) {
   return b;
 }
 
+function getEnvFrontendBase() {
+  try {
+    // Prefer explicit env var for public frontend base
+    if (typeof process !== "undefined" && process.env) {
+      const env = process.env.REACT_APP_API_BASE_URL || process.env.PUBLIC_BASE_URL || process.env.API_BASE || "";
+      if (env && String(env).trim()) return String(env).replace(/\/$/, "");
+    }
+  } catch (e) {}
+  try {
+    // Runtime override in browser
+    if (typeof window !== "undefined" && window.__PUBLIC_BASE__) {
+      return String(window.__PUBLIC_BASE__).replace(/\/$/, "");
+    }
+  } catch (e) {}
+  return "";
+}
+
 function normalizeForEmailUrl(url, frontendBase) {
   if (!url) return "";
   const s = String(url || "").trim();
   if (!s) return "";
   if (s.startsWith("data:")) return s;
   if (/^https?:\/\//i.test(s)) return s;
-  const base = String(frontendBase || "").replace(/\/$/, "");
+
+  const envBase = getEnvFrontendBase();
+  const base = String(frontendBase || envBase || (typeof window !== "undefined" && window.location ? window.location.origin : "")).replace(/\/$/, "");
   if (!base) return s;
   if (s.startsWith("/")) return base + s;
   return base + "/" + s.replace(/^\//, "");
@@ -75,12 +94,20 @@ async function fetchCanonicalEventDetails(frontendBase) {
     const base = String(frontendBase).replace(/\/$/, "");
     tryUrls.push(base + "/api/configs/event-details");
     tryUrls.push(base + "/api/event-details");
+  } else {
+    const envBase = getEnvFrontendBase();
+    if (envBase) {
+      tryUrls.push(envBase + "/api/configs/event-details");
+      tryUrls.push(envBase + "/api/event-details");
+    }
   }
 
   let _fetch = null;
   if (typeof fetch !== "undefined") _fetch = fetch;
   else {
     try {
+      // node-fetch for server environments
+      // eslint-disable-next-line global-require
       const nodeFetch = require("node-fetch");
       _fetch = nodeFetch;
     } catch (e) {
@@ -112,17 +139,19 @@ async function fetchCanonicalEventDetails(frontendBase) {
  * Try to fetch admin-config logo (preferred source for logo):
  * - /api/admin-config (returns { logoUrl, primaryColor }) OR
  * - /api/admin/logo-url (legacy)
- * Try relative endpoints first, then absolute using frontendBase if provided.
- * Returns string (url or relative path) or empty string.
  */
 async function fetchAdminLogo(frontendBase) {
   const tryUrls = [];
-  tryUrls.push("/api/admin-config");
-  tryUrls.push("/api/admin/logo-url");
+  tryUrls.push("/api/admin-config"); // canonical
+
   if (frontendBase) {
     const base = String(frontendBase).replace(/\/$/, "");
     tryUrls.push(base + "/api/admin-config");
-    tryUrls.push(base + "/api/admin/logo-url");
+  } else {
+    const envBase = getEnvFrontendBase();
+    if (envBase) {
+      tryUrls.push(envBase + "/api/admin-config");
+    }
   }
 
   let _fetch = null;
@@ -137,39 +166,18 @@ async function fetchAdminLogo(frontendBase) {
       const res = await _fetch(u + (u.includes("?") ? "&" : "?") + "cb=" + Date.now(), { headers: { Accept: "application/json" } });
       if (!res) continue;
       let js = null;
-      try { js = await res.json(); } catch (e) {
-        try { const txt = await res.text(); js = txt ? JSON.parse(txt) : null; } catch { js = null; }
-      }
+      try { js = await res.json(); } catch { js = null; }
       if (!js) continue;
-      // /api/admin-config returns { logoUrl, primaryColor }
-      if (js.logoUrl || js.logo_url || js.logo) {
-        return js.logoUrl || js.logo_url || js.logo;
-      }
-      // /api/admin/logo-url may return { logo_url: "..."} or a string
-      if (typeof js === "string" && js.trim()) return js.trim();
-      if (js.url) return js.url;
-      if (js.logo_url) return js.logo_url;
-    } catch (e) {
-      continue;
-    }
+      if (js.logoUrl) return js.logoUrl;
+    } catch (e) { continue; }
   }
-
-  // last-ditch: try localStorage if available (client-side)
-  try {
-    if (typeof window !== "undefined" && window.localStorage) {
-      const raw = window.localStorage.getItem("admin:topbar");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && parsed.logoUrl) return parsed.logoUrl;
-      }
-    }
-  } catch (e) {}
 
   return "";
 }
 
+
 export async function buildTicketEmail({
-  frontendBase = (typeof window !== "undefined" && window.location ? window.location.origin : ""),
+  frontendBase = "", // if empty we'll use env or window origin
   entity = "attendee",
   id = "",
   name = "",
@@ -178,16 +186,16 @@ export async function buildTicketEmail({
   badgePreviewUrl = "",
   downloadUrl = "",
   upgradeUrl = "",
-  logoUrl = "", // optional param (will be used only if admin logo not found)
+  logoUrl = "", // fallback if admin-config not available
   form = null,
   pdfBase64 = null,
 } = {}) {
-  const frontend = String(frontendBase || "").replace(/\/$/, "");
+  const envBase = getEnvFrontendBase();
+  const effectiveFrontend = String(frontendBase || envBase || (typeof window !== "undefined" && window.location ? window.location.origin : "")).replace(/\/$/, "");
 
-  // 1) Fetch canonical event-details
+  // canonical event details
   let canonicalEvent = null;
-  try { canonicalEvent = await fetchCanonicalEventDetails(frontend || undefined); } catch { canonicalEvent = null; }
-
+  try { canonicalEvent = await fetchCanonicalEventDetails(effectiveFrontend || undefined); } catch (e) { canonicalEvent = null; }
   const ev = canonicalEvent && typeof canonicalEvent === "object" ? {
     name: canonicalEvent.name || canonicalEvent.eventName || canonicalEvent.title || "",
     dates: canonicalEvent.dates || canonicalEvent.date || canonicalEvent.eventDates || "",
@@ -196,18 +204,18 @@ export async function buildTicketEmail({
     tagline: canonicalEvent.tagline || canonicalEvent.subtitle || "",
   } : getEventFromFormStrict(form);
 
-  // 2) Resolve logo: prefer admin-config logo, then passed logoUrl, then empty
+  // resolve logo using admin-config, then passed logoUrl
   let adminLogo = "";
-  try { adminLogo = await fetchAdminLogo(frontend || undefined); } catch (e) { adminLogo = ""; }
+  try { adminLogo = await fetchAdminLogo(effectiveFrontend || undefined); } catch (e) { adminLogo = ""; }
   const chosenLogoSource = adminLogo || logoUrl || "";
-  const resolvedLogo = normalizeForEmailUrl(chosenLogoSource, frontend) || "";
+  const resolvedLogo = normalizeForEmailUrl(chosenLogoSource, effectiveFrontend) || "";
 
-  const resolvedBadgePreview = normalizeForEmailUrl(badgePreviewUrl || "", frontend);
-  const resolvedDownload = normalizeForEmailUrl(downloadUrl || "", frontend) || `${frontend}/ticket-download?entity=${encodeURIComponent(entity)}&${id ? `id=${encodeURIComponent(String(id))}` : `ticket_code=${encodeURIComponent(String(form?.ticket_code || ""))}`}`;
+  const resolvedBadgePreview = normalizeForEmailUrl(badgePreviewUrl || "", effectiveFrontend);
+  const resolvedDownload = normalizeForEmailUrl(downloadUrl || "", effectiveFrontend) || `${effectiveFrontend}/ticket-download?entity=${encodeURIComponent(entity)}&${id ? `id=${encodeURIComponent(String(id))}` : `ticket_code=${encodeURIComponent(String(form?.ticket_code || ""))}`}`;
 
-  let resolvedUpgrade = normalizeForEmailUrl(upgradeUrl || "", frontend);
+  let resolvedUpgrade = normalizeForEmailUrl(upgradeUrl || "", effectiveFrontend);
   if (entity === "visitors" && !resolvedUpgrade) {
-    resolvedUpgrade = `${frontend}/ticket-upgrade?entity=visitors&${id ? `id=${encodeURIComponent(String(id))}` : `ticket_code=${encodeURIComponent(String(form?.ticket_code || ""))}`}`;
+    resolvedUpgrade = `${effectiveFrontend}/ticket-upgrade?entity=visitors&${id ? `id=${encodeURIComponent(String(id))}` : `ticket_code=${encodeURIComponent(String(form?.ticket_code || ""))}`}`;
   }
 
   const subject = `RailTrans Expo — Your E‑Badge & Registration`;
@@ -274,7 +282,7 @@ export async function buildTicketEmail({
       .label { width:110px; color:#475569; font-weight:600; }
       .value { color:#111827; white-space:pre-wrap; word-break:break-word; }
       .guidelines { margin-top:18px; }
-      .guidelines h4 { margin:0 0 8px; color:#0b4f60; }
+      .guidelines h4 { margin:0 0 8px 0; color:#0b4f60; }
       .guidelines ul { padding-left:18px; color:#374151; }
       .footer { margin-top:18px; color:#6b7280; font-size:13px; text-align:left; }
       @media (max-width:600px) {

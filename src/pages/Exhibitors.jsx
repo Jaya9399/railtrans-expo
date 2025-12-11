@@ -173,20 +173,20 @@ async function fetchLogoUrlFromServer() {
 }
 
 /* Build & send templated email using buildTicketEmail (unchanged) */
+/* Replace the existing sendTemplatedAckEmail function with the following in src/pages/Exhibitors.jsx */
 async function sendTemplatedAckEmail(exhibitor, insertedId, eventDetails = {}, images = [], pdfBlob = null, config = {}) {
   const to = exhibitor.email || (exhibitor._rawForm && (exhibitor._rawForm.email || exhibitor._rawForm.contactEmail)) || "";
   if (!to) return { ok: false, error: "no-recipient" };
 
+  // Pass a frontendBase so buildTicketEmail can resolve relative paths server-side.
   const frontendBase = (typeof window !== "undefined" && (window.__FRONTEND_BASE__ || window.location.origin)) || "";
+
+  // Do not call /api/admin/logo-url from the browser (removed).
+  // If config contains an explicit logo reference, keep it as a fallback, but do not rely on it for correctness.
   let logoUrl = "";
-  try {
-    const serverLogo = await fetchLogoUrlFromServer();
-    if (serverLogo) logoUrl = normalizeAdminUrl(serverLogo);
-  } catch {}
-  if (!logoUrl && config && (config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl))) {
+  if (config && (config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl))) {
     logoUrl = normalizeAdminUrl(config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl)) || "";
-  }
-  if (!logoUrl) {
+  } else {
     try {
       const raw = localStorage.getItem("admin:topbar");
       if (raw) {
@@ -198,6 +198,7 @@ async function sendTemplatedAckEmail(exhibitor, insertedId, eventDetails = {}, i
   logoUrl = logoUrl || "";
 
   const emailModel = {
+    // Pass frontendBase so buildTicketEmail will try to fetch admin-config / resolve relative uploads using this base.
     frontendBase,
     entity: "exhibitors",
     id: insertedId || exhibitor.insertedId || exhibitor.id || "",
@@ -206,12 +207,15 @@ async function sendTemplatedAckEmail(exhibitor, insertedId, eventDetails = {}, i
     ticket_category: exhibitor.ticket_category || exhibitor._rawForm?.ticket_category || "",
     badgePreviewUrl: "",
     downloadUrl: "",
+    // Pass fallback logoUrl (optional); mailer will prefer server-resolved admin-config.
     logoUrl,
     form: exhibitor._rawForm || exhibitor || {},
     pdfBase64: null,
   };
 
+  // Let buildTicketEmail fetch admin-config server-side when called on the server, or use frontendBase to build absolute URLs.
   const { subject, text, html, attachments: templateAttachments = [] } = await buildTicketEmail(emailModel);
+
   const attachments = Array.isArray(templateAttachments) ? [...templateAttachments] : [];
   if (pdfBlob) {
     const b64 = await toBase64(pdfBlob);
@@ -221,7 +225,6 @@ async function sendTemplatedAckEmail(exhibitor, insertedId, eventDetails = {}, i
   const mailPayload = { to, subject, text, html, logoUrl, attachments };
   return await sendMailPayload(mailPayload);
 }
-
 /* API helpers (unchanged) */
 async function saveExhibitorApi(payload) {
   const res = await fetch(apiUrl("/api/exhibitors"), {

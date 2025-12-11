@@ -10,16 +10,11 @@ import { buildTicketEmail } from "../utils/emailTemplate";
 /*
  Partners.jsx
 
- Fixes applied (matched to other admin pages):
- - Fetch canonical event-details from GET /api/configs/event-details (fallback /api/event-details)
-   and show those in the UI (preview). Also listens for config-updated / event-details-updated events.
- - All relevant fetches include the ngrok bypass header "ngrok-skip-browser-warning": "69420".
- - Reminder scheduling uses /api/reminders/send (same as other pages).
- - Email send builds a model containing the registration form (model.form) so buildTicketEmail
-   can prefer form-based event details if needed. We also resolve logo via /api/admin/logo-url.
- - Uploads, payment status polls, mailer calls are non-fatal if they fail; we surface messages.
- - Event title in the partners preview uses the same gradient text style as other pages.
- - Added missing helpers (clone, ImageSlider) and imported generateVisitorBadgePDF to fix ESLint errors.
+ Fixes applied:
+ - Await buildTicketEmail (it may be async).
+ - Filter out image attachments returned by the template before posting to /api/mailer.
+ - Always pass a canonical frontendBase to buildTicketEmail (getApiBaseFromEnvOrWindow()).
+ - Keep ngrok header for fetch calls; defensive logging for mail payload.
 */
 
 function getApiBaseFromEnvOrWindow() {
@@ -160,15 +155,22 @@ async function scheduleReminder(partnerId, eventDate) {
   }
 }
 
-/* send templated acknowledgement email (uses buildTicketEmail)
-   - Passes registration form in model.form so template can read event details from form
-*/
+/* Helper: detect image attachment client-side */
+function isImageAttachment(a = {}) {
+  const ct = String(a.contentType || a.content_type || a.type || "").toLowerCase();
+  if (ct && ct.startsWith("image/")) return true;
+  const fn = String(a.filename || a.name || a.path || "").toLowerCase();
+  if (fn.endsWith(".png") || fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".gif") || fn.endsWith(".webp") || fn.endsWith(".svg")) return true;
+  return false;
+}
+
+/* sendTemplatedAckEmail: uses buildTicketEmail (awaited), filters image attachments */
 async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = [], pdfBlob = null, cfg = {}) {
   try {
     const to = pickFirstString(partnerPayload, ["email", "emailAddress", "contactEmail"]) || "";
     if (!to) return { ok: false, error: "no-recipient" };
 
-    const frontendBase = (typeof window !== "undefined" && (window.__FRONTEND_BASE__ || window.location.origin)) || "";
+    const frontendBase = getApiBaseFromEnvOrWindow();
     const bannerUrl = Array.isArray(images) && images.length ? images[0] : "";
     const logoUrl = await resolveLogoUrl(cfg);
 
@@ -186,27 +188,54 @@ async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = 
       badgePreviewUrl: "",
       downloadUrl: "",
       logoUrl: logoUrl || "",
-      form: formObj, // ensures template can find event details via form
+      form: formObj,
       pdfBase64: null,
     };
 
-    const { subject, text, html, attachments: templateAttachments = [] } = buildTicketEmail(model);
+    // buildTicketEmail may be async — await it
+    const built = await buildTicketEmail(model);
+    const subject = built.subject || "(no subject)";
+    const text = built.text || "";
+    const html = built.html || "";
+    const templateAttachments = Array.isArray(built.attachments) ? built.attachments : [];
 
-    const payload = { to, subject, text, html, attachments: [] };
+    // Filter out image attachments defensively (so mailer doesn't receive image attachments)
+    const attachments = templateAttachments.filter((a) => !isImageAttachment(a)).map((a) => {
+      const out = {};
+      if (a.filename) out.filename = a.filename;
+      if (a.content) out.content = a.content;
+      if (a.encoding) out.encoding = a.encoding;
+      if (a.contentType || a.content_type) out.contentType = a.contentType || a.content_type;
+      return out;
+    });
 
-    if (Array.isArray(templateAttachments) && templateAttachments.length) {
-      payload.attachments.push(...templateAttachments);
-    }
-
+    // Attach pdfBlob if present
     if (pdfBlob) {
+      // accept base64 string or Blob
       if (typeof pdfBlob === "string") {
         const m = pdfBlob.match(/^data:application\/pdf;base64,(.*)$/i);
         const b64 = m ? m[1] : ( /^[A-Za-z0-9+/=]+$/.test(pdfBlob) ? pdfBlob : null );
         if (b64) {
-          payload.attachments.push({ filename: "e-badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
+          attachments.push({ filename: "e-badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
         }
+      } else {
+        // try to convert Blob to base64 (client-only)
+        try {
+          const b64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const result = reader.result || "";
+              resolve(String(result).split(",")[1] || "");
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(pdfBlob);
+          });
+          if (b64) attachments.push({ filename: "e-badge.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
+        } catch (e) { /* ignore */ }
       }
     }
+
+    const payload = { to, subject, text, html, attachments };
 
     try { console.debug("[Partners] mailPayload preview:", { to: payload.to, subject: payload.subject, htmlStart: String(payload.html || "").slice(0, 240), attachmentsCount: payload.attachments.length }); } catch (e) {}
 
@@ -230,9 +259,6 @@ async function sendTemplatedAckEmail(partnerPayload, partnerId = null, images = 
 }
 
 /* API helpers */
-async function postJSONSimple(url, body) {
-  return await postJSON(url, body);
-}
 async function savePartnerApi(payload) {
   const res = await fetch(apiUrl("/api/partners"), {
     method: "POST",
@@ -249,18 +275,6 @@ async function savePartnerApi(payload) {
   return json;
 }
 
-async function saveStep(stepName, data = {}, meta = {}) {
-  try {
-    await fetch(apiUrl("/api/partners/step"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
-      body: JSON.stringify({ step: stepName, data, meta }),
-    });
-  } catch (e) {
-    console.warn("[Partners] saveStep failed:", e);
-  }
-}
-
 /* defaults */
 const DEFAULT_PARTNER_FIELDS = [
   { name: "company", label: "Company / Organisation", type: "text", required: true, visible: true },
@@ -272,7 +286,7 @@ const DEFAULT_PARTNER_FIELDS = [
   { name: "partnership", label: "Partnership Interested In", type: "text", required: false, visible: true },
 ];
 
-/* small image slider helper used in multiple pages */
+/* image slider */
 function ImageSlider({ images = [], intervalMs = 4000 }) {
   const [active, setActive] = useState(0);
   useEffect(() => {
@@ -428,7 +442,6 @@ export default function Partners() {
       window.removeEventListener("config-updated", onConfigUpdated);
       window.removeEventListener("event-details-updated", fetchCanonicalEvent);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* Step 1: client-only submit */
@@ -574,12 +587,12 @@ export default function Partners() {
         } catch (e) { console.warn("PDF gen failed", e); }
 
         try {
-          const mailRes = await sendTemplatedAckEmail(payload, insertedId, config?.eventDetails || {}, config?.images || [], pdf, config);
+          const mailRes = await sendTemplatedAckEmail(payload, insertedId, config?.images || [], pdf, config);
           if (!mailRes || !mailRes.ok) console.warn("Ack mail returned:", mailRes);
           else setAckResult(mailRes.body || { ok: true });
         } catch (e) { console.warn("Ack email failed", e); }
       } else {
-        try { await sendTemplatedAckEmail(payload, null, config?.eventDetails || {}, config?.images || [], null, config); } catch (e) { console.warn("Ack email failed", e); }
+        try { await sendTemplatedAckEmail(payload, null, config?.images || [], null, config); } catch (e) { console.warn("Ack email failed", e); }
       }
       try { await postJSON(apiUrl("/api/partners/step"), { step: "registration_completed", data: { id: json?.insertedId || null, payload } }); } catch {}
       setStep(4);
@@ -588,6 +601,25 @@ export default function Partners() {
       setError(err.message || "Failed to save registration");
     }
   }
+
+  useEffect(() => {
+    fetchConfig();
+    fetchCanonicalEvent();
+    const onCfg = () => { fetchConfig(); fetchCanonicalEvent(); };
+    const onConfigUpdated = (e) => {
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details") fetchCanonicalEvent().catch(()=>{});
+    };
+    window.addEventListener("partner-config-updated", onCfg);
+    window.addEventListener("config-updated", onConfigUpdated);
+    window.addEventListener("event-details-updated", fetchCanonicalEvent);
+    return () => {
+      window.removeEventListener("partner-config-updated", onCfg);
+      window.removeEventListener("config-updated", onConfigUpdated);
+      window.removeEventListener("event-details-updated", fetchCanonicalEvent);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="min-h-screen w-full relative">
@@ -619,7 +651,6 @@ export default function Partners() {
                 <span className="text-[#21809b] text-xl font-semibold">Loading event details...</span>
               ) : (
                 <div className="w-full px-4">
-                  {/* Use gradient title styling consistent with other pages */}
                   <div
                     className="font-extrabold text-3xl sm:text-5xl mb-3 text-center"
                     style={{

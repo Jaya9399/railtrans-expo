@@ -7,7 +7,6 @@ const { URL } = require("url");
 const axios = require("axios");
 const http = require("http");
 const https = require("https");
-const os = require("os");
 const mongoClient = require("../utils/mongoClient"); // expect getDb() or .db
 
 const router = express.Router();
@@ -78,7 +77,6 @@ const LOGO_CACHE_TTL_MS = 1000 * 60 * 60; // 1 hour
 const MAX_INLINE_BYTES = 300 * 1024; // 300 KB
 const DEFAULT_TIMEOUT = 15000; // 15s
 
-// create http/https agents with keepAlive for performance and reliability
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 10 });
 const httpsAgent = new https.Agent({
   keepAlive: true,
@@ -121,7 +119,6 @@ async function fetchBuffer(urlString, timeout = DEFAULT_TIMEOUT, maxAttempts = 3
     // not a valid absolute URL; continue to HTTP attempt
   }
 
-  // Now attempt HTTP(s) fetch with retries
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       console.debug(`[mailer] fetching [attempt ${attempt}] ${urlString}`);
@@ -144,7 +141,6 @@ async function fetchBuffer(urlString, timeout = DEFAULT_TIMEOUT, maxAttempts = 3
       return { buffer, contentType };
     } catch (err) {
       lastErr = err;
-      // Log useful debug info
       try {
         const code = err.code || (err.response && err.response.status) || "UNKNOWN";
         console.warn(`[mailer] fetch attempt ${attempt} failed for ${urlString}: code=${code} message=${err.message}`);
@@ -154,17 +150,13 @@ async function fetchBuffer(urlString, timeout = DEFAULT_TIMEOUT, maxAttempts = 3
       } catch (logErr) {
         console.warn("[mailer] additional logging error:", logErr && logErr.message ? logErr.message : logErr);
       }
-
       if (attempt === maxAttempts) {
         throw err;
       }
-
-      // backoff before retrying
       await new Promise((r) => setTimeout(r, 400 * attempt));
     }
   }
 
-  // fallback
   throw lastErr || new Error("fetchBuffer failed");
 }
 
@@ -209,28 +201,53 @@ async function createInlineAttachmentFromUrl(logoUrl, cidName = "topbar-logo") {
   }
 }
 
-/* --- HTML replacement helper (unchanged) --- */
+/* --- HTML replacement helper --- */
 function replaceLogoSrcWithCid(html, logoUrl, cid) {
   if (!html || !logoUrl || !cid) return html;
   try {
     const esc = logoUrl.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
     const reExact = new RegExp(`(<img[^>]+src=(['"]))${esc}(['"][^>]*>)`, "i");
     if (reExact.test(html)) return html.replace(reExact, `$1cid:${cid}$3`);
-    const u = new URL(logoUrl);
-    const alt = u.origin + u.pathname;
-    const escAlt = alt.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
-    const reAlt = new RegExp(`(<img[^>]+src=(['"]))${escAlt}(['"][^>]*>)`, "i");
-    if (reAlt.test(html)) return html.replace(reAlt, `$1cid:${cid}$3`);
-    const name = u.pathname.split("/").pop();
-    if (name) {
-      const escName = name.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
-      const reName = new RegExp(`(<img[^>]+src=(['"])[^'"]*${escName}[^'"]*(['"][^>]*>)`, "i");
-      if (reName.test(html)) {
-        return html.replace(reName, (m) => m.replace(/src=(['"])[^'"]+\1/i, `src="cid:${cid}"`));
+    try {
+      const u = new URL(logoUrl);
+      const alt = u.origin + u.pathname;
+      const escAlt = alt.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      const reAlt = new RegExp(`(<img[^>]+src=(['"]))${escAlt}(['"][^>]*>)`, "i");
+      if (reAlt.test(html)) return html.replace(reAlt, `$1cid:${cid}$3`);
+      const name = u.pathname.split("/").pop();
+      if (name) {
+        const escName = name.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+        const reName = new RegExp(`(<img[^>]+src=(['"])[^'"]*${escName}[^'"]*(['"][^>]*>)`, "i");
+        if (reName.test(html)) {
+          return html.replace(reName, (m) => m.replace(/src=(['"])[^'"]+\1/i, `src="cid:${cid}"`));
+        }
       }
-    }
+    } catch (err) {}
   } catch (err) {}
   return html;
+}
+
+/* --- New helper: resolve logo URL to an absolute public URL on server-side --- */
+function resolveLogoUrlForMailer(logoUrl) {
+  if (!logoUrl) return "";
+  const s = String(logoUrl).trim();
+  if (!s) return "";
+  // If already absolute return as-is
+  if (/^https?:\/\//i.test(s)) return s;
+  // Otherwise prefix with server env public base if available
+  const base = (process.env.PUBLIC_BASE_URL || process.env.REACT_APP_API_BASE_URL || process.env.API_BASE || "").trim().replace(/\/$/, "");
+  if (base) return base + (s.startsWith("/") ? s : "/" + s);
+  // fallback: return as-is (may become a localhost URL when accessed)
+  return s;
+}
+
+/* --- New helper: detect image attachment from input attachment object --- */
+function isImageAttachmentMeta(a = {}) {
+  const ct = String(a.contentType || a.content_type || a.type || "").toLowerCase();
+  if (ct && ct.startsWith("image/")) return true;
+  const fn = String(a.filename || a.name || a.path || "").toLowerCase();
+  if (fn.endsWith(".png") || fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".gif") || fn.endsWith(".webp") || fn.endsWith(".svg")) return true;
+  return false;
 }
 
 /* --- Route handler (sends mail and logs to MongoDB) --- */
@@ -240,7 +257,7 @@ router.post("/", express.json({ limit: "8mb" }), async (req, res) => {
 
   const receivedAt = new Date();
   try {
-    const { to, subject, text, html: incomingHtml, attachments = [], logoUrl } = req.body || {};
+    const { to, subject, text, html: incomingHtml, attachments = [], logoUrl: rawLogoUrl } = req.body || {};
     if (!to || !subject || (!text && !incomingHtml)) {
       return res.status(400).json({ success: false, error: "Missing required fields: to, subject, text|html" });
     }
@@ -250,61 +267,87 @@ router.post("/", express.json({ limit: "8mb" }), async (req, res) => {
     const attachmentsMeta = [];
 
     // Normalize attachments for nodemailer and collect metadata for DB (avoid storing full binary)
+    // KEY CHANGE: skip image attachments (we do not attach images). Only keep non-image attachments (PDFs, docs).
     if (Array.isArray(attachments) && attachments.length) {
       for (const a of attachments) {
+        // Record meta for logging (even for skipped images)
+        const meta = { filename: a.filename || null, contentType: a.contentType || a.content_type || null, path: a.path || null, encoding: a.encoding || null };
+        if (isImageAttachmentMeta(a)) {
+          meta.skipped = true;
+          attachmentsMeta.push(meta);
+          console.log("[mailer] skipping image attachment from payload:", meta.filename || meta.path || "<unknown>");
+          continue; // do NOT add image attachments
+        }
+
+        // Non-image attachments -> convert to nodemailer-friendly form
         const att = {};
         if (a.filename) att.filename = a.filename;
         if (a.content) {
           // content may be base64 or text
           if (a.encoding === "base64" && typeof a.content === "string") {
             att.content = Buffer.from(a.content, "base64");
-            attachmentsMeta.push({ filename: a.filename || null, encoding: "base64", size: att.content.length, contentType: a.contentType || null });
+            meta.size = att.content.length;
           } else {
             att.content = a.content;
-            attachmentsMeta.push({ filename: a.filename || null, encoding: a.encoding || null, contentType: a.contentType || null });
           }
         }
         if (a.path) {
           att.path = a.path;
-          // try to stat file for size
           try {
             const st = fsSync.statSync(a.path);
-            attachmentsMeta.push({ filename: a.filename || path.basename(a.path), path: a.path, size: st.size, contentType: a.contentType || null });
-          } catch (e) {
-            attachmentsMeta.push({ filename: a.filename || null, path: a.path, contentType: a.contentType || null });
-          }
+            meta.size = st.size;
+          } catch (e) {}
         }
         if (a.contentType) att.contentType = a.contentType;
         if (a.cid) att.cid = a.cid;
         if (a.encoding) att.encoding = a.encoding;
         mailAttachments.push(att);
+        attachmentsMeta.push(meta);
       }
     }
 
-    // Inline logo handling (attempt to fetch and inline small logos)
-    if (logoUrl && typeof logoUrl === "string" && /^https?:\/\//i.test(logoUrl)) {
+    // Inline logo handling: resolve logo URL using server env first so relative '/uploads/..' becomes public URL
+    let logoUrl = rawLogoUrl && String(rawLogoUrl).trim() ? String(rawLogoUrl).trim() : "";
+    if (logoUrl) {
+      logoUrl = resolveLogoUrlForMailer(logoUrl);
+      console.log("[mailer] resolved logoUrl for inlining:", logoUrl);
+    }
+
+    // Attempt to create an inline attachment for the logo only if logoUrl is absolute HTTP(S)
+    if (logoUrl && /^https?:\/\//i.test(logoUrl)) {
       try {
         const inline = await createInlineAttachmentFromUrl(logoUrl.trim(), "topbar-logo");
         if (inline && inline.attachment) {
           const ia = inline.attachment;
-          mailAttachments.push({
-            filename: ia.filename,
-            content: ia.content,
-            contentType: ia.contentType,
-            cid: ia.cid,
-          });
-          // Add metadata for DB (do NOT store buffer)
-          attachmentsMeta.push({ filename: ia.filename, inline: true, contentType: ia.contentType });
+          // Avoid duplicates: don't add if filename already present
+          const already = mailAttachments.some(m => String(m.filename || "").toLowerCase() === String(ia.filename || "").toLowerCase());
+          if (!already) {
+            mailAttachments.push({
+              filename: ia.filename,
+              content: ia.content,
+              contentType: ia.contentType,
+              cid: ia.cid,
+            });
+            attachmentsMeta.push({ filename: ia.filename, inline: true, contentType: ia.contentType });
+          } else {
+            console.log("[mailer] inline logo filename already present in attachments, skipping add");
+          }
 
-          // replace HTML src with cid or inject if no image found
-          html = replaceLogoSrcWithCid(html, logoUrl.trim(), ia.cid);
-          if (html && !html.includes(`cid:${ia.cid}`)) {
+          // replace occurrences in HTML with cid; if not found, inject top of body
+          const newHtml = replaceLogoSrcWithCid(html, logoUrl.trim(), ia.cid);
+          if (newHtml === html) {
+            // not replaced — inject a small topbar logo element
             html = html.replace(/<body([^>]*)>/i, `<body$1><div style="padding:12px 20px"><img src="cid:${ia.cid}" style="height:44px; width:auto;" alt="logo" /></div>`);
+          } else {
+            html = newHtml;
           }
         }
       } catch (err) {
         console.warn("[mailer] inline logo attach failed:", err && (err.stack || err.message) ? (err.stack || err.message) : err);
       }
+    } else if (logoUrl) {
+      // If logoUrl is not absolute, we resolved to something non-http (or env absent). Log advice.
+      console.warn("[mailer] not inlining logo because logoUrl is not absolute HTTP(S):", logoUrl);
     }
 
     const from = process.env.MAIL_FROM || process.env.SMTP_USER || "no-reply@localhost";
@@ -344,9 +387,7 @@ router.post("/", express.json({ limit: "8mb" }), async (req, res) => {
       console.warn("[mailer] failed to persist mail log pre-send:", e && (e.message || e));
     }
 
-    // If transporter is not configured, do not attempt to send; return success but mark logged as skipped
     if (!transporter) {
-      // Update log as skipped
       try {
         if (mailLogs && savedLogId) {
           await mailLogs.updateOne({ _id: new (require("mongodb").ObjectId)(savedLogId) }, { $set: { status: "skipped_no_transporter", sendAttemptedAt: new Date(), result: { message: "No SMTP configured" } } });
@@ -359,7 +400,6 @@ router.post("/", express.json({ limit: "8mb" }), async (req, res) => {
     let info = null;
     try {
       info = await transporter.sendMail(mailOptions);
-      // Update log success
       if (mailLogs && savedLogId) {
         await mailLogs.updateOne(
           { _id: new (require("mongodb").ObjectId)(savedLogId) },
@@ -386,7 +426,6 @@ router.post("/", express.json({ limit: "8mb" }), async (req, res) => {
       });
     } catch (sendErr) {
       console.error("[/api/mailer] send error:", sendErr && (sendErr.stack || sendErr.message) ? (sendErr.stack || sendErr.message) : sendErr);
-      // Update log with failure
       try {
         if (mailLogs && savedLogId) {
           await mailLogs.updateOne(
