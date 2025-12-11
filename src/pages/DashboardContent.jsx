@@ -154,7 +154,31 @@ export default function DashboardContent() {
     });
   }, [report]);
 
-  // --- send templated email using buildTicketEmail; no extra event metadata passed (template will fetch canonical event details)
+  // Helper to determine public frontend base (prefer explicit window overrides or origin)
+  function getFrontendBase() {
+    try {
+      if (typeof window !== "undefined") {
+        if (window.__FRONTEND_BASE__) return String(window.__FRONTEND_BASE__).replace(/\/$/, "");
+        if (window.__API_BASE__) return String(window.__API_BASE__).replace(/\/$/, "");
+        if (window.location && window.location.origin) return String(window.location.origin).replace(/\/$/, "");
+      }
+      if (typeof process !== "undefined" && process.env) {
+        return (process.env.REACT_APP_API_BASE_URL || process.env.PUBLIC_BASE_URL || process.env.REACT_APP_API_BASE || "").replace(/\/$/, "");
+      }
+    } catch (e) {}
+    return "";
+  }
+
+  // Helper: detect image attachments (contentType or filename)
+  function isImageAttachmentMeta(a = {}) {
+    const ct = String(a.contentType || a.content_type || a.type || "").toLowerCase();
+    if (ct && ct.startsWith("image/")) return true;
+    const fn = String(a.filename || a.name || a.path || "").toLowerCase();
+    if (fn.endsWith(".png") || fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".gif") || fn.endsWith(".webp") || fn.endsWith(".svg")) return true;
+    return false;
+  }
+
+  // --- send templated email using buildTicketEmail; ensure frontendBase is set, and strip image attachments
   const sendTemplatedEmail = useCallback(async ({ entity, id, row, premium = false }) => {
     try {
       const email = (row && (row.email || row.email_address || row.contact || row.contactEmail)) || "";
@@ -166,10 +190,13 @@ export default function DashboardContent() {
         console.warn("[sendTemplatedEmail] no buildTicketEmail");
         return { ok: false, reason: "no-builder" };
       }
-      const frontendBase = (typeof window !== "undefined" && window.location && window.location.origin) ? window.location.origin : "";
+
+      // Choose a reliable frontendBase so template resolves relative uploads to public host
+      const frontendBase = getFrontendBase();
       const bannerUrl = (configs && configs[entity] && Array.isArray(configs[entity].images) && configs[entity].images.length) ? configs[entity].images[0] : "";
 
-      // model: DO NOT attach event details here — email template will fetch canonical event-details itself
+      // Build model. IMPORTANT: do NOT force client-side logoUrl that may be a localhost path.
+      // Let server-side template (buildTicketEmail) try admin-config itself. We still pass frontendBase.
       const model = {
         frontendBase,
         entity,
@@ -180,25 +207,48 @@ export default function DashboardContent() {
         badgePreviewUrl: row?.badgePreviewUrl || row?.badge_preview || "",
         downloadUrl: row?.downloadUrl || row?.download_url || "",
         upgradeUrl: premium ? "" : (row?.upgradeUrl || row?.upgrade_url || ""),
-        logoUrl: bannerUrl,
+        // Do NOT include logoUrl here; server will fetch admin-config logo and resolve with frontendBase.
         form: row || null,
         pdfBase64: row?.pdfBase64 || null,
       };
 
-      // build template
+      // build template (await because buildTicketEmail may be async)
       const tpl = await buildTicketEmail(model) || {};
       let { subject, text, html, attachments } = tpl;
-      attachments = attachments || [];
+      attachments = Array.isArray(attachments) ? attachments : [];
 
-      // fallback to minimal content if template returned nothing
-      if ((!subject || !String(subject).trim()) && (!text && !html)) {
-        subject = subject || `RailTrans Expo — Your E‑Badge`;
-        text = text || `Hello ${model.name || "Participant"},\n\nYour ticket category: ${model.ticket_category || ""}\n\nDownload: ${model.downloadUrl || frontendBase}`;
-        html = html || `<p>Hello ${model.name || "Participant"},</p><p>Your ticket info has been generated.</p><p><a href="${model.downloadUrl || frontendBase}">Download E‑Badge</a></p>`;
+      // Defensive: filter out image attachments (these show up as attachments in mail clients)
+      const safeAttachments = [];
+      for (const a of attachments) {
+        if (isImageAttachmentMeta(a)) {
+          console.log("[Dashboard] stripping image attachment from template before mailer:", a.filename || a.path || "<unknown>");
+          continue;
+        }
+        // normalize attachment fields for the mailer
+        const out = {};
+        if (a.filename) out.filename = a.filename;
+        if (a.content) out.content = a.content;
+        if (a.encoding) out.encoding = a.encoding;
+        if (a.contentType || a.content_type) out.contentType = a.contentType || a.content_type;
+        if (a.cid) out.cid = a.cid;
+        safeAttachments.push(out);
       }
 
-      const mailPayload = { to: email, subject, text, html, attachments, logoUrl: bannerUrl };
-      console.debug("[sendTemplatedEmail] mailPayload preview:", { to: mailPayload.to, subject: mailPayload.subject, attachments: (mailPayload.attachments || []).length, logoUrl: mailPayload.logoUrl });
+      // fallback to minimal content if template returned nothing
+      const finalSubject = (subject && String(subject).trim()) ? subject : `RailTrans Expo — Your E‑Badge`;
+      const finalText = text || `Hello ${model.name || "Participant"},\n\nYour ticket category: ${model.ticket_category || ""}\n\nDownload: ${model.downloadUrl || frontendBase}`;
+      const finalHtml = html || `<p>Hello ${model.name || "Participant"},</p><p>Your ticket info has been generated.</p><p><a href="${model.downloadUrl || frontendBase}">Download E‑Badge</a></p>`;
+
+      const mailPayload = {
+        to: email,
+        subject: finalSubject,
+        text: finalText,
+        html: finalHtml,
+        attachments: safeAttachments,
+        // Do not include logoUrl here so server-side mailer decides how to inline or reference logo
+      };
+
+      console.debug("[sendTemplatedEmail] mailPayload preview:", { to: mailPayload.to, subject: mailPayload.subject, attachments: mailPayload.attachments.length });
 
       const r = await fetch("/api/mailer", { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(mailPayload) });
       const body = await parseErrorBody(r);
@@ -318,7 +368,6 @@ export default function DashboardContent() {
     setEditOpen(true);
   }, [configs, report]);
 
-  // default Add New creates premium tickets per your request (pass premium=true)
   const handleAddNew = useCallback((table, premium = true) => {
     const key = table.toLowerCase();
     const defaults = {

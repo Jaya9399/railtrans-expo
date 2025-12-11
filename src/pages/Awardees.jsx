@@ -10,15 +10,13 @@ import { buildTicketEmail } from "../utils/emailTemplate";
 /*
   Awardees.jsx (fixed + canonical event-details + ngrok headers + gradient title)
 
-  Fixes / behavior:
-  - Fetches canonical event-details from GET /api/configs/event-details (fallback /api/event-details)
-    and displays them in the same gradient style as other pages.
-  - Key backend calls include the ngrok bypass header "ngrok-skip-browser-warning": "69420".
-  - Saves awardee payload with 'organization' ensured to be a non-null string ("" if missing).
-  - Schedules reminders via POST /api/reminders/send.
-  - Sends templated email using buildTicketEmail and passes the registration form in model.form
-    so the server-side template can fetch canonical event-details if desired.
-  - Payment polling and uploads include the ngrok header where applicable.
+  Fixes / behavior included in this file:
+  - sendTemplatedEmail now:
+    - ensures model.frontendBase is present (so buildTicketEmail resolves relative paths to public URL),
+    - awaits buildTicketEmail (it may be async),
+    - filters out image attachments returned by the template before posting to the mailer (defensive).
+  - Other pages (Speakers/Partners) had similar fixes applied previously; Awardees follows same pattern.
+  - All fetches include the ngrok bypass header where applicable.
 */
 
 function getApiBaseFromEnvOrWindow() {
@@ -90,23 +88,63 @@ async function sendMailPayload(payload) {
   return { ok: res.ok, status: res.status, body };
 }
 
+/* Helper: detect image attachment meta (client-side) */
+function isImageAttachmentMeta(a = {}) {
+  const ct = String(a.contentType || a.content_type || a.type || "").toLowerCase();
+  if (ct && ct.startsWith("image/")) return true;
+  const fn = String(a.filename || a.name || a.path || "").toLowerCase();
+  if (fn.endsWith(".png") || fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".gif") || fn.endsWith(".webp") || fn.endsWith(".svg")) return true;
+  return false;
+}
+
 /* Send templated email using buildTicketEmail
-   model MUST include `form` (registration form) so template reads event details from registration.
+   - Ensures model.frontendBase is set (so buildTicketEmail resolves '/uploads/..' to public URL)
+   - Awaits buildTicketEmail (it may be async)
+   - Filters image attachments from the template before sending to mailer (defensive)
 */
 async function sendTemplatedEmail({ recipientEmail, model, pdfBlob = null }) {
   if (!recipientEmail) return { ok: false, error: "no-recipient" };
   try {
-    const { subject, text, html, attachments: templateAttachments = [] } = await buildTicketEmail(model);
-    const payload = { to: recipientEmail, subject, text, html, attachments: [] };
+    // Ensure model.frontendBase is set
+    const frontendCandidate =
+      (typeof window !== "undefined" && (window.__FRONTEND_BASE__ || window.location.origin)) || getApiBaseFromEnvOrWindow();
+    model = { ...(model || {}), frontendBase: model && model.frontendBase ? model.frontendBase : frontendCandidate };
 
-    if (Array.isArray(templateAttachments) && templateAttachments.length) {
-      payload.attachments.push(...templateAttachments);
+    // buildTicketEmail may be async and may return attachments (we filter images)
+    const built = await buildTicketEmail(model);
+    const subject = built.subject || "";
+    const text = built.text || "";
+    const html = built.html || "";
+    const templateAttachments = Array.isArray(built.attachments) ? built.attachments : [];
+
+    // Filter out image attachments defensively (many mail clients show image attachments separately)
+    const safeAttachments = [];
+    for (const a of templateAttachments) {
+      if (isImageAttachmentMeta(a)) {
+        console.log("[sendTemplatedEmail] skipping image attachment from template:", a.filename || a.path || "<unknown>");
+        continue;
+      }
+      // normalize shape for mailer
+      const out = {};
+      if (a.filename) out.filename = a.filename;
+      if (a.content) out.content = a.content;
+      if (a.encoding) out.encoding = a.encoding;
+      if (a.contentType || a.content_type) out.contentType = a.contentType || a.content_type;
+      if (a.path) out.path = a.path;
+      safeAttachments.push(out);
     }
 
+    // include pdfBlob if provided
     if (pdfBlob) {
       const b64 = await toBase64(pdfBlob);
-      if (b64) payload.attachments.push({ filename: "Ticket.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
+      if (b64) {
+        safeAttachments.push({ filename: "Ticket.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
+      }
     }
+
+    const payload = { to: recipientEmail, subject, text, html, attachments: safeAttachments };
+
+    try { console.debug("[sendTemplatedEmail] mail preview:", { to: recipientEmail, subject, attachmentsCount: safeAttachments.length }); } catch (e) {}
 
     return await sendMailPayload(payload);
   } catch (e) {
@@ -280,7 +318,6 @@ export default function Awardees() {
       normalized.images = Array.isArray(normalized.images) ? normalized.images.map(normalizeAdminUrl) : [];
       normalized.eventDetails = typeof normalized.eventDetails === "object" && normalized.eventDetails ? normalized.eventDetails : {};
 
-      // ensure email fields show OTP if present
       normalized.fields = normalized.fields.map((f) => {
         if (!f || !f.name) return f;
         const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
@@ -403,10 +440,8 @@ export default function Awardees() {
     setSubmitting(true);
     try {
       setForm(payload || {});
-      // referenceId (used for payment polling) — use email when present
       const ref = (payload.email && payload.email.trim()) ? payload.email.trim() : `guest-${Date.now()}`;
       setReferenceId(ref);
-
       setStep(2);
     } catch (e) {
       console.error("handleFormSubmit error", e);
@@ -447,7 +482,6 @@ export default function Awardees() {
       const w = window.open(checkoutUrl, "_blank", "noopener,noreferrer");
       if (!w) { setError("Popup blocked. Allow popups to continue payment."); return; }
 
-      // poll by referenceId
       let attempts = 0;
       const poll = setInterval(async () => {
         attempts += 1;
@@ -470,9 +504,7 @@ export default function Awardees() {
             clearInterval(poll);
             setError("Payment not confirmed yet. If you completed payment, wait a bit and retry.");
           }
-        } catch (e) {
-          // ignore
-        }
+        } catch (e) { /* ignore */ }
       }, 3000);
     } catch (e) {
       console.error("createOrderAndOpenCheckout error", e);
@@ -511,7 +543,6 @@ export default function Awardees() {
       const bio = form.bio || null;
       const termsAccepted = !!form.termsAccepted;
 
-      // ensure organization non-null string to avoid SQL errors
       const payload = {
         title,
         name,
@@ -534,12 +565,10 @@ export default function Awardees() {
         _rawForm: form,
       };
 
-      // save awardee
       const js = await saveAwardeeApi(payload);
       const id = js?.insertedId || js?.insertId || js?.id || null;
       if (id) setAwardeeId(id);
 
-      // ticket code generation/confirm (best-effort)
       const ticket_code = js?.ticket_code || js?.ticketCode || payload.ticket_code || (String(Math.floor(100000 + Math.random() * 900000)));
       if (!js?.ticket_code && id) {
         try {
@@ -551,7 +580,6 @@ export default function Awardees() {
         } catch (_) {}
       }
 
-      // generate PDF (best-effort)
       let pdf = null;
       try {
         if (typeof generateVisitorBadgePDF === "function") {
@@ -563,7 +591,6 @@ export default function Awardees() {
         pdf = null;
       }
 
-      // send templated email (pass form so template reads registration event details if needed)
       if (!emailSentRef.current) {
         emailSentRef.current = true;
         try {
@@ -614,7 +641,6 @@ export default function Awardees() {
         }
       }
 
-      // optional whatsapp and admin notify (best-effort)
       try {
         if (payload.mobile) {
           await fetch(apiUrl("/api/notify/whatsapp"), {
@@ -630,7 +656,6 @@ export default function Awardees() {
         await sendMailPayload({ to: adminEmail, subject: `New Awardee: ${name}`, text: `Name: ${name}\nEmail: ${payload.email}\nTicket: ${ticket_code}\nID: ${id}` });
       } catch (e) {}
 
-      // schedule reminder (prefer form event date)
       const eventDateFromForm = (form && (form.eventDetails?.date || form.eventDates || form.event_date || form.date)) || config?.eventDetails?.date || null;
       if (id && eventDateFromForm) scheduleReminder(id, eventDateFromForm).catch(() => {});
 

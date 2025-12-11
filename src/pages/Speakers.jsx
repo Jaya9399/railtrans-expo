@@ -10,25 +10,25 @@ import { buildTicketEmail } from "../utils/emailTemplate";
 /*
   Speakers.jsx (ngrok header + canonical event-details + mail safety)
 
-  Changes made:
-  - All backend fetches include the ngrok skip header where appropriate.
-  - Added fetchCanonicalEvent() which reads canonical event details from:
-      GET /api/configs/event-details  (preferred)
-      fallback GET /api/event-details
-    and stored in state `canonicalEvent`.
-  - UI: EventDetailsBlock and HeroBlock prefer canonicalEvent when present.
-  - Email sending: we do NOT include eventDetails in the email model. We strip any eventDetails
-    from the form before building the mail model so the server-side mailer (emailTemplate)
-    can fetch canonical event-details itself.
-  - scheduleReminder and sendTemplatedEmail use ngrok header and log helpful info for debugging.
+  Key fixes applied:
+  - Removed client-side fetching/passing of logoUrl to mail payload. Server-side mailer / emailTemplate
+    will fetch the admin-config logo and resolve it using the provided frontendBase.
+  - sendTemplatedEmail now awaits buildTicketEmail and filters out any image attachments before
+    posting to the mailer endpoint (so images are not sent as attachments).
+  - When calling buildTicketEmail we pass frontendBase (server/public API base) so the template resolves
+    relative paths (/uploads/...) to absolute public URLs.
+  - Minor safety / logging improvements.
 */
 
 function getApiBaseFromEnvOrWindow() {
-  if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE) return process.env.REACT_APP_API_BASE.replace(/\/$/, "");
+  if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE)
+    return process.env.REACT_APP_API_BASE.replace(/\/$/, "");
+  if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE_URL)
+    return process.env.REACT_APP_API_BASE_URL.replace(/\/$/, "");
   if (typeof window !== "undefined" && window.__API_BASE__) return String(window.__API_BASE__).replace(/\/$/, "");
-  if (typeof window !== "undefined" && window.__CONFIG__ && window.__CONFIG__.backendUrl) return String(window.__CONFIG__.backendUrl).replace(/\/$/, "");
+  if (typeof window !== "undefined" && window.__FRONTEND_BASE__) return String(window.__FRONTEND_BASE__).replace(/\/$/, "");
   if (typeof window !== "undefined" && window.location && window.location.origin) return window.location.origin.replace(/\/$/, "");
-  return "/api";
+  return "";
 }
 function apiUrl(path) {
   const base = getApiBaseFromEnvOrWindow();
@@ -41,7 +41,7 @@ function normalizeAdminUrl(url) {
   const trimmed = String(url).trim();
   if (!trimmed) return "";
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (trimmed.startsWith("//")) return window.location.protocol + trimmed;
+  if (trimmed.startsWith("//")) return (typeof window !== "undefined" && window.location ? window.location.protocol : "https:") + trimmed;
   if (trimmed.startsWith("/")) return apiUrl(trimmed);
   return apiUrl(trimmed);
 }
@@ -123,8 +123,7 @@ async function uploadAsset(file) {
   }
 }
 
-/* scheduleReminder: try /api/reminders/send first (with ngrok header), fallback to /api/reminders/create.
-   Returns { ok, status, body } so caller can decide. */
+/* scheduleReminder helper (unchanged) */
 async function scheduleReminder(entityId, eventDate) {
   if (!entityId || !eventDate) return { ok: false, error: "missing" };
   const payload = { entity: "speakers", entityId, eventDate };
@@ -150,34 +149,66 @@ async function scheduleReminder(entityId, eventDate) {
   }
 }
 
-/* sendTemplatedEmail: build HTML via buildTicketEmail then POST to /api/mailer with ngrok header.
-   Console.debug the payload before sending and log response body on failure to aid debugging.
-   IMPORTANT: we deliberately DO NOT include eventDetails in the model. Server-side email builder
-   should fetch canonical event-details itself.
+/* Helper: detect image attachment client-side */
+function isImageAttachment(a = {}) {
+  const ct = String(a.contentType || a.content_type || a.type || "").toLowerCase();
+  if (ct && ct.startsWith("image/")) return true;
+  const fn = String(a.filename || a.name || a.path || "").toLowerCase();
+  if (fn.endsWith(".png") || fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".gif") || fn.endsWith(".webp") || fn.endsWith(".svg")) return true;
+  return false;
+}
+
+/* sendTemplatedEmail: build HTML via buildTicketEmail then POST to /api/mailer
+   - Await buildTicketEmail (it may be async)
+   - Filter out image attachments from template before sending
+   - Attach pdfBlob (if provided) as base64 pdf
 */
 async function sendTemplatedEmail({ recipientEmail, model, pdfBlob = null }) {
   if (!recipientEmail) return { ok: false, error: "no-recipient" };
   try {
-    // buildTicketEmail may be synchronous or asynchronous depending on implementation
-    const { subject, text, html, attachments: templateAttachments = [] } = buildTicketEmail(model);
+    // Ensure frontendBase passed to buildTicketEmail is a public base
+    const frontendBase = getApiBaseFromEnvOrWindow();
 
-    const payload = { to: recipientEmail, subject, text, html, attachments: [] };
-    if (Array.isArray(templateAttachments) && templateAttachments.length) {
-      payload.attachments.push(...templateAttachments);
-    }
+    // buildTicketEmail may be async
+    const ticketEmailModel = { ...(model || {}), frontendBase };
+    const built = await buildTicketEmail(ticketEmailModel);
+    const subject = built.subject || "(no subject)";
+    const text = built.text || "";
+    const html = built.html || "";
+    const templateAttachments = Array.isArray(built.attachments) ? built.attachments : [];
+
+    // filter out image attachments defensively
+    const attachments = templateAttachments.filter((a) => !isImageAttachment(a)).map((a) => {
+      // normalize client-side attachment shape
+      const out = {};
+      if (a.filename) out.filename = a.filename;
+      if (a.content) out.content = a.content;
+      if (a.encoding) out.encoding = a.encoding;
+      if (a.contentType || a.content_type) out.contentType = a.contentType || a.content_type;
+      return out;
+    });
+
+    // include pdfBlob if present
     if (pdfBlob) {
       const b64 = await toBase64(pdfBlob);
-      if (b64) payload.attachments.push({ filename: "Ticket.pdf", content: b64, encoding: "base64", contentType: "application/pdf" });
+      if (b64) {
+        attachments.push({
+          filename: "Ticket.pdf",
+          content: b64,
+          encoding: "base64",
+          contentType: "application/pdf",
+        });
+      }
     }
 
     try {
-      console.debug("[sendTemplatedEmail] preview:", { to: payload.to, subject: payload.subject, htmlStart: String(payload.html || "").slice(0, 240), attachmentsCount: payload.attachments.length });
+      console.debug("[sendTemplatedEmail] sending mail:", { to: recipientEmail, subject, attachmentsCount: attachments.length });
     } catch (e) {}
 
     const res = await fetch(apiUrl("/api/mailer"), {
       method: "POST",
       headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ to: recipientEmail, subject, text, html, attachments }),
     });
     const txt = await res.text().catch(() => "");
     let js = null;
@@ -277,7 +308,6 @@ export default function Speakers() {
           return;
         }
       }
-      // fallback
       const legacy = await fetch(`${apiUrl("/api/event-details")}?cb=${Date.now()}`, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } }).catch(()=>null);
       if (legacy && legacy.ok) {
         const ljs = await legacy.json().catch(()=>({}));
@@ -360,7 +390,7 @@ export default function Speakers() {
     };
 
     window.addEventListener("speaker-config-updated", onCfg);
-    window.addEventListener("visitor-config-updated", onCfg); // keep parity
+    window.addEventListener("visitor-config-updated", onCfg);
     window.addEventListener("config-updated", onConfigUpdated);
     window.addEventListener("event-details-updated", fetchCanonicalEvent);
 
@@ -572,35 +602,10 @@ export default function Speakers() {
         }
       } catch (e) { console.warn("PDF generation failed:", e); }
 
-      // prepare logoUrl for email (server -> config -> localStorage)
-      let logoUrl = "";
-      try {
-        const r = await fetch(apiUrl("/api/admin/logo-url"), { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
-        if (r.ok) {
-          const jsLogo = await r.json().catch(() => null);
-          const candidate = jsLogo?.logo_url || jsLogo?.logoUrl || jsLogo?.url || "";
-          if (candidate) logoUrl = normalizeAdminUrl(candidate);
-        }
-      } catch (e) {}
-      if (!logoUrl && config && (config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl))) {
-        logoUrl = normalizeAdminUrl(config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl)) || "";
-      }
-      if (!logoUrl) {
-        try {
-          const raw = localStorage.getItem("admin:topbar");
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (parsed && parsed.logoUrl) logoUrl = normalizeAdminUrl(parsed.logoUrl) || String(parsed.logoUrl).trim();
-          }
-        } catch {}
-      }
-
-      // send templated email
+      // send templated email (server-side will resolve admin logo using frontendBase)
       try {
         setAckLoading(true);
-        const frontendBase = (typeof window !== "undefined" && (window.__FRONTEND_BASE__ || window.location.origin)) || "";
-        const bannerUrl = (config?.images && config.images.length) ? config.images[0] : "";
-        // IMPORTANT: strip eventDetails from form before sending so server mailer composes canonical event-details itself
+        const frontendBase = getApiBaseFromEnvOrWindow();
         const safeForm = { ...(form || {}) };
         if (safeForm.eventDetails) delete safeForm.eventDetails;
 
@@ -612,14 +617,14 @@ export default function Speakers() {
           company: payload.company || "",
           ticket_code,
           ticket_category: chosen,
-          bannerUrl,
+          bannerUrl: config?.images && config.images.length ? config.images[0] : "",
           badgePreviewUrl: "",
           downloadUrl: "",
-          logoUrl,
-          // pass form without eventDetails
+          // do NOT include client-side logoUrl; server will resolve admin-config logo
           form: safeForm || {},
           pdfBase64: null,
         };
+
         const mailRes = await sendTemplatedEmail({ recipientEmail: payload.email, model: emailModel, pdfBlob: pdf });
         setAckLoading(false);
         if (!mailRes || !mailRes.ok) {
@@ -682,20 +687,6 @@ export default function Speakers() {
     }
   }
 
-  /* UI helpers */
-  function HeroBlock() {
-    const event = canonicalEvent || config?.eventDetails || {};
-    return (
-      <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex flex-col items-center justify-center mt-6 sm:mt-10 p-4">
-        <img src={config?.images?.[0] || "/images/speaker_placeholder.jpg"} alt="hero" className="object-cover w-full h-full" style={{ maxHeight: 220 }} />
-        <div className="mt-3 text-center">
-          <div className="text-lg font-bold text-[#196e87]">{event.name || ""}</div>
-          <div className="text-sm text-[#21809b]">{event.date || ""}</div>
-        </div>
-      </div>
-    );
-  }
-
   /* render */
   return (
     <div className="min-h-screen w-full relative">
@@ -720,7 +711,7 @@ export default function Speakers() {
         <div className="max-w-7xl mx-auto pt-8 px-4">
           <div className="flex flex-col sm:flex-row items-stretch mb-10" style={{ minHeight: 370 }}>
             <div className="sm:w-[60%] w-full flex items-center justify-center">
-              {loading ? <span className="text-[#21809b] text-2xl font-bold">Loading images...</span> : (config?.images && config.images.length ? <ImageSlider images={config.images} intervalMs={4000} /> : <HeroBlock />)}
+              {loading ? <span className="text-[#21809b] text-2xl font-bold">Loading images...</span> : (config?.images && config.images.length ? <ImageSlider images={config.images} intervalMs={4000} /> : <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex flex-col items-center justify-center mt-6 sm:mt-10 p-4"><img src={config?.images?.[0] || "/images/speaker_placeholder.jpg"} alt="hero" className="object-cover w-full h-full" style={{ maxHeight: 220 }} /></div>)}
             </div>
 
             <div className="sm:w-[40%] w-full flex items-center justify-center">

@@ -5,23 +5,16 @@ const fs = require('fs');
 const multer = require('multer');
 const mongo = require('../utils/mongoClient'); // must expose getDb()
 
-/* ===================== Upload directory ===================== */
+/* Canonical uploads directory */
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
-
-/* ===================== Multer config ===================== */
+/* Allowed mime types */
 const allowedMime = [
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-  "image/webp",
-  "image/gif",
-  "image/svg+xml"
+  "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/svg+xml"
 ];
 
+/* Multer storage -> writes into UPLOAD_DIR */
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => {
@@ -41,66 +34,76 @@ const upload = multer({
   }
 });
 
-/* ===================== Build absolute URL ===================== */
-function fileUrl(req, relative) {
-  const proto = req.get("x-forwarded-proto") || req.protocol;
-  const host = req.get("x-forwarded-host") || req.get("host");
-  return `${proto}://${host}${relative}`;
+/* Always use this env variable for public base */
+function publicBaseUrl() {
+  const base = (process.env.REACT_APP_API_BASE_URL || "").trim().replace(/\/$/, "");
+  if (!base) console.warn('[admin-config] REACT_APP_API_BASE_URL not set; URLs may be incorrect');
+  return base;
 }
 
-/* =============================================================
-   GET /api/admin-config
-   ============================================================= */
+function fileUrl(relativePath) {
+  const base = publicBaseUrl();
+  return `${base}${relativePath.startsWith('/') ? '' : '/'}${relativePath}`;
+}
+
+/* GET /api/admin-config */
 router.get("/admin-config", async (req, res) => {
   try {
-    const db = mongo.getDb();
-    const row = await db.collection("admin_settings")
-      .findOne({}, { projection: { logo_url: 1, primary_color: 1 } });
-
+    const db = await mongo.getDb();
+    const row = await db.collection("admin_settings").findOne({}, { projection: { logo_url: 1, primary_color: 1 } });
     if (!row) return res.json({});
-
-    return res.json({
-      logoUrl: row.logo_url || "",
-      primaryColor: row.primary_color || "",
-    });
-  } catch {
+    const rel = row.logo_url || "";
+    const logoAbsolute = rel ? fileUrl(rel) : "";
+    return res.json({ logoUrl: logoAbsolute, primaryColor: row.primary_color || "" });
+  } catch (e) {
+    console.error("[admin-config] GET error", e && (e.stack || e));
     return res.json({});
   }
 });
 
-/* =============================================================
-   PUT /api/admin-config
-   ============================================================= */
+/* PUT /api/admin-config */
 router.put("/admin-config", express.json(), async (req, res) => {
   const { logoUrl, primaryColor } = req.body || {};
+  let serverLogo = null;
 
   try {
-    const db = mongo.getDb();
+    if (logoUrl && typeof logoUrl === "string") {
+      const base = publicBaseUrl();
+      if (logoUrl.startsWith(base)) {
+        serverLogo = logoUrl.substring(base.length);
+        if (!serverLogo.startsWith("/")) serverLogo = "/" + serverLogo;
+      } else if (logoUrl.startsWith("/")) {
+        serverLogo = logoUrl;
+      } else {
+        serverLogo = logoUrl; // external CDN URL
+      }
+    }
+  } catch (e) {
+    serverLogo = logoUrl || null;
+  }
+
+  try {
+    const db = await mongo.getDb();
     await db.collection("admin_settings").updateOne(
       {},
       {
         $set: {
-          logo_url: logoUrl || null,
+          logo_url: serverLogo || null,
           primary_color: primaryColor || null,
           updated_at: new Date(),
         },
-        $setOnInsert: { created_at: new Date() }
+        $setOnInsert: { created_at: new Date() },
       },
       { upsert: true }
     );
     return res.json({ success: true });
-  } catch {
+  } catch (e) {
+    console.error("[admin-config] PUT error", e && (e.stack || e));
     return res.status(500).json({ error: "server error" });
   }
 });
 
-/* =============================================================
-   POST /api/admin-config/upload
-   Accepts: file or logo (field names)
-   Saves disk file
-   Stores relative path in DB
-   Returns absolute URL for frontend
-   ============================================================= */
+/* POST /api/admin-config/upload */
 router.post(
   "/admin-config/upload",
   upload.fields([
@@ -109,38 +112,40 @@ router.post(
   ]),
   async (req, res) => {
     try {
-      let file =
-        (req.files?.file && req.files.file[0]) ||
-        (req.files?.logo && req.files.logo[0]);
-
-      if (!file) {
-        return res.status(400).json({ error: "no file uploaded" });
-      }
+      const file = (req.files?.file && req.files.file[0]) || (req.files?.logo && req.files.logo[0]);
+      if (!file) return res.status(400).json({ error: "no file uploaded" });
 
       const relPath = "/uploads/" + file.filename;
-      const url = fileUrl(req, relPath);
+      const absoluteUrl = fileUrl(relPath);
 
-      // Save to admin_settings
+      // ensure file exists where static serves from
+      const expectedFsPath = path.join(UPLOAD_DIR, file.filename);
+      if (!fs.existsSync(expectedFsPath)) {
+        console.error('[admin-config] uploaded file missing on disk:', expectedFsPath);
+        return res.status(500).json({ error: "upload saved but file not found on disk" });
+      }
+
+      // persist relative path in DB
       try {
-        const db = mongo.getDb();
+        const db = await mongo.getDb();
         await db.collection("admin_settings").updateOne(
           {},
           {
             $set: { logo_url: relPath, updated_at: new Date() },
-            $setOnInsert: { created_at: new Date() },
+            $setOnInsert: { created_at: new Date() }
           },
           { upsert: true }
         );
-      } catch (_) {}
+      } catch (e) {
+        console.warn("[admin-config] save logo_url failed", e && e.message);
+      }
 
-      return res.json({ success: true, url });
+      console.log('[admin-config] uploaded:', { filename: file.filename, relPath, absoluteUrl });
+      return res.json({ success: true, url: absoluteUrl, path: relPath });
     } catch (err) {
-      if (err.message === "invalid_mime")
-        return res.status(400).json({ error: "invalid file type" });
-
-      if (err.code === "LIMIT_FILE_SIZE")
-        return res.status(400).json({ error: "file too large" });
-
+      if (err.message === "invalid_mime") return res.status(400).json({ error: "invalid file type" });
+      if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "file too large" });
+      console.error("[admin-config] upload error", err && (err.stack || err));
       return res.status(500).json({ error: "server error" });
     }
   }

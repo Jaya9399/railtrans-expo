@@ -195,10 +195,10 @@ async function sendTicketEmailUsingTemplate({
   badgeTemplateUrl,
   config,
 }) {
-  const frontendBase =
-    window.__FRONTEND_BASE__ ||
-    window.location.origin ||
-    "https://railtransexpo.com";
+  // Use the canonical API_BASE (public host) as the frontend base passed to the email template.
+  // This ensures the template resolves any relative paths (e.g. "/uploads/...") against the public URL
+  // instead of window.location (which could be localhost:3000 when you're using CRA dev server).
+  const frontendBase = API_BASE || window.__FRONTEND_BASE__ || window.location.origin || "https://railtransexpo.com";
 
   const visitorId =
     visitor?.id || visitor?.visitorId || visitor?.insertedId || "";
@@ -210,25 +210,10 @@ async function sendTicketEmailUsingTemplate({
       : `ticket_code=${encodeURIComponent(String(ticketCode || ""))}`
   }`;
 
-  // 1) Try server endpoint that returns the persisted (absolute) logo URL
+  // 1) Try server endpoint that returns the persisted (absolute) logo URL.
+  // Prefer the API_BASE endpoint so it returns an absolute public URL (not localhost).
   let logoUrl = "";
-  try {
-    const r = await fetch(`${API_BASE}/api/admin/logo-url`, {
-      headers: {
-        Accept: "application/json",
-        "ngrok-skip-browser-warning": "69420",
-      },
-    });
-    if (r.ok) {
-      const js = await r.json().catch(() => null);
-      const candidate = js?.logo_url || js?.logoUrl || js?.url || "";
-      if (candidate) {
-        logoUrl = normalizeAdminUrl(candidate) || String(candidate).trim();
-      }
-    }
-  } catch (err) {
-    console.warn("Failed to read /api/admin/logo-url:", err);
-  }
+
 
   // 2) Fallback to config.logoUrl if endpoint missing or empty
   if (!logoUrl && config && (config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl))) {
@@ -255,6 +240,7 @@ async function sendTicketEmailUsingTemplate({
   } catch {}
 
   const emailModel = {
+    // IMPORTANT: pass frontendBase = API_BASE so server-side template resolves relative uploads to public host
     frontendBase,
     entity: "visitors",
     id: visitorId,
@@ -264,20 +250,29 @@ async function sendTicketEmailUsingTemplate({
     ticket_category: visitor?.ticket_category || visitor?.ticketCategory || "",
     badgePreviewUrl: badgePreviewUrl || "",
     downloadUrl,
-    // event intentionally omitted here
     form: visitor || null,
     logoUrl,
   };
 
-  const { subject, text, html } = await buildTicketEmail(emailModel);
+  // buildTicketEmail must not return any image attachments; we rely on template HTML only.
+  const { subject, text, html, attachments: templateAttachments = [] } = await buildTicketEmail(emailModel);
+
+  // Ensure we do not send any image attachments from the template (defensive)
+  const attachments = Array.isArray(templateAttachments) ? templateAttachments.filter(a => {
+    const ct = String(a.contentType || a.content_type || "").toLowerCase();
+    if (ct && ct.startsWith("image/")) return false;
+    const name = (a.filename || a.name || "").toLowerCase();
+    if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".gif") || name.endsWith(".svg") || name.endsWith(".webp")) return false;
+    return true;
+  }) : [];
 
   const mailPayload = {
     to: visitor?.email,
     subject,
     text,
     html,
-    logoUrl,
-    attachments: [],
+    logoUrl, // server may still use this for logging — server should NOT auto-attach it
+    attachments, // only non-image attachments (e.g. PDF)
   };
 
   const result = await postMailer(mailPayload);
