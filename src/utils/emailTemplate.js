@@ -102,8 +102,9 @@ async function fetchCanonicalEventDetails(frontendBase) {
     }
   }
 
-let _fetch = (typeof fetch !== "undefined") ? fetch : null;
-
+  // Use global fetch in browsers / Node 18+. This file intentionally avoids referencing node-fetch
+  // at build-time to prevent bundlers from trying to resolve it.
+  let _fetch = (typeof fetch !== "undefined") ? fetch : null;
   if (!_fetch) return null;
 
   for (const u of tryUrls) {
@@ -129,6 +130,10 @@ let _fetch = (typeof fetch !== "undefined") ? fetch : null;
  * Try to fetch admin-config logo (preferred source for logo):
  * - /api/admin-config (returns { logoUrl, primaryColor }) OR
  * - /api/admin/logo-url (legacy)
+ *
+ * IMPORTANT: dynamic import or require of node-fetch would trigger bundlers to try resolving it,
+ * so here we only use the global fetch. Server-side environments (Node <18) should provide a global
+ * fetch (Node 18+) or you should polyfill/implement fetch (e.g. globalThis.fetch = (await import('node-fetch')).default).
  */
 async function fetchAdminLogo(frontendBase) {
   const tryUrls = [];
@@ -144,11 +149,8 @@ async function fetchAdminLogo(frontendBase) {
     }
   }
 
-  let _fetch = null;
-  if (typeof fetch !== "undefined") _fetch = fetch;
-  else {
-    try { const nodeFetch = require("node-fetch"); _fetch = nodeFetch; } catch (e) { _fetch = null; }
-  }
+  // Prefer global fetch (browser or Node 18+). Do NOT require('node-fetch') here to avoid bundler resolution.
+  let _fetch = (typeof fetch !== "undefined") ? fetch : null;
   if (!_fetch) return "";
 
   for (const u of tryUrls) {
@@ -159,6 +161,9 @@ async function fetchAdminLogo(frontendBase) {
       try { js = await res.json(); } catch { js = null; }
       if (!js) continue;
       if (js.logoUrl) return js.logoUrl;
+      if (js.logo_url) return js.logo_url;
+      if (js.url) return js.url;
+      if (typeof js === "string" && js.trim()) return js.trim();
     } catch (e) { continue; }
   }
 
