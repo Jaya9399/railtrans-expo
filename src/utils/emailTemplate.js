@@ -102,18 +102,8 @@ async function fetchCanonicalEventDetails(frontendBase) {
     }
   }
 
-  let _fetch = null;
-  if (typeof fetch !== "undefined") _fetch = fetch;
-  else {
-    try {
-      // node-fetch for server environments
-      // eslint-disable-next-line global-require
-      const nodeFetch = require("node-fetch");
-      _fetch = nodeFetch;
-    } catch (e) {
-      _fetch = null;
-    }
-  }
+let _fetch = (typeof fetch !== "undefined") ? fetch : null;
+
   if (!_fetch) return null;
 
   for (const u of tryUrls) {

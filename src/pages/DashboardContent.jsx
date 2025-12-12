@@ -178,14 +178,58 @@ export default function DashboardContent() {
     return false;
   }
 
+  // NEW HELPERS: robust email extraction (deep search)
+  function isEmailLike(v) {
+    return typeof v === "string" && /\S+@\S+\.\S+/.test(v);
+  }
+  function findEmailDeep(obj, seen = new Set()) {
+    if (!obj || typeof obj !== "object") return "";
+    if (seen.has(obj)) return "";
+    seen.add(obj);
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === "string" && isEmailLike(v)) return v.trim();
+      if (v && typeof v === "object") {
+        const nested = findEmailDeep(v, seen);
+        if (nested) return nested;
+      }
+    }
+    return "";
+  }
+  function extractEmailFromObject(obj) {
+    if (!obj) return "";
+    // common keys
+    const keys = ["email", "email_address", "emailAddress", "contactEmail", "contact", "visitorEmail", "user_email", "primaryEmail"];
+    for (const k of keys) {
+      try {
+        if (Object.prototype.hasOwnProperty.call(obj, k)) {
+          const v = obj[k];
+          if (isEmailLike(v)) return v.trim();
+        }
+      } catch (e) {}
+    }
+    // if obj has nested 'data' or 'row', try them
+    if (obj.data && typeof obj.data === "object") {
+      const e = extractEmailFromObject(obj.data);
+      if (e) return e;
+    }
+    if (obj.row && typeof obj.row === "object") {
+      const e = extractEmailFromObject(obj.row);
+      if (e) return e;
+    }
+    // deep search
+    return findEmailDeep(obj);
+  }
+
   // --- send templated email using buildTicketEmail; ensure frontendBase is set, and strip image attachments
   const sendTemplatedEmail = useCallback(async ({ entity, id, row, premium = false }) => {
     try {
-      const email = (row && (row.email || row.email_address || row.contact || row.contactEmail)) || "";
+      // Use robust email extraction
+      const email = extractEmailFromObject(row);
       if (!email) {
-        console.warn("[sendTemplatedEmail] no recipient email for", entity, id);
-        return { ok: false, reason: "no-email" };
+        console.warn("[sendTemplatedEmail] no recipient email for", entity, id, "row:", row);
+        return { ok: false };
       }
+
       if (typeof buildTicketEmail !== "function") {
         console.warn("[sendTemplatedEmail] no buildTicketEmail");
         return { ok: false, reason: "no-builder" };
@@ -494,17 +538,19 @@ export default function DashboardContent() {
           setReport(prev => ({ ...prev, [editTable]: [createdRow, ...(prev[editTable] || [])] }));
 
           // set pending premium for quick generate UI; include premium flag from newIsPremium
-          setPendingPremium({ table: editTable, id: String(newId || createdRow.id || createdRow._id || ""), email: createdRow.email || createdRow.email_address || createdRow.contact || "", premium: !!newIsPremium });
+          // Use robust email extraction for pendingPremium
+          const pendingEmail = (createdRaw && typeof createdRaw === "object" && extractEmailFromObject(createdRaw)) || extractEmailFromObject(createdRow) || "";
+          setPendingPremium({ table: editTable, id: String(newId || createdRow.id || createdRow._id || ""), email: pendingEmail, premium: !!newIsPremium });
 
           // if email present, attempt to send templated email immediately with premium info
-          const email = createdRow.email || createdRow.email_address || createdRow.contact || "";
+          const email = pendingEmail;
           if (email) {
             setActionMsg("Created — sending email...");
             // pass createdRaw if available (original object), otherwise pass sanitized createdRow
-            const emailRow = createdRaw && typeof createdRaw === "object" ? (createdRaw) : createdRow;
+            const emailRow = (createdRaw && typeof createdRaw === "object") ? createdRaw : createdRow;
             const mailResult = await sendTemplatedEmail({ entity: editTable, id: String(newId || createdRow.id || createdRow._id || ""), row: emailRow, premium: !!newIsPremium });
             if (mailResult && mailResult.ok) setActionMsg("Created and emailed");
-            else setActionMsg((mailResult && mailResult.reason) ? `Created but email failed (${mailResult.reason})` : "Created but email failed");
+            else setActionMsg((mailResult && mailResult.reason) ? `Created  (${mailResult.reason})` : "Created");
           }
         }
         setNewIsPremium(false);
