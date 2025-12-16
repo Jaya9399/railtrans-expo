@@ -121,8 +121,8 @@ export default function TicketUpgrade() {
           const res = await fetch(`/api/visitors/${encodeURIComponent(String(id))}`);
           if (res.ok) js = await res.json().catch(() => null);
         } else if (providedTicketCode) {
-          // fetch by ticket_code using list endpoint (adapt if your backend uses different query)
-          const r = await fetch(`/api/visitors?where=${encodeURIComponent(`ticket_code=${providedTicketCode}`)}&limit=1`);
+          // fetch by ticket_code using list endpoint — backend expects `q` parameter
+          const r = await fetch(`/api/visitors?q=${encodeURIComponent(providedTicketCode)}&limit=1`);
           if (r.ok) {
             const arr = await r.json().catch(() => []);
             js = Array.isArray(arr) ? (arr[0] || null) : arr;
@@ -221,7 +221,8 @@ export default function TicketUpgrade() {
           const r = await fetch(`/api/visitors/${encodeURIComponent(String(targetId))}`);
           if (r.ok) updated = await r.json().catch(() => null);
         } else if (providedTicketCode) {
-          const r = await fetch(`/api/visitors?where=${encodeURIComponent(`ticket_code=${providedTicketCode}`)}&limit=1`);
+          // backend expects `q` param for searching by ticket_code
+          const r = await fetch(`/api/visitors?q=${encodeURIComponent(providedTicketCode)}&limit=1`);
           if (r.ok) {
             const arr = await r.json().catch(() => []);
             updated = Array.isArray(arr) ? (arr[0] || null) : arr;
