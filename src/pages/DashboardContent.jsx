@@ -238,7 +238,6 @@ export default function DashboardContent() {
   // --- send templated email using buildTicketEmail; ensure frontendBase is set, and strip image attachments
   const sendTemplatedEmail = useCallback(async ({ entity, id, row, premium = false }) => {
     try {
-      // Use robust email extraction
       const email = extractEmailFromObject(row);
       if (!email) {
         console.warn("[sendTemplatedEmail] no recipient email for", entity, id, "row:", row);
@@ -252,10 +251,58 @@ export default function DashboardContent() {
 
       // Choose a reliable frontendBase so template resolves relative uploads to public host
       const frontendBase = getFrontendBase();
-      const bannerUrl = (configs && configs[entity] && Array.isArray(configs[entity].images) && configs[entity].images.length) ? configs[entity].images[0] : "";
 
-      // Build model. IMPORTANT: do NOT force client-side logoUrl that may be a localhost path.
-      // Let server-side template (buildTicketEmail) try admin-config itself. We still pass frontendBase.
+      // Resolve admin-config logo (prefer configs loaded by dashboard)
+      let logoCandidate = "";
+      try {
+        if (configs && configs[entity] && Array.isArray(configs[entity].images) && configs[entity].images.length) {
+          logoCandidate = configs[entity].images[0];
+        } else {
+          try {
+            const res = await fetch(buildApiUrl("/api/admin-config"), { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+            if (res.ok) {
+              const js = await res.json().catch(() => null);
+              if (js) logoCandidate = js.logoUrl || js.logo_url || js.url || "";
+            }
+          } catch (e) { /* ignore */ }
+        }
+      } catch (e) { logoCandidate = ""; }
+
+      // Helper to resolve relative -> absolute using frontendBase
+      function resolveAbsoluteUrl(url) {
+        if (!url) return "";
+        const s = String(url).trim();
+        if (!s) return "";
+        if (/^https?:\/\//i.test(s)) return s;
+        const base = String(frontendBase || "").replace(/\/$/, "");
+        if (!base) return s;
+        if (s.startsWith("/")) return base + s;
+        return base + "/" + s.replace(/^\//, "");
+      }
+
+      const resolvedLogo = resolveAbsoluteUrl(logoCandidate || "");
+      // Resolve badge preview from the row if present
+      const resolvedBadgePreview = resolveAbsoluteUrl(row?.badgePreviewUrl || row?.badge_preview || row?.badge || "");
+
+      // Try to fetch canonical event-details here and pass to template (as before)
+      let eventDetails = null;
+      try {
+        const cfgRes = await fetch(buildApiUrl("/api/configs/event-details"), { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+        if (cfgRes.ok) {
+          const cfgJs = await cfgRes.json().catch(() => null);
+          eventDetails = cfgJs && cfgJs.value !== undefined ? cfgJs.value : cfgJs;
+        } else {
+          const legacyRes = await fetch(buildApiUrl("/api/event-details"), { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } }).catch(() => null);
+          if (legacyRes && legacyRes.ok) {
+            const legacyJs = await legacyRes.json().catch(() => null);
+            eventDetails = legacyJs && legacyJs.value !== undefined ? legacyJs.value : legacyJs;
+          }
+        }
+      } catch (e) {
+        console.debug("[sendTemplatedEmail] fetching event-details failed, will fallback to form event data", e && e.message);
+        eventDetails = null;
+      }
+
       const model = {
         frontendBase,
         entity,
@@ -263,15 +310,15 @@ export default function DashboardContent() {
         name: row?.name || row?.company || "",
         company: row?.company || row?.organization || "",
         ticket_category: row?.ticket_category || (premium ? "Premium" : ""),
-        badgePreviewUrl: row?.badgePreviewUrl || row?.badge_preview || "",
+        badgePreviewUrl: resolvedBadgePreview || "",
         downloadUrl: row?.downloadUrl || row?.download_url || "",
         upgradeUrl: premium ? "" : (row?.upgradeUrl || row?.upgrade_url || ""),
-        // Do NOT include logoUrl here; server will fetch admin-config logo and resolve with frontendBase.
+        logoUrl: resolvedLogo || "",     // explicit absolute logo URL
         form: row || null,
         pdfBase64: row?.pdfBase64 || null,
+        event: eventDetails || (row && row.event) || null,
       };
 
-      // build template (await because buildTicketEmail may be async)
       const tpl = await buildTicketEmail(model) || {};
       let { subject, text, html, attachments } = tpl;
       attachments = Array.isArray(attachments) ? attachments : [];

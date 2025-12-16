@@ -14,6 +14,15 @@ const API_BASE = (
   ""
 ).replace(/\/$/, "");
 
+// IMPORTANT: FRONTEND_BASE must point to the public frontend origin (used for download/upgrade links & resolving relative urls)
+// Prefer explicit env var REACT_APP_FRONTEND_BASE / FRONTEND_BASE, then runtime override window.__FRONTEND_BASE__, then window.location.origin
+const FRONTEND_BASE = (
+  process.env.REACT_APP_FRONTEND_BASE ||
+  process.env.FRONTEND_BASE ||
+  window.__FRONTEND_BASE__ ||
+  (typeof window !== "undefined" && window.location ? window.location.origin : "")
+).replace(/\/$/, "");
+
 /* ---------- small helpers ---------- */
 const isEmailLike = (v) => typeof v === "string" && /\S+@\S+\.\S+/.test(v);
 
@@ -115,11 +124,16 @@ function getBestEmail(form) {
   );
 }
 
+/**
+ * Resolve admin/frontend URLs to absolute public frontend URLs.
+ * Use FRONTEND_BASE so email links/images point to the frontend origin (not API backend).
+ */
 function normalizeAdminUrl(url) {
   if (!url) return "";
   const t = String(url).trim();
   if (!t) return "";
   if (/^https?:\/\//i.test(t)) {
+    // if HTTP on localhost and page served over HTTPS, convert to origin HTTPS
     if (
       /^http:\/\//i.test(t) &&
       typeof window !== "undefined" &&
@@ -133,7 +147,7 @@ function normalizeAdminUrl(url) {
           parsed.hostname === "127.0.0.1"
         ) {
           return (
-            window.location.origin + parsed.pathname + (parsed.search || "")
+            FRONTEND_BASE.replace(/\/$/, "") + parsed.pathname + (parsed.search || "")
           );
         }
       } catch {}
@@ -141,8 +155,9 @@ function normalizeAdminUrl(url) {
     }
     return t;
   }
-  if (t.startsWith("/")) return (API_BASE || "").replace(/\/$/, "") + t;
-  return (API_BASE || "").replace(/\/$/, "") + "/" + t.replace(/^\//, "");
+  // relative path -> resolve against FRONTEND_BASE (public frontend)
+  if (t.startsWith("/")) return FRONTEND_BASE.replace(/\/$/, "") + t;
+  return FRONTEND_BASE.replace(/\/$/, "") + "/" + t.replace(/^\//, "");
 }
 
 /* ---------- mailer POST helper (tries /api/mailer then /api/email) ---------- */
@@ -185,8 +200,7 @@ async function postMailer(payload) {
 }
 
 /* ---------- email/send helper (client-side) ----------
-   NOTE: event details are intentionally NOT included here. The emailTemplate
-   code (server-side) should fetch canonical event-details directly when composing emails.
+   We pass FRONTEND_BASE to buildTicketEmail so template resolves frontend links correctly.
 */
 async function sendTicketEmailUsingTemplate({
   visitor,
@@ -195,10 +209,8 @@ async function sendTicketEmailUsingTemplate({
   badgeTemplateUrl,
   config,
 }) {
-  // Use the canonical API_BASE (public host) as the frontend base passed to the email template.
-  // This ensures the template resolves any relative paths (e.g. "/uploads/...") against the public URL
-  // instead of window.location (which could be localhost:3000 when you're using CRA dev server).
-  const frontendBase = API_BASE || window.__FRONTEND_BASE__ || window.location.origin || "https://railtransexpo.com";
+  // Use the public frontend origin for download/upgrade links and for resolving relative image URLs.
+  const frontendBase = FRONTEND_BASE || window.location.origin || "";
 
   const visitorId =
     visitor?.id || visitor?.visitorId || visitor?.insertedId || "";
@@ -210,17 +222,24 @@ async function sendTicketEmailUsingTemplate({
       : `ticket_code=${encodeURIComponent(String(ticketCode || ""))}`
   }`;
 
-  // 1) Try server endpoint that returns the persisted (absolute) logo URL.
-  // Prefer the API_BASE endpoint so it returns an absolute public URL (not localhost).
+  // Resolve logo: prefer config values (normalized to frontend), fallback to localStorage admin:topbar
   let logoUrl = "";
-
-
-  // 2) Fallback to config.logoUrl if endpoint missing or empty
-  if (!logoUrl && config && (config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl))) {
+  if (config && (config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl))) {
     logoUrl = normalizeAdminUrl(config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl)) || "";
+  } else {
+    try {
+      const res = await fetch(`${API_BASE.replace(/\/$/, "")}/api/admin-config`);
+      if (res.ok) {
+        const js = await res.json().catch(() => null);
+        if (js) {
+          logoUrl = normalizeAdminUrl(js.logoUrl || js.logo_url || js.url || "") || "";
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
   }
 
-  // 3) Last fallback: read localStorage 'admin:topbar' (client-side only)
   if (!logoUrl) {
     try {
       const raw = localStorage.getItem("admin:topbar");
@@ -240,7 +259,7 @@ async function sendTicketEmailUsingTemplate({
   } catch {}
 
   const emailModel = {
-    // IMPORTANT: pass frontendBase = API_BASE so server-side template resolves relative uploads to public host
+    // IMPORTANT: pass frontendBase = FRONTEND_BASE so server-side template resolves relative uploads to public host
     frontendBase,
     entity: "visitors",
     id: visitorId,
@@ -248,14 +267,20 @@ async function sendTicketEmailUsingTemplate({
     company: visitor?.company || "",
     ticket_code: ticketCode,
     ticket_category: visitor?.ticket_category || visitor?.ticketCategory || "",
-    badgePreviewUrl: badgePreviewUrl || "",
+    badgePreviewUrl: badgePreviewUrl ? normalizeAdminUrl(badgePreviewUrl) : "",
     downloadUrl,
     form: visitor || null,
     logoUrl,
+    // pass event object if we have canonical event details on the client
+    event: (config && config.eventDetails) ? config.eventDetails : null,
   };
 
-  // buildTicketEmail must not return any image attachments; we rely on template HTML only.
-  const { subject, text, html, attachments: templateAttachments = [] } = await buildTicketEmail(emailModel);
+  // buildTicketEmail must not return image attachments; we strip any if present
+  const tpl = await buildTicketEmail(emailModel);
+  const subject = tpl.subject;
+  const text = tpl.text;
+  const html = tpl.html;
+  const templateAttachments = tpl.attachments || [];
 
   // Ensure we do not send any image attachments from the template (defensive)
   const attachments = Array.isArray(templateAttachments) ? templateAttachments.filter(a => {
@@ -271,7 +296,7 @@ async function sendTicketEmailUsingTemplate({
     subject,
     text,
     html,
-    logoUrl, // server may still use this for logging — server should NOT auto-attach it
+    logoUrl, // server may use this, but it should not auto-attach the image
     attachments, // only non-image attachments (e.g. PDF)
   };
 
@@ -430,7 +455,6 @@ export default function Visitors() {
     };
     window.addEventListener("visitor-config-updated", onCfg);
     window.addEventListener("config-updated", (e) => {
-      // reload canonical event when EventDetailsAdmin saves
       const key = e && e.detail && e.detail.key ? e.detail.key : null;
       if (!key || key === "event-details") fetchCanonicalEvent().catch(()=>{});
     });
@@ -459,8 +483,6 @@ export default function Visitors() {
   /**
    * saveVisitor
    * - Sends form to server and returns a normalized result object instead of throwing
-   * - Handles both upsert-success and existed/409 shapes
-   * - Guarantees returned { ok: boolean, id?: string, ticket_code?: string, raw?: any, existed?: boolean }
    */
   const saveVisitor = useCallback(
     async (nextForm) => {
@@ -499,9 +521,7 @@ export default function Visitors() {
 
         const json = await res.json().catch(() => null);
 
-        // Accept successful HTTP 2xx responses or server responses with { success: true }
         if (res.ok || (json && json.success)) {
-          // Support multiple shapes returned by different server versions
           const id =
             (json && (json.insertedId || json.inserted_id)) ||
             (json && json.id) ||
@@ -514,14 +534,12 @@ export default function Visitors() {
           return { ok: true, id: id ? String(id) : null, ticket_code: ticket || null, raw: json || null, existed };
         }
 
-        // Some servers return 409 with existing info
         if (res.status === 409 && json && json.existing) {
           const id = json.existing.id || null;
           const ticket = json.existing.ticket_code || null;
           return { ok: true, id: id ? String(id) : null, ticket_code: ticket || null, raw: json, existed: true };
         }
 
-        // Otherwise treat as error
         const errMsg = (json && (json.message || json.error)) || `Save failed (${res.status})`;
         return { ok: false, error: errMsg, raw: json };
       } catch (err) {
@@ -547,7 +565,6 @@ export default function Visitors() {
     const nextForm = { ...formData };
     setForm(nextForm);
 
-    // Now only advance to ticket selection without any server persistence
     setVisitor((prev) => ({
       ...(prev || {}),
       name: nextForm.name,
@@ -594,12 +611,10 @@ export default function Visitors() {
             }
             savedAttemptedRef.current = true;
           } else {
-            // If save failed but returned useful info (e.g. existed), honor it
             if (saveResult.id) {
               setSavedVisitorId(saveResult.id);
               savedAttemptedRef.current = true;
             } else {
-              // treat as fatal for finalization
               throw new Error(saveResult.error || "Failed to save visitor");
             }
           }
@@ -635,7 +650,6 @@ export default function Visitors() {
         ticket_code = gen;
 
         if (!savedAttemptedRef.current) {
-          // If not yet saved (unlikely), call saveVisitor with ticket_code
           try {
             const saved = await saveVisitor({ ...form, ticket_code: gen, email: finalEmail });
             if (saved.ok && saved.id) {
@@ -647,7 +661,6 @@ export default function Visitors() {
             console.warn("Saving visitor with ticket_code failed:", saveErr);
           }
         } else if (savedVisitorId) {
-          // If record exists, call confirm endpoint to set ticket_code
           try {
             await fetch(
               `${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}/confirm`,
@@ -675,7 +688,6 @@ export default function Visitors() {
         ticket_price: ticketMeta.price,
         ticket_gst: ticketMeta.gstAmount,
         ticket_total: ticketMeta.total,
-        // eventDetails intentionally omitted
       };
       setVisitor(fullVisitor);
 
@@ -724,7 +736,7 @@ export default function Visitors() {
     }
   }, [step, ticketMeta, processing, completeRegistrationAndEmail]);
 
-  /* ---------- render (modified to show canonical event details but still not send them) ---------- */
+  /* ---------- render (uses canonical event details for UI; emails use FRONTEND_BASE) ---------- */
   if (isMobile) {
     return (
       <div className="min-h-screen w-full bg-white flex items-start justify-center p-4">
@@ -871,7 +883,6 @@ export default function Visitors() {
                 <div className="text-base sm:text-xl font-semibold text-center text-[#196e87]">
                   { (canonicalEvent && canonicalEvent.venue) || config?.eventDetails?.venue || "Event Venue" }
                 </div>
-                {/* optional time/tagline */}
                 { (canonicalEvent && canonicalEvent.time) || (config?.eventDetails && config.eventDetails.time) ? (
                   <div className="text-sm mt-2 text-center text-gray-700">
                     { (canonicalEvent && canonicalEvent.time) || (config?.eventDetails && config.eventDetails.time) }
