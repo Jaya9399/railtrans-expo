@@ -2,6 +2,44 @@ import React, { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { generateVisitorBadgePDF } from "../utils/pdfGenerator";
 
+function getApiBase() {
+  try {
+    if (typeof window !== "undefined" && window.__API_BASE__) return String(window.__API_BASE__).replace(/\/$/, "");
+    if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE) return String(process.env.REACT_APP_API_BASE).replace(/\/$/, "");
+  } catch (e) {}
+  return ""; // relative paths
+}
+function buildApiUrl(path) {
+  const base = getApiBase();
+  if (!path) return base || path;
+  if (/^https?:\/\//i.test(path)) return path;
+  if (path.startsWith("/")) return `${base}${path}`;
+  return `${base}/${path}`;
+}
+function looksLikeBase64(s = "") {
+  if (typeof s !== "string") return false;
+  const s2 = s.replace(/\s+/g, "");
+  return /^[A-Za-z0-9+/=]+$/.test(s2) && (s2.length % 4 === 0);
+}
+function tryParseJsonSafe(s) {
+  try { return JSON.parse(s); } catch { return null; }
+}
+function extractTicketFromDecoded(obj) {
+  if (!obj) return null;
+  const prefer = ["ticket_code","ticketCode","ticket_id","ticketId","ticket","code","c","id","tk","t"];
+  if (typeof obj === "object") {
+    for (const p of prefer) if (Object.prototype.hasOwnProperty.call(obj, p) && obj[p]) return String(obj[p]);
+    // deep search
+    for (const v of Object.values(obj)) {
+      if (typeof v === "object") {
+        const found = extractTicketFromDecoded(v);
+        if (found) return found;
+      }
+    }
+  }
+  return null;
+}
+
 export default function TicketDownload() {
   const [search] = useSearchParams();
   const navigate = useNavigate();
@@ -13,64 +51,83 @@ export default function TicketDownload() {
 
   useEffect(() => {
     let mounted = true;
+
+    async function safeFetchJson(url, opts = {}) {
+      // returns parsed JSON or throws with helpful error containing response text
+      const r = await fetch(url, opts);
+      const ct = (r.headers.get("content-type") || "").toLowerCase();
+      const text = await r.text().catch(() => "");
+      if (!r.ok) {
+        throw new Error(`Request failed ${r.status} ${r.statusText} - response: ${text.slice(0, 300)}`);
+      }
+      if (!ct.includes("application/json")) {
+        throw new Error(`Expected JSON but got content-type: ${ct} - response: ${text.slice(0, 800)}`);
+      }
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Invalid JSON: ${e.message} - response: ${text.slice(0, 800)}`);
+      }
+    }
+
     async function run() {
       setStatus("fetching");
       setError("");
       try {
-        // Prefer fetch by id. If id is provided but response is not JSON, fall back to ticket_code search.
         let visitor = null;
+        const attempted = [];
 
-        async function safeFetchJson(url, opts = {}) {
-          const r = await fetch(url, opts);
-          const ct = (r.headers.get("content-type") || "").toLowerCase();
-          const text = await r.text().catch(() => "");
-          if (!r.ok) {
-            // include response body to help debugging
-            throw new Error(`Request failed ${r.status} ${r.statusText} - response: ${text.slice(0, 200)}`);
-          }
-          if (!ct.includes("application/json")) {
-            // return parsed text with a flag so caller can decide; here we treat as error
-            throw new Error(`Expected JSON but got content-type: ${ct} - response: ${text.slice(0, 400)}`);
-          }
-          // parse JSON from the string we already read
-          try {
-            return JSON.parse(text);
-          } catch (e) {
-            throw new Error(`Invalid JSON response: ${e.message} - response: ${text.slice(0,400)}`);
-          }
-        }
-
+        // 1) Try by id (explicit)
         if (id) {
+          const url = buildApiUrl(`/api/${entity}/${encodeURIComponent(String(id))}`);
+          attempted.push(url);
           try {
-            visitor = await safeFetchJson(`/api/${entity}/${encodeURIComponent(String(id))}`, { headers: { Accept: "application/json" } });
+            visitor = await safeFetchJson(url, { headers: { Accept: "application/json" } });
           } catch (err) {
-            // If the id fetch returned HTML (or failed), and we have a ticket_code, fall back to q search below.
-            console.warn("Fetch by id returned non-JSON or failed, will try ticket_code fallback if available:", err);
+            console.warn("Fetch by id failed, will try ticket_code fallback if available:", err.message || err);
             visitor = null;
           }
         }
 
+        // 2) Try by ticket_code using q=
         if (!visitor && ticket_code) {
-          // Backend expects `q=` for searching; don't use 'where='
-          const listUrl = `/api/${entity}?q=${encodeURIComponent(ticket_code)}&limit=1`;
-          try {
-            const arr = await safeFetchJson(listUrl, { headers: { Accept: "application/json" } });
-            visitor = Array.isArray(arr) ? (arr[0] || null) : arr;
-          } catch (err) {
-            // if list returned HTML or error, propagate helpful message
-            throw err;
+          const tryCodes = [ticket_code];
+          if (!String(ticket_code).startsWith("TICK-")) tryCodes.push(`TICK-${ticket_code}`);
+
+          // If ticket_code looks like base64, try decoding and extracting
+          if (looksLikeBase64(ticket_code)) {
+            try {
+              const decoded = Buffer ? Buffer.from(ticket_code, "base64").toString("utf8") : atob(ticket_code);
+              const parsed = tryParseJsonSafe(decoded);
+              const ext = extractTicketFromDecoded(parsed || {});
+              if (ext) tryCodes.unshift(ext);
+            } catch (e) {}
+          }
+
+          for (const tc of tryCodes) {
+            const url = buildApiUrl(`/api/${entity}?q=${encodeURIComponent(tc)}&limit=1`);
+            attempted.push(url);
+            try {
+              const arr = await safeFetchJson(url, { headers: { Accept: "application/json" } });
+              visitor = Array.isArray(arr) ? (arr[0] || null) : arr;
+              if (visitor) break;
+            } catch (err) {
+              // continue trying other variants
+              console.warn("ticket_code lookup failed for", tc, err.message || err);
+            }
           }
         }
 
         if (!visitor) {
-          throw new Error("Visitor record not found");
+          // Show attempted URLs in error to help debugging
+          const msg = `Visitor record not found. Attempts: ${attempted.join(" | ") || "(none)"} — ensure the ticket_code/id exists and API is reachable.`;
+          throw new Error(msg);
         }
 
         if (!mounted) return;
-
         setStatus("generating");
 
-        // generate PDF blob (your existing generator should return a Blob or Buffer -> convert to Blob)
+        // Generate PDF Blob (pdfGenerator returns a Blob)
         const pdfBlob = await generateVisitorBadgePDF(visitor, visitor.badgeTemplateUrl || "", {
           includeQRCode: true,
           qrPayload: { ticket_code: visitor.ticket_code || visitor.ticketCode || ticket_code || "" },
@@ -93,17 +150,17 @@ export default function TicketDownload() {
         if (!mounted) return;
         setStatus("done");
 
-        // optional: navigate to ticket manage page
         setTimeout(() => {
           try { navigate(`/ticket?entity=${encodeURIComponent(entity)}&id=${encodeURIComponent(String(visitor.id || visitor._id || ""))}`); } catch {}
         }, 1600);
       } catch (err) {
-        console.error("ticket-download error", err);
+        console.error("ticket-download error:", err);
         if (!mounted) return;
         setError(String(err && err.message ? err.message : err));
         setStatus("error");
       }
     }
+
     run();
     return () => { mounted = false; };
   }, [entity, id, ticket_code, navigate]);
@@ -115,7 +172,7 @@ export default function TicketDownload() {
         {status === "fetching" && <div>Fetching ticket details…</div>}
         {status === "generating" && <div>Generating your E‑Badge PDF…</div>}
         {status === "done" && <div>Download started. If nothing happened, <a href="#" onClick={(e) => { e.preventDefault(); window.location.reload(); }}>try again</a>.</div>}
-        {status === "error" && <div style={{ color: "crimson" }}>Error: {error}</div>}
+        {status === "error" && <div style={{ color: "crimson", whiteSpace: "pre-wrap", textAlign: "left" }}>Error: {error}</div>}
       </div>
     </div>
   );
