@@ -1,11 +1,13 @@
 // Email template for ticket / e-badge delivery
 // Robust fetching of event details and admin logo that works in browser and server (Node).
-// - Resolves logo and other relative URLs using (in order):
-//   1) explicit frontendBase arg passed to buildTicketEmail
-//   2) process.env.FRONTEND_BASE or process.env.REACT_APP_API_BASE / REACT_APP_API_BASE_URL
-//   3) window.__FRONTEND_BASE__ (client runtime override)
-//   4) window.location.origin (client fallback)
-// - Never attaches images; only PDF (pdfBase64) is attached.
+// Improvements:
+// - When attempting to fetch /api/configs/event-details and /api/admin-config,
+//   try multiple candidate origins in this order:
+//     1) relative path (will go to current origin / proxy)
+//     2) API_BASE / BACKEND_URL env or window.__API_BASE__ (backend host)
+//     3) explicit frontendBase passed to buildTicketEmail (frontend origin)
+// This fixes cases where the client calls buildTicketEmail and the canonical
+// endpoints are only reachable via the backend host (not the frontend origin).
 
 function normalizeBase64(b) {
   if (!b) return "";
@@ -36,16 +38,53 @@ function getEnvFrontendBase() {
   return "";
 }
 
-function buildApiUrl(frontendBase, path) {
-  const base = String(
-    frontendBase ||
-      getEnvFrontendBase() ||
-      (typeof window !== "undefined" && window.location ? window.location.origin : "")
-  ).replace(/\/$/, "");
-  if (!path) return base || path;
+function getEnvApiBase() {
+  // Prefer explicit backend/api host envs, then window override
+  try {
+    if (typeof process !== "undefined" && process.env) {
+      const env =
+        process.env.API_BASE ||
+        process.env.BACKEND_URL ||
+        process.env.REACT_APP_API_BASE ||
+        process.env.REACT_APP_API_BASE_URL ||
+        "";
+      if (env && String(env).trim()) return String(env).replace(/\/$/, "");
+    }
+  } catch (e) {}
+  try {
+    if (typeof window !== "undefined" && window.__API_BASE__) {
+      return String(window.__API_BASE__).replace(/\/$/, "");
+    }
+  } catch (e) {}
+  return "";
+}
+
+function buildAbsolute(base, path) {
+  if (!base) return "";
+  const b = String(base).replace(/\/$/, "");
   if (/^https?:\/\//i.test(path)) return path;
-  if (path.startsWith("/")) return base ? base + path : path;
-  return base ? base + "/" + path.replace(/^\//, "") : path;
+  if (!path) return b;
+  if (path.startsWith("/")) return b + path;
+  return b + "/" + path.replace(/^\//, "");
+}
+
+function buildRelative(path) {
+  // Return relative path (as-is) so fetch(path) will go to current origin (useful with dev proxy)
+  return path;
+}
+
+/**
+ * Produce candidate absolute/relative URLs for a given API path.
+ * Order is important: try relative first (current origin / proxy), then apiBase, then frontendBase.
+ */
+function candidateUrlsForPath(path, frontendBase, apiBase) {
+  const c = [];
+  if (!path) return c;
+  // relative first (so developer proxy /api -> backend can work)
+  c.push(buildRelative(path));
+  if (apiBase) c.push(buildAbsolute(apiBase, path));
+  if (frontendBase) c.push(buildAbsolute(frontendBase, path));
+  return c;
 }
 
 /**
@@ -100,23 +139,29 @@ async function safeFetchJson(url, opts = {}) {
 
 /**
  * Try to fetch canonical event-details from admin endpoint(s).
- * Tries these in order (resolved via buildApiUrl):
+ * Tries these in order (resolved via candidateUrlsForPath):
  *   /api/configs/event-details
  *   /api/event-details
- * Also tries absolute forms if frontendBase provided.
+ *
+ * This version tries the API host (getEnvApiBase) as well as frontendBase so it works when called
+ * from client or server and avoids returning the frontend index.html by mistake.
  */
 async function fetchCanonicalEventDetails(frontendBase) {
+  const apiBase = getEnvApiBase();
   const paths = ["/api/configs/event-details", "/api/event-details"];
   for (const p of paths) {
-    const u = buildApiUrl(frontendBase, p) + (p.includes("?") ? "&" : "?") + "cb=" + Date.now();
-    try {
-      const js = await safeFetchJson(u, { headers: { Accept: "application/json" } });
-      if (!js) continue;
-      const val = js && js.value !== undefined ? js.value : js;
-      if (val && typeof val === "object" && Object.keys(val).length) return val;
-    } catch (e) {
-      // try next path
-      continue;
+    const urls = candidateUrlsForPath(p, frontendBase, apiBase);
+    for (const u of urls) {
+      try {
+        const full = u + (u.includes("?") ? "&" : "?") + "cb=" + Date.now();
+        const js = await safeFetchJson(full, { headers: { Accept: "application/json" } });
+        if (!js) continue;
+        const val = js && js.value !== undefined ? js.value : js;
+        if (val && typeof val === "object" && Object.keys(val).length) return val;
+      } catch (e) {
+        // try next URL
+        continue;
+      }
     }
   }
   return null;
@@ -125,20 +170,26 @@ async function fetchCanonicalEventDetails(frontendBase) {
 /**
  * Try to fetch admin-config logo from preferred endpoints.
  * Returns first found logo URL string, or empty string.
+ *
+ * Same multi-origin strategy as event-details fetch above.
  */
 async function fetchAdminLogo(frontendBase) {
+  const apiBase = getEnvApiBase();
   const paths = ["/api/admin-config", "/api/admin/logo-url"];
   for (const p of paths) {
-    const u = buildApiUrl(frontendBase, p) + (p.includes("?") ? "&" : "?") + "cb=" + Date.now();
-    try {
-      const js = await safeFetchJson(u, { headers: { Accept: "application/json" } });
-      if (!js) continue;
-      if (js.logoUrl) return js.logoUrl;
-      if (js.logo_url) return js.logo_url;
-      if (js.url) return js.url;
-      if (typeof js === "string" && js.trim()) return js.trim();
-    } catch (e) {
-      continue;
+    const urls = candidateUrlsForPath(p, frontendBase, apiBase);
+    for (const u of urls) {
+      try {
+        const full = u + (u.includes("?") ? "&" : "?") + "cb=" + Date.now();
+        const js = await safeFetchJson(full, { headers: { Accept: "application/json" } });
+        if (!js) continue;
+        if (js.logoUrl) return js.logoUrl;
+        if (js.logo_url) return js.logo_url;
+        if (js.url) return js.url;
+        if (typeof js === "string" && js.trim()) return js.trim();
+      } catch (e) {
+        continue;
+      }
     }
   }
   return "";
@@ -150,7 +201,7 @@ function normalizeForEmailUrl(url, frontendBase) {
   if (!s) return "";
   if (s.startsWith("data:")) return s;
   if (/^https?:\/\//i.test(s)) return s;
-  const base = buildApiUrl(frontendBase, "/").replace(/\/$/, "");
+  const base = buildAbsolute(frontendBase || getEnvFrontendBase() || "", "/").replace(/\/$/, "");
   if (!base) return s;
   if (s.startsWith("/")) return base + s;
   return base + "/" + s.replace(/^\//, "");
@@ -214,30 +265,20 @@ export async function buildTicketEmail({
 } = {}) {
   const effectiveFrontend = String(frontendBase || getEnvFrontendBase() || (typeof window !== "undefined" && window.location ? window.location.origin : "")).replace(/\/$/, "");
 
-  // canonical event details (best-effort)
+  // canonical event details (best-effort) - try multiple origins
   let canonicalEvent = null;
-  try {
-    canonicalEvent = await fetchCanonicalEventDetails(effectiveFrontend);
-  } catch (e) {
-    canonicalEvent = null;
-  }
-  const ev = canonicalEvent && typeof canonicalEvent === "object"
-    ? {
-        name: canonicalEvent.name || canonicalEvent.eventName || canonicalEvent.title || "",
-        dates: canonicalEvent.dates || canonicalEvent.date || canonicalEvent.eventDates || "",
-        time: canonicalEvent.time || canonicalEvent.startTime || canonicalEvent.eventTime || "",
-        venue: canonicalEvent.venue || canonicalEvent.location || canonicalEvent.eventVenue || "",
-        tagline: canonicalEvent.tagline || canonicalEvent.subtitle || "",
-      }
-    : getEventFromFormStrict(form);
+  try { canonicalEvent = await fetchCanonicalEventDetails(effectiveFrontend); } catch (e) { canonicalEvent = null; }
+  const ev = canonicalEvent && typeof canonicalEvent === "object" ? {
+    name: canonicalEvent.name || canonicalEvent.eventName || canonicalEvent.title || "",
+    dates: canonicalEvent.dates || canonicalEvent.date || canonicalEvent.eventDates || "",
+    time: canonicalEvent.time || canonicalEvent.startTime || canonicalEvent.eventTime || "",
+    venue: canonicalEvent.venue || canonicalEvent.location || canonicalEvent.eventVenue || "",
+    tagline: canonicalEvent.tagline || canonicalEvent.subtitle || "",
+  } : getEventFromFormStrict(form);
 
-  // resolve logo using admin-config, then passed logoUrl
+  // resolve logo using admin-config (trying backend + frontend) then passed logoUrl
   let adminLogo = "";
-  try {
-    adminLogo = await fetchAdminLogo(effectiveFrontend);
-  } catch (e) {
-    adminLogo = "";
-  }
+  try { adminLogo = await fetchAdminLogo(effectiveFrontend); } catch (e) { adminLogo = ""; }
   const chosenLogoSource = adminLogo || logoUrl || "";
   const resolvedLogo = normalizeForEmailUrl(chosenLogoSource, effectiveFrontend) || "";
 
