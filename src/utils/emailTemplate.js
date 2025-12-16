@@ -1,9 +1,10 @@
 // Email template for ticket / e-badge delivery
+// Robust fetching of event details and admin logo that works in browser and server (Node).
 // - Resolves logo and other relative URLs using (in order):
-//     1) explicit frontendBase arg
-//     2) process.env.REACT_APP_API_BASE_URL or process.env.PUBLIC_BASE_URL (server/mailer)
-//     3) window.__PUBLIC_BASE__ (client runtime override)
-//     4) window.location.origin (client fallback)
+//   1) explicit frontendBase arg passed to buildTicketEmail
+//   2) process.env.FRONTEND_BASE or process.env.REACT_APP_API_BASE / REACT_APP_API_BASE_URL
+//   3) window.__FRONTEND_BASE__ (client runtime override)
+//   4) window.location.origin (client fallback)
 // - Never attaches images; only PDF (pdfBase64) is attached.
 
 function normalizeBase64(b) {
@@ -17,18 +18,129 @@ function normalizeBase64(b) {
 
 function getEnvFrontendBase() {
   try {
-    // Prefer explicit env var for public frontend base
     if (typeof process !== "undefined" && process.env) {
-      const env = process.env.FRONTEND_BASE || process.env.API_BASE || "";
+      const env =
+        process.env.FRONTEND_BASE ||
+        process.env.REACT_APP_API_BASE ||
+        process.env.REACT_APP_API_BASE_URL ||
+        process.env.PUBLIC_BASE_URL ||
+        "";
       if (env && String(env).trim()) return String(env).replace(/\/$/, "");
     }
   } catch (e) {}
   try {
-    // Runtime override in browser
     if (typeof window !== "undefined" && window.__FRONTEND_BASE__) {
       return String(window.__FRONTEND_BASE__).replace(/\/$/, "");
     }
   } catch (e) {}
+  return "";
+}
+
+function buildApiUrl(frontendBase, path) {
+  const base = String(
+    frontendBase ||
+      getEnvFrontendBase() ||
+      (typeof window !== "undefined" && window.location ? window.location.origin : "")
+  ).replace(/\/$/, "");
+  if (!path) return base || path;
+  if (/^https?:\/\//i.test(path)) return path;
+  if (path.startsWith("/")) return base ? base + path : path;
+  return base ? base + "/" + path.replace(/^\//, "") : path;
+}
+
+/**
+ * safeFetchJson(url, opts)
+ * - Uses global fetch if present, otherwise attempts to require('node-fetch').
+ * - Reads response text and:
+ *    - If content-type indicates JSON, parses and returns it (throws on parse error).
+ *    - If not JSON, tries JSON.parse on text; if parse fails returns null (caller will fallback).
+ * - On non-2xx responses throws an Error including a snippet of response body to aid debugging.
+ */
+async function safeFetchJson(url, opts = {}) {
+  let _fetch = typeof fetch !== "undefined" ? fetch : null;
+  if (!_fetch) {
+    // Attempt to load node-fetch dynamically for Node environments (CJS)
+    try {
+      // eslint-disable-next-line global-require
+      const nf = require("node-fetch");
+      // node-fetch v3 is ESM default export; handle both shapes
+      _fetch = nf && nf.default ? nf.default : nf;
+    } catch (e) {
+      throw new Error("fetch is not available in this environment. Install node-fetch or use Node 18+.");
+    }
+  }
+
+  const res = await _fetch(url, opts);
+  const headers = res.headers || {};
+  // Normalize getting content-type for both node-fetch and browser
+  const ct = (typeof headers.get === "function" ? headers.get("content-type") : headers["content-type"]) || "";
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    const snippet = text ? text.slice(0, 1000) : "";
+    const err = new Error(`Request failed ${res.status} ${res.statusText || ""} - ${snippet}`);
+    err.status = res.status;
+    throw err;
+  }
+  const lower = (ct || "").toLowerCase();
+  if (lower.includes("application/json") || lower.includes("application/ld+json") || lower.includes("text/json")) {
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error("Invalid JSON response: " + (e && e.message));
+    }
+  }
+  // Try to parse text as JSON even if content-type wrong (some servers mis-set headers)
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Non-JSON (HTML or plain) — return null to let caller fallback
+    return null;
+  }
+}
+
+/**
+ * Try to fetch canonical event-details from admin endpoint(s).
+ * Tries these in order (resolved via buildApiUrl):
+ *   /api/configs/event-details
+ *   /api/event-details
+ * Also tries absolute forms if frontendBase provided.
+ */
+async function fetchCanonicalEventDetails(frontendBase) {
+  const paths = ["/api/configs/event-details", "/api/event-details"];
+  for (const p of paths) {
+    const u = buildApiUrl(frontendBase, p) + (p.includes("?") ? "&" : "?") + "cb=" + Date.now();
+    try {
+      const js = await safeFetchJson(u, { headers: { Accept: "application/json" } });
+      if (!js) continue;
+      const val = js && js.value !== undefined ? js.value : js;
+      if (val && typeof val === "object" && Object.keys(val).length) return val;
+    } catch (e) {
+      // try next path
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
+ * Try to fetch admin-config logo from preferred endpoints.
+ * Returns first found logo URL string, or empty string.
+ */
+async function fetchAdminLogo(frontendBase) {
+  const paths = ["/api/admin-config", "/api/admin/logo-url"];
+  for (const p of paths) {
+    const u = buildApiUrl(frontendBase, p) + (p.includes("?") ? "&" : "?") + "cb=" + Date.now();
+    try {
+      const js = await safeFetchJson(u, { headers: { Accept: "application/json" } });
+      if (!js) continue;
+      if (js.logoUrl) return js.logoUrl;
+      if (js.logo_url) return js.logo_url;
+      if (js.url) return js.url;
+      if (typeof js === "string" && js.trim()) return js.trim();
+    } catch (e) {
+      continue;
+    }
+  }
   return "";
 }
 
@@ -38,9 +150,7 @@ function normalizeForEmailUrl(url, frontendBase) {
   if (!s) return "";
   if (s.startsWith("data:")) return s;
   if (/^https?:\/\//i.test(s)) return s;
-
-  const envBase = getEnvFrontendBase();
-  const base = String(frontendBase || envBase || (typeof window !== "undefined" && window.location ? window.location.origin : "")).replace(/\/$/, "");
+  const base = buildApiUrl(frontendBase, "/").replace(/\/$/, "");
   if (!base) return s;
   if (s.startsWith("/")) return base + s;
   return base + "/" + s.replace(/^\//, "");
@@ -84,95 +194,12 @@ function getEventFromFormStrict(form) {
 }
 
 /**
- * Try to fetch canonical event-details from the admin endpoint(s).
+ * buildTicketEmail(...)
+ * - frontendBase: pass explicit base when calling from server (e.g. process.env.FRONTEND_BASE)
+ * - best-effort fetch of canonical event details and admin logo.
  */
-async function fetchCanonicalEventDetails(frontendBase) {
-  const tryUrls = [];
-  tryUrls.push("/api/configs/event-details");
-  tryUrls.push("/api/event-details");
-  if (frontendBase) {
-    const base = String(frontendBase).replace(/\/$/, "");
-    tryUrls.push(base + "/api/configs/event-details");
-    tryUrls.push(base + "/api/event-details");
-  } else {
-    const envBase = getEnvFrontendBase();
-    if (envBase) {
-      tryUrls.push(envBase + "/api/configs/event-details");
-      tryUrls.push(envBase + "/api/event-details");
-    }
-  }
-
-  // Use global fetch in browsers / Node 18+. This file intentionally avoids referencing node-fetch
-  // at build-time to prevent bundlers from trying to resolve it.
-  let _fetch = (typeof fetch !== "undefined") ? fetch : null;
-  if (!_fetch) return null;
-
-  for (const u of tryUrls) {
-    try {
-      const res = await _fetch(u + (u.includes("?") ? "&" : "?") + "cb=" + Date.now(), { headers: { Accept: "application/json" } });
-      if (!res) continue;
-      let js = null;
-      try { js = await res.json(); } catch (e) {
-        try {
-          const txt = await res.text();
-          js = txt ? JSON.parse(txt) : null;
-        } catch (e2) { js = null; }
-      }
-      if (!js) continue;
-      const val = js && js.value !== undefined ? js.value : js;
-      if (val && typeof val === "object" && Object.keys(val).length) return val;
-    } catch (e) { continue; }
-  }
-  return null;
-}
-
-/**
- * Try to fetch admin-config logo (preferred source for logo):
- * - /api/admin-config (returns { logoUrl, primaryColor }) OR
- * - /api/admin/logo-url (legacy)
- *
- * IMPORTANT: dynamic import or require of node-fetch would trigger bundlers to try resolving it,
- * so here we only use the global fetch. Server-side environments (Node <18) should provide a global
- * fetch (Node 18+) or you should polyfill/implement fetch (e.g. globalThis.fetch = (await import('node-fetch')).default).
- */
-async function fetchAdminLogo(frontendBase) {
-  const tryUrls = [];
-  tryUrls.push("/api/admin-config"); // canonical
-
-  if (frontendBase) {
-    const base = String(frontendBase).replace(/\/$/, "");
-    tryUrls.push(base + "/api/admin-config");
-  } else {
-    const envBase = getEnvFrontendBase();
-    if (envBase) {
-      tryUrls.push(envBase + "/api/admin-config");
-    }
-  }
-
-  // Prefer global fetch (browser or Node 18+). Do NOT require('node-fetch') here to avoid bundler resolution.
-  let _fetch = (typeof fetch !== "undefined") ? fetch : null;
-  if (!_fetch) return "";
-
-  for (const u of tryUrls) {
-    try {
-      const res = await _fetch(u + (u.includes("?") ? "&" : "?") + "cb=" + Date.now(), { headers: { Accept: "application/json" } });
-      if (!res) continue;
-      let js = null;
-      try { js = await res.json(); } catch { js = null; }
-      if (!js) continue;
-      if (js.logoUrl) return js.logoUrl;
-      if (js.logo_url) return js.logo_url;
-      if (js.url) return js.url;
-      if (typeof js === "string" && js.trim()) return js.trim();
-    } catch (e) { continue; }
-  }
-
-  return "";
-}
-
-
 export async function buildTicketEmail({
-  frontendBase = "", // if empty we'll use env or window origin
+  frontendBase = "",
   entity = "attendee",
   id = "",
   name = "",
@@ -181,27 +208,36 @@ export async function buildTicketEmail({
   badgePreviewUrl = "",
   downloadUrl = "",
   upgradeUrl = "",
-  logoUrl = "", // fallback if admin-config not available
+  logoUrl = "",
   form = null,
   pdfBase64 = null,
 } = {}) {
-  const envBase = getEnvFrontendBase();
-  const effectiveFrontend = String(frontendBase || envBase || (typeof window !== "undefined" && window.location ? window.location.origin : "")).replace(/\/$/, "");
+  const effectiveFrontend = String(frontendBase || getEnvFrontendBase() || (typeof window !== "undefined" && window.location ? window.location.origin : "")).replace(/\/$/, "");
 
-  // canonical event details
+  // canonical event details (best-effort)
   let canonicalEvent = null;
-  try { canonicalEvent = await fetchCanonicalEventDetails(effectiveFrontend || undefined); } catch (e) { canonicalEvent = null; }
-  const ev = canonicalEvent && typeof canonicalEvent === "object" ? {
-    name: canonicalEvent.name || canonicalEvent.eventName || canonicalEvent.title || "",
-    dates: canonicalEvent.dates || canonicalEvent.date || canonicalEvent.eventDates || "",
-    time: canonicalEvent.time || canonicalEvent.startTime || canonicalEvent.eventTime || "",
-    venue: canonicalEvent.venue || canonicalEvent.location || canonicalEvent.eventVenue || "",
-    tagline: canonicalEvent.tagline || canonicalEvent.subtitle || "",
-  } : getEventFromFormStrict(form);
+  try {
+    canonicalEvent = await fetchCanonicalEventDetails(effectiveFrontend);
+  } catch (e) {
+    canonicalEvent = null;
+  }
+  const ev = canonicalEvent && typeof canonicalEvent === "object"
+    ? {
+        name: canonicalEvent.name || canonicalEvent.eventName || canonicalEvent.title || "",
+        dates: canonicalEvent.dates || canonicalEvent.date || canonicalEvent.eventDates || "",
+        time: canonicalEvent.time || canonicalEvent.startTime || canonicalEvent.eventTime || "",
+        venue: canonicalEvent.venue || canonicalEvent.location || canonicalEvent.eventVenue || "",
+        tagline: canonicalEvent.tagline || canonicalEvent.subtitle || "",
+      }
+    : getEventFromFormStrict(form);
 
   // resolve logo using admin-config, then passed logoUrl
   let adminLogo = "";
-  try { adminLogo = await fetchAdminLogo(effectiveFrontend || undefined); } catch (e) { adminLogo = ""; }
+  try {
+    adminLogo = await fetchAdminLogo(effectiveFrontend);
+  } catch (e) {
+    adminLogo = "";
+  }
   const chosenLogoSource = adminLogo || logoUrl || "";
   const resolvedLogo = normalizeForEmailUrl(chosenLogoSource, effectiveFrontend) || "";
 
