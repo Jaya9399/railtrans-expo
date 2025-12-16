@@ -8,16 +8,15 @@ import { readRegistrationCache, writeRegistrationCache } from "../utils/registra
 
 /*
  TicketUpgrade.jsx (manual-payment-only)
- - The legacy "Pay & Upgrade" button has been removed.
- - ManualPaymentStep remains and handles the provider checkout or manual proof flow.
- - ManualPaymentStep must call onTxIdChange(txId) when it receives a provider transaction id
+ - Uses unified backend upgrade endpoint: POST /api/tickets/upgrade
+ - ManualPaymentStep must call onTxIdChange(txId) when provider returns tx id
    and call onProofUpload() when payment is confirmed so this page can finalize the upgrade.
  - finalizeUpgrade performs the server update and sends a no-attachment email with a frontend
    download link.
- - Fix: Apply Upgrade (Free) is only enabled when:
+ - Free upgrade enabled only when:
      * a category is selected
-     * the selected category is different from the visitor's current category
-     * the selected category is free (total === 0)
+     * selected category is different from current
+     * selected category is free (total === 0)
 */
 
 const LOCAL_PRICE_KEY = "ticket_categories_local_v1";
@@ -57,7 +56,7 @@ export default function TicketUpgrade() {
 
   const entity = (search.get("entity") || "visitors").toString().toLowerCase();
   const id = search.get("id") || search.get("visitorId") || "";
-  const providedTicketCode = search.get("ticket_code") || "";
+  const providedTicketCode = search.get("ticket_code") || search.get("ticket") || "";
 
   const [loading, setLoading] = useState(true);
   const [record, setRecord] = useState(null);
@@ -107,7 +106,7 @@ export default function TicketUpgrade() {
             if (found) {
               const price = Number(found.price || 0);
               const gst = Number(found.gst || 0);
-              setSelectedMeta({ price, gstRate: gst, gstAmount: Math.round(price * gst), total: Math.round(price + price * gst), label: found.label || found.value });
+              if (mounted) setSelectedMeta({ price, gstRate: gst, gstAmount: Math.round(price * gst), total: Math.round(price + price * gst), label: found.label || found.value });
             }
           }
           setLoading(false);
@@ -186,49 +185,54 @@ export default function TicketUpgrade() {
     try {
       // determine best target id (use id from query or record)
       const targetId = id || (record && (record.id || record._id || record.insertedId)) || "";
-      const upgradePayload = { newCategory: selectedCategory, txId: tx, reference, proofUrl, amount: selectedMeta.total || selectedMeta.price || 0 };
+      const payload = {
+        entity_type: "visitors",
+        entity_id: targetId || providedTicketCode || null,
+        new_category: selectedCategory,
+        amount: selectedMeta.total || selectedMeta.price || 0,
+        email: record?.email || null,
+        // include payment/proof details for manual flow
+        txId: tx,
+        reference,
+        proofUrl,
+        method // informational
+      };
 
-      let res = null;
-      // If we have a numeric/identifier targetId, try the dedicated endpoint
-      if (targetId) {
-        res = await fetch(`/api/visitors/${encodeURIComponent(String(targetId))}/upgrade`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(upgradePayload) }).catch(()=>null);
-      }
+      // Call unified upgrade endpoint
+      const res = await fetch("/api/tickets/upgrade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(() => null);
 
-      // fallback to a PUT by id (if targetId available) or POST to a search/upgrade endpoint if your backend supports it
       if (!res || !res.ok) {
-        if (targetId) {
-          res = await fetch(`/api/visitors/${encodeURIComponent(String(targetId))}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket_category: selectedCategory, txId: tx, payment_reference: reference, payment_proof_url: proofUrl }) }).catch(()=>null);
-        } else {
-          // As last resort, try a POST to upgrade-by-ticket-code endpoint if available
-          res = await fetch(`/api/visitors/upgrade-by-code`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket_code: providedTicketCode, ticket_category: selectedCategory, txId: tx, reference, proofUrl }) }).catch(()=>null);
-        }
-      }
-
-      if (!res || !res.ok) {
-        const bodyText = res ? await res.text().catch(()=>null) : null;
+        const bodyText = res ? await res.text().catch(() => "") : "";
         setError(`Upgrade failed: ${String(bodyText) || "server error"}`);
         setProcessing(false);
         return null;
       }
 
-      // fetch fresh record if possible
+      const js = await res.json().catch(() => ({}));
+
+      // try to fetch fresh visitor record if we have a numeric ID
       let updated = null;
       try {
         if (targetId) {
           const r = await fetch(`/api/visitors/${encodeURIComponent(String(targetId))}`);
-          if (r.ok) updated = await r.json().catch(()=>null);
+          if (r.ok) updated = await r.json().catch(() => null);
         } else if (providedTicketCode) {
           const r = await fetch(`/api/visitors?where=${encodeURIComponent(`ticket_code=${providedTicketCode}`)}&limit=1`);
           if (r.ok) {
-            const arr = await r.json().catch(()=>[]);
+            const arr = await r.json().catch(() => []);
             updated = Array.isArray(arr) ? (arr[0] || null) : arr;
           }
         }
       } catch (e) { /* ignore */ }
 
-      const finalRecord = updated || { ...(record || {}), ticket_category: selectedCategory, ticket_code: (record && (record.ticket_code || record.ticketCode)) || providedTicketCode || "" };
+      // Determine final record: prefer updated from visitors API, else merge
+      const finalRecord = updated || { ...(record || {}), ticket_category: selectedCategory, ticket_code: (js.ticket_code || record && (record.ticket_code || record.ticketCode) || providedTicketCode) };
 
-      // write updated record to cache and notify
+      // cache the updated record
       try {
         const cacheId = targetId || finalRecord.id || finalRecord._id || finalRecord.insertedId || providedTicketCode || "";
         if (cacheId) writeRegistrationCache("visitors", cacheId, finalRecord);
@@ -241,10 +245,10 @@ export default function TicketUpgrade() {
         const emailModel = {
           frontendBase,
           entity: "visitors",
-          id: targetId,
+          id: targetId || providedTicketCode || "",
           name: finalRecord?.name || "",
           company: finalRecord?.company || "",
-          ticket_code: finalRecord?.ticket_code || finalRecord?.ticketCode || providedTicketCode || "",
+          ticket_code: finalRecord?.ticket_code || finalRecord?.ticketCode || js.ticket_code || providedTicketCode || "",
           ticket_category: selectedCategory,
           bannerUrl,
           badgePreviewUrl: "",
@@ -256,6 +260,9 @@ export default function TicketUpgrade() {
         // best-effort send (no attachments)
         await fetch("/api/mailer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(mailPayload) }).catch(()=>null);
       } catch (e) { console.warn("mail send failed (no attachments)", e); }
+
+      // Clear manual proof file after successful upgrade
+      setManualProofFile(null);
 
       // update UI state and finish
       setRecord(finalRecord);
@@ -387,7 +394,7 @@ export default function TicketUpgrade() {
 
             <div className="mb-6">
               <div className="text-lg font-semibold mb-3">Choose a new ticket category</div>
-              <TicketCategorySelector role="visitors" value={selectedCategory} onChange={onCategoryChange} categories={availableCategories} />
+              <TicketCategorySelector role="visitors" value={selectedCategory} onChange={onCategoryChange} categories={availableCategories} disabled={processing} />
             </div>
 
             <div className="mb-4">

@@ -99,6 +99,17 @@ export default function DashboardContent() {
   const mountedRef = useRef(true);
   const apiMap = useRef(apiEndpoints.reduce((a, e) => { a[e.label.toLowerCase()] = e.url; a[e.label.toLowerCase() + "_config"] = e.configUrl; return a; }, {}));
 
+  // Build API base from window.__API_BASE__ or env var (REACT_APP_API_BASE). If empty, fallback to relative paths.
+  const RAW_API_BASE = (typeof window !== "undefined" && (window.__API_BASE__ || "")) || (process.env.REACT_APP_API_BASE || "");
+  const API_BASE = String(RAW_API_BASE || "").replace(/\/$/, "");
+
+  function buildApiUrl(path) {
+    if (!path) return API_BASE || path;
+    if (/^https?:\/\//i.test(path)) return path;
+    if (path.startsWith("/")) return `${API_BASE}${path}`;
+    return `${API_BASE}/${path}`;
+  }
+
   const parseErrorBody = useCallback(async (res) => {
     try {
       const txt = await res.text();
@@ -111,11 +122,14 @@ export default function DashboardContent() {
     await Promise.all(apiEndpoints.map(async ({ label, configUrl }) => {
       const k = label.toLowerCase();
       if (!configUrl) { out[k] = null; return; }
-      try { const res = await fetch(configUrl); out[k] = await res.json().catch(() => null); } catch (e) { console.warn("fetch config", k, e); out[k] = null; }
+      try {
+        const res = await fetch(buildApiUrl(configUrl));
+        out[k] = await res.json().catch(() => null);
+      } catch (e) { console.warn("fetch config", k, e); out[k] = null; }
     }));
     if (mountedRef.current) setConfigs(out);
     return out;
-  }, []);
+  }, [API_BASE]); // API_BASE included by closure
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -124,8 +138,9 @@ export default function DashboardContent() {
       const results = {};
       await Promise.all(apiEndpoints.map(async ({ label, url }) => {
         try {
-          const res = await fetch(url);
+          const res = await fetch(buildApiUrl(url));
           let j = await res.json().catch(() => null);
+          // Some APIs return [rows, count] in older adapters; normalize.
           if (Array.isArray(j) && j.length === 2 && Array.isArray(j[0])) j = j[0];
           if (j && typeof j === "object" && !Array.isArray(j)) j = j.data || j.rows || j;
           results[label.toLowerCase()] = normalizeData(j).map(sanitizeRow);
@@ -136,7 +151,7 @@ export default function DashboardContent() {
       setLoading(false);
       setPageState(prev => { const next = { ...prev }; TABLE_KEYS.forEach((k) => { if (!next[k]) next[k] = 1; }); return next; });
     } catch (e) { console.error(e); setReport({}); setLoading(false); }
-  }, [fetchConfigs]);
+  }, [fetchConfigs, API_BASE]);
 
   useEffect(() => { mountedRef.current = true; fetchAll(); return () => { mountedRef.current = false; }; }, [fetchAll]);
 
@@ -289,12 +304,11 @@ export default function DashboardContent() {
         text: finalText,
         html: finalHtml,
         attachments: safeAttachments,
-        // Do not include logoUrl here so server-side mailer decides how to inline or reference logo
       };
 
       console.debug("[sendTemplatedEmail] mailPayload preview:", { to: mailPayload.to, subject: mailPayload.subject, attachments: mailPayload.attachments.length });
 
-      const r = await fetch("/api/mailer", { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(mailPayload) });
+      const r = await fetch(buildApiUrl("/api/mailer".replace(/^\/+/, "/")), { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(mailPayload) });
       const body = await parseErrorBody(r);
       if (!r.ok) {
         console.warn("[sendTemplatedEmail] mailer responded non-ok:", body);
@@ -304,7 +318,7 @@ export default function DashboardContent() {
       console.debug("[sendTemplatedEmail] mailer success", resJson);
       return { ok: true, info: resJson };
     } catch (e) { console.warn("[sendTemplatedEmail] exception", e); return { ok: false, reason: "exception", error: String(e) }; }
-  }, [configs, parseErrorBody]);
+  }, [configs, parseErrorBody, API_BASE]);
 
   // --- generate ticket (server endpoints optional). If not available, create client ticket_code and PATCH entity.
   const generateAndEmailTicket = useCallback(async ({ tableKey, row, premium = false }) => {
@@ -331,7 +345,7 @@ export default function DashboardContent() {
         ];
         for (const url of candidates) {
           try {
-            const r = await fetch(url, { method: "POST" });
+            const r = await fetch(buildApiUrl(url));
             if (!r.ok) continue;
             const js = await r.json().catch(() => null);
             const maybe = js && (js.ticket_code || js.code || js.ticketCode || (js.data && (js.data.ticket_code || js.data.code)));
@@ -344,7 +358,7 @@ export default function DashboardContent() {
       if (!ticket_code) {
         ticket_code = String(Math.floor(100000 + Math.random() * 900000));
         try {
-          await fetch(`${base}/${encodeURIComponent(String(id))}`, {
+          await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(id))}`), {
             method: "PUT",
             headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
             body: JSON.stringify({ ticket_code }),
@@ -355,14 +369,12 @@ export default function DashboardContent() {
       // fetch latest row
       let workingRow = row;
       try {
-        const r2 = await fetch(`${base}/${encodeURIComponent(String(id))}`);
+        const r2 = await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(id))}`));
         if (r2.ok) {
           const j2 = await r2.json().catch(() => null);
           workingRow = sanitizeRow(j2 || {});
         }
       } catch(e){}
-
-      // DO NOT attach eventDetails here — template will fetch canonical event-details itself
 
       // send email; pass premium flag so template hides upgrade button
       const mailResult = await sendTemplatedEmail({ entity: tableKey, id: String(id), row: workingRow, premium });
@@ -380,7 +392,7 @@ export default function DashboardContent() {
       setActionMsg("Generation failed");
       return { ok: false, error: String(e) };
     }
-  }, [sendTemplatedEmail, pendingPremium]);
+  }, [sendTemplatedEmail, pendingPremium, API_BASE]);
 
   // --- Handlers (create, update, delete, refresh) ---
   const handleEdit = useCallback((table, row) => {
@@ -455,7 +467,7 @@ export default function DashboardContent() {
       if (!id && deleteRow._id && typeof deleteRow._id === "object") id = deleteRow._id.$oid || deleteRow._id.toString() || "";
       if (!id) { for (const k of Object.keys(deleteRow || {})) { if (/id$/i.test(k) && deleteRow[k]) { id = deleteRow[k]; break; } } }
       if (!id) { setActionMsg("Delete failed: no id found"); return; }
-      const res = await fetch(`${base}/${encodeURIComponent(String(id))}`, { method: "DELETE", headers: { "ngrok-skip-browser-warning": "69420" } });
+      const res = await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(id))}`), { method: "DELETE", headers: { "ngrok-skip-browser-warning": "69420" } });
       let data = null; try { data = await res.json().catch(() => null); } catch {}
       if (res.ok && (data === null || data.success !== false)) {
         setReport(prev => {
@@ -472,7 +484,7 @@ export default function DashboardContent() {
         setActionMsg(`Delete failed: ${JSON.stringify(body)}`);
       }
     } catch (e) { console.error(e); setActionMsg("Delete failed"); } finally { setDeleteRow(null); setDeleteTable(""); }
-  }, [deleteRow, deleteTable, parseErrorBody]);
+  }, [deleteRow, deleteTable, parseErrorBody, API_BASE]);
 
   const handleRefreshRow = useCallback(async (tableKey, row) => {
     setActionMsg("");
@@ -482,14 +494,14 @@ export default function DashboardContent() {
       if (!id) { setActionMsg("Cannot refresh: no id"); return; }
       const base = apiMap.current[tableKey];
       if (!base) { setActionMsg("Unknown table"); return; }
-      const res = await fetch(`${base}/${encodeURIComponent(String(id))}`);
+      const res = await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(id))}`));
       if (!res.ok) { const body = await parseErrorBody(res); setActionMsg(`Refresh failed: ${JSON.stringify(body)}`); return; }
       const json = await res.json().catch(() => null);
       const sanitized = sanitizeRow(json || {});
       setReport(prev => ({ ...prev, [tableKey]: (prev[tableKey] || []).map(r => String(r.id) === String(id) ? sanitized : r) }));
       setActionMsg("Refreshed");
     } catch (e) { console.error(e); setActionMsg("Refresh failed"); }
-  }, [parseErrorBody]);
+  }, [parseErrorBody, API_BASE]);
 
   // CREATE/UPDATE flow with robust id detection and email sending
   const handleEditSave = useCallback(async (edited) => {
@@ -503,7 +515,7 @@ export default function DashboardContent() {
         // create payload as-is (do NOT attach eventDetails)
         const payload = { ...edited };
 
-        const res = await fetch(base, { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
+        const res = await fetch(buildApiUrl(base), { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
         const createdRaw = await res.json().catch(() => null);
         if (!res.ok) {
           const body = createdRaw || await parseErrorBody(res);
@@ -522,7 +534,7 @@ export default function DashboardContent() {
         // if we have id, fetch the fresh row to ensure canonical shape
         if (!createdRow && newId) {
           try {
-            const r = await fetch(`${base}/${encodeURIComponent(String(newId))}`);
+            const r = await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(newId))}`));
             if (r.ok) {
               const j = await r.json().catch(() => null);
               createdRow = sanitizeRow(j || {});
@@ -559,7 +571,7 @@ export default function DashboardContent() {
         let id = edited.id || edited._id;
         if (!id && edited._id && typeof edited.__id === "object") id = edited._id.$oid || edited._id.toString() || "";
         if (!id) { setActionMsg("Missing id for update"); return; }
-        const res = await fetch(`${base}/${encodeURIComponent(String(id))}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(edited) });
+        const res = await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(id))}`), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(edited) });
         if (!res.ok) {
           const body = await parseErrorBody(res);
           setActionMsg(`Update failed: ${JSON.stringify(body)}`);
@@ -567,7 +579,7 @@ export default function DashboardContent() {
         }
         // fetch updated row and replace
         try {
-          const r = await fetch(`${base}/${encodeURIComponent(String(id))}`);
+          const r = await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(id))}`));
           if (r.ok) {
             const j = await r.json().catch(() => null);
             const updated = sanitizeRow(j || {});
@@ -583,7 +595,7 @@ export default function DashboardContent() {
         }
       }
     } catch (e) { console.error(e); setActionMsg("Save failed"); } finally { setIsCreating(false); fetchAll(); }
-  }, [editTable, isCreating, fetchAll, parseErrorBody, sendTemplatedEmail, newIsPremium]);
+  }, [editTable, isCreating, fetchAll, parseErrorBody, sendTemplatedEmail, newIsPremium, API_BASE]);
 
   const stats = useMemo(() => ({
     visitors: (report.visitors || []).length,
