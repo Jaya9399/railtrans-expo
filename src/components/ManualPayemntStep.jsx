@@ -3,14 +3,12 @@ import React, { useEffect, useRef, useState } from "react";
 /**
  * ManualPaymentStep (Instamojo-ready)
  *
- * - Calls POST /api/payment/create-order with amount, reference_id and metadata.
- * - Backend returns { success: true, checkoutUrl, providerOrderId, raw }.
+ * - Calls POST /api/payment/create-order on YOUR backend with { amount, reference_id, metadata... }.
+ * - Backend calls the provider (Instamojo) and returns { success, checkoutUrl, providerOrderId, raw }.
  * - Polls GET /api/payment/status?reference_id=... to detect success.
  *
- * Notes:
- * - Pass `apiBase` prop to point to your backend origin (e.g. "https://api.example.com").
- *   If not provided, the component will try process.env.REACT_APP_API_BASE or window.__BACKEND_ORIGIN__.
- * - Make sure your backend has CORS enabled for the frontend origin if apiBase is a different origin.
+ * IMPORTANT: configure REACT_APP_API_BASE or window.__API_BASE__ to point to your backend origin.
+ * Do NOT set API_BASE to the payment provider URL.
  */
 
 export default function ManualPaymentStep({
@@ -23,7 +21,6 @@ export default function ManualPaymentStep({
   setProofFile,
   apiBase, // optional prop: backend origin (e.g. "https://api.example.com")
 }) {
-  const [loading] = useState(false);
   const [payLoading, setPayLoading] = useState(false);
   const [error, setError] = useState("");
   const [checkoutOpened, setCheckoutOpened] = useState(false);
@@ -43,14 +40,25 @@ export default function ManualPaymentStep({
   }, []);
 
   // derive backend base URL: prop -> env -> window global -> empty (relative)
-  const backendBase =
+  const backendBaseCandidate =
     (apiBase && String(apiBase).trim()) ||
     (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE) ||
-    (typeof window !== "undefined" && window.__BACKEND_ORIGIN__) ||
+    (typeof window !== "undefined" && window.__API_BASE__) ||
     "";
 
+  // Protect: if candidate looks like a payment provider host (instamojo/irmaindia/etc), ignore it.
+  function likelyProviderHost(h) {
+    if (!h) return false;
+    const lc = String(h).toLowerCase();
+    return lc.includes("instamojo") || lc.includes("irmaindia") || lc.includes("razorpay") || lc.includes("paytm") || lc.includes("stripe") || lc.includes("paypal");
+  }
+
+  const backendBase = likelyProviderHost(backendBaseCandidate) ? "" : backendBaseCandidate;
+
   function makeUrl(path) {
-    if (!backendBase) return path; // relative
+    // prefer relative path if backendBase empty — this will use the same origin (good with proxies)
+    if (!backendBase) return path.startsWith("/") ? path : `/${path}`;
+    // ensure path prefix
     return `${String(backendBase).replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
@@ -59,9 +67,10 @@ export default function ManualPaymentStep({
     setPayLoading(true);
 
     try {
+      // build a reference id
       const verifiedEmail =
         (typeof window !== "undefined" && (localStorage.getItem("verifiedEmail") || sessionStorage.getItem("verifiedEmail"))) || "";
-      const referenceId = verifiedEmail || `guest-${Date.now()}`;
+      const referenceId = (verifiedEmail && verifiedEmail.trim()) || `guest-${Date.now()}`;
 
       const payload = {
         amount: ticketPrice,
@@ -72,33 +81,48 @@ export default function ManualPaymentStep({
           ticketType,
           referenceId,
           buyer_name: (typeof window !== "undefined" && localStorage.getItem("visitorName")) || "",
-          email: verifiedEmail || "",
+          email: (verifiedEmail && verifiedEmail.trim()) || "",
         },
       };
 
       const endpoint = makeUrl("/api/payment/create-order");
       console.log("[ManualPaymentStep] createOrder ->", endpoint, "payload:", payload);
 
+      // If backendBaseCandidate looked like a provider host, show a clear message
+      if (!backendBase && backendBaseCandidate && likelyProviderHost(backendBaseCandidate)) {
+        const msg = `Frontend API base resolved to a payment provider host (${backendBaseCandidate}). Update REACT_APP_API_BASE or window.__API_BASE__ to point to your backend origin. Sending request to relative path instead.`;
+        console.warn("[ManualPaymentStep] " + msg);
+      }
+
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" }, // keep simple to avoid extra preflight headers
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        credentials: "include", // optional: send cookies if your backend uses them
+        credentials: "include",
       });
 
+      // attempt to parse JSON, but capture raw text if non-JSON
       let data = null;
+      let rawText = null;
       try {
-        data = await res.json();
+        rawText = await res.text();
+        try { data = JSON.parse(rawText); } catch { data = null; }
       } catch (e) {
+        rawText = null;
         data = null;
       }
-      console.log("[ManualPaymentStep] create-order response:", res.status, data);
+      console.log("[ManualPaymentStep] create-order response:", res.status, data || rawText);
 
       if (!res.ok || !data || !data.success) {
-        // present more helpful error message if provider returned something
+        // helpful error: if provider host got the request directly you often get HTML or 405 text
+        const providerHint = backendBaseCandidate && likelyProviderHost(backendBaseCandidate)
+          ? "It looks like your frontend is configured to call the payment provider directly. Make sure REACT_APP_API_BASE / window.__API_BASE__ point to your backend (not the provider)."
+          : null;
         const errMsg =
           (data && (data.error || data.provider_error || data.details || JSON.stringify(data))) ||
-          `Failed to create payment order (status ${res.status})`;
+          (rawText && rawText.slice(0, 200)) ||
+          `Failed to create payment order (status ${res.status})` +
+          (providerHint ? " - " + providerHint : "");
         setError(errMsg);
         setPayLoading(false);
         return;
@@ -111,7 +135,7 @@ export default function ManualPaymentStep({
         return;
       }
 
-      // open checkout in new window/tab
+      // open checkout
       const w = window.open(checkoutUrl, "_blank", "noopener,noreferrer");
       if (!w) {
         setError("Could not open payment window. Please allow popups.");
@@ -131,7 +155,6 @@ export default function ManualPaymentStep({
           const statusUrl = makeUrl(`/api/payment/status?reference_id=${encodeURIComponent(reference_id)}`);
           const st = await fetch(statusUrl, { method: "GET", credentials: "include" });
           if (!st.ok) {
-            // transient server issue — keep trying
             console.warn("[ManualPaymentStep] status fetch not ok:", st.status);
             return;
           }
@@ -144,22 +167,16 @@ export default function ManualPaymentStep({
             setPaymentStatus("paid");
             const rec = js.record || js.data || js.payment || js;
             const providerPaymentId = rec?.provider_payment_id || rec?.payment_id || rec?.id || null;
-            const finalTx = providerPaymentId || `instamojo-${Date.now()}`;
-            try {
-              onTxIdChange && onTxIdChange(finalTx);
-            } catch (_) {}
-            try {
-              if (w && !w.closed) w.close();
-            } catch (_) {}
+            const finalTx = providerPaymentId || `provider-${Date.now()}`;
+            try { onTxIdChange && onTxIdChange(finalTx); } catch (_) {}
+            try { if (w && !w.closed) w.close(); } catch (_) {}
             onProofUpload && onProofUpload();
           } else if (["failed", "cancelled", "void"].includes(status)) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             setPaymentStatus("failed");
             setError("Payment failed or cancelled. You may retry.");
-            try {
-              if (w && !w.closed) w.close();
-            } catch (_) {}
+            try { if (w && !w.closed) w.close(); } catch (_) {}
           } else {
             if (attempts > 40) {
               clearInterval(pollRef.current);
@@ -169,7 +186,6 @@ export default function ManualPaymentStep({
             }
           }
         } catch (e) {
-          // ignore transient errors; continue polling
           console.warn("[ManualPaymentStep] polling error:", e && e.message);
         }
       }, 3000);
@@ -213,7 +229,7 @@ export default function ManualPaymentStep({
 
       <hr className="my-4" />
 
-      {error && <div className="mt-4 text-red-600 font-medium">{error}</div>}
+      {error && <div className="mt-4 text-red-600 font-medium whitespace-pre-wrap">{error}</div>}
       <div className="mt-4 text-xs text-gray-500">
         If you pay online, the checkout will open in a new tab. After successful payment we will automatically continue the registration.
       </div>
