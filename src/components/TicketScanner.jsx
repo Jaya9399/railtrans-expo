@@ -2,29 +2,19 @@ import React, { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
 
 /*
-  TicketScanner (patched)
-  - Resolves backend using window.__API_BASE__ -> REACT_APP_API_BASE -> location.origin.
-  - Defaults validate path to /api/tickets/validate (plural).
-  - Logs the final request URL and server response (status + text/json).
-  - Shows useful UI hints when the resolved URL looks wrong.
+  TicketScanner (safe URL join + debug)
+  - Sanitizes window.__API_BASE__ to origin-only (strips any "/api..." path)
+  - Uses joinUrl() to avoid duplicate segments (prevents /validate/validate)
+  - Logs full request URL and response (status + body snippet)
 */
 
-function tryParseJsonSafe(str) {
-  try { return JSON.parse(str); } catch (e) { return null; }
-}
-function looksLikeBase64(s) {
-  return typeof s === "string" && /^[A-Za-z0-9+/=]+$/.test(s.replace(/\s+/g, "")) && s.length % 4 === 0;
-}
+function tryParseJsonSafe(str) { try { return JSON.parse(str); } catch (e) { return null; } }
+function looksLikeBase64(s) { return typeof s === "string" && /^[A-Za-z0-9+/=]+$/.test(s.replace(/\s+/g,"")) && s.length % 4 === 0; }
+
 function extractTicketIdFromObject(obj) {
   if (!obj || typeof obj !== "object") return null;
   const prefer = ["ticket_code","ticketCode","ticket_id","ticketId","ticket","code","c","id","t","tk"];
-  for (const k of prefer) {
-    if (Object.prototype.hasOwnProperty.call(obj, k)) {
-      const v = obj[k];
-      if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
-    }
-  }
-  // nested search
+  for (const k of prefer) if (Object.prototype.hasOwnProperty.call(obj, k)) { const v = obj[k]; if (v != null && String(v).trim()) return String(v).trim(); }
   for (const key of Object.keys(obj)) {
     const v = obj[key];
     if (v && typeof v === "object") {
@@ -35,47 +25,86 @@ function extractTicketIdFromObject(obj) {
   return null;
 }
 
+function tryParseTicketId(input) {
+  if (input == null) return null;
+  if (typeof input === "number") return String(input);
+  if (typeof input === "string") {
+    const s = input.trim();
+    if (!s) return null;
+    const parsed = tryParseJsonSafe(s);
+    if (parsed && typeof parsed === "object") {
+      const f = extractTicketIdFromObject(parsed);
+      if (f) return f;
+    }
+    if (looksLikeBase64(s)) {
+      try {
+        const dec = atob(s);
+        const p2 = tryParseJsonSafe(dec);
+        if (p2 && typeof p2 === "object") {
+          const f2 = extractTicketIdFromObject(p2);
+          if (f2) return f2;
+        }
+        const tok = dec.match(/[A-Za-z0-9\-_.]{3,64}/);
+        if (tok) return tok[0];
+        const dig = dec.match(/\d{3,12}/);
+        if (dig) return dig[0];
+      } catch (e) {}
+    }
+    const token = s.match(/[A-Za-z0-9\-_.]{3,64}/);
+    if (token) return token[0];
+    const digits = s.match(/\d{3,12}/);
+    if (digits) return digits[0];
+    return null;
+  }
+  if (typeof input === "object") {
+    return extractTicketIdFromObject(input);
+  }
+  return null;
+}
+
+/* ---- API base sanitization and URL join helpers ---- */
+function sanitizeApiBaseCandidate(candidate) {
+  if (!candidate) return "";
+  let s = String(candidate).trim();
+  // remove trailing slashes
+  s = s.replace(/\/+$/, "");
+  // if candidate contains "/api/" or ends with "/api" strip it (keep origin only)
+  const low = s.toLowerCase();
+  const idx = low.indexOf("/api/");
+  const idxExact = low.endsWith("/api") ? low.lastIndexOf("/api") : -1;
+  if (idx >= 0) {
+    const origin = s.slice(0, idx) || s;
+    console.warn(`[API_BASE] Stripped path from API_BASE candidate. Original: "${s}", using origin: "${origin}". Set window.__API_BASE__ to the backend origin (no "/api" path).`);
+    return origin;
+  }
+  if (idxExact >= 0) {
+    const origin = s.slice(0, idxExact) || s;
+    console.warn(`[API_BASE] Stripped trailing "/api" from API_BASE candidate. Original: "${s}", using origin: "${origin}".`);
+    return origin;
+  }
+  return s;
+}
 function resolveApiBase() {
-  // Prefer explicit global used elsewhere in your app
-  if (typeof window !== "undefined" && window.__API_BASE__) {
-    return String(window.__API_BASE__).replace(/\/$/, "");
-  }
-  // fallback env-style globals
-  if (typeof window !== "undefined" && window.__BACKEND_ORIGIN__) {
-    return String(window.__BACKEND_ORIGIN__).replace(/\/$/, "");
-  }
-  // fallback to build-time env (CRA)
-  if (typeof process !== "undefined" && process.env) {
-    const v = process.env.REACT_APP_API_BASE || process.env.API_BASE || "";
-    if (v) return String(v).replace(/\/$/, "");
-  }
-  // last resort: same origin
-  if (typeof window !== "undefined" && window.location && window.location.origin) {
-    return String(window.location.origin).replace(/\/$/, "");
-  }
+  try { if (typeof window !== "undefined" && window.__API_BASE__) return sanitizeApiBaseCandidate(window.__API_BASE__); } catch {}
+  try { if (typeof window !== "undefined" && window.__BACKEND_ORIGIN__) return sanitizeApiBaseCandidate(window.__BACKEND_ORIGIN__); } catch {}
+  try {
+    if (typeof process !== "undefined" && process.env) {
+      const v = process.env.REACT_APP_API_BASE || process.env.API_BASE || "";
+      if (v) return sanitizeApiBaseCandidate(v);
+    }
+  } catch {}
+  if (typeof window !== "undefined" && window.location && window.location.origin) return String(window.location.origin).replace(/\/$/, "");
   return "";
 }
-
-function resolveApiUrl(path) {
-  if (!path) return null;
-  if (/^https?:\/\//i.test(path)) return path;
-  const base = resolveApiBase();
+function joinUrl(base, path) {
   if (!base) return path.startsWith("/") ? path : `/${path}`;
-  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  const b = String(base).replace(/\/+$/, "");
+  const p = String(path || "").replace(/^\/+/, "");
+  return `${b}/${p}`;
 }
 
-export default function TicketScanner({
-  apiValidate = null,
-  apiPrint = null,
-  apiPath = null,
-  autoPrintOnValidate = false,
-}) {
-  // derive endpoints
-  const derivedValidate = apiValidate || (apiPath ? apiPath.replace(/\/scan\/?$/, "/validate") : null);
-  // default to plural "tickets" validate endpoint
-  const validateUrl = resolveApiUrl(derivedValidate || "/api/tickets/validate");
-  const printUrl = resolveApiUrl(apiPrint || (apiPath ? apiPath.replace(/\/scan\/?$/, "/print") : "/api/tickets/print"));
-
+/* ---------- component ---------- */
+export default function TicketScanner({ apiValidate=null, apiPrint=null, apiPath=null, autoPrintOnValidate=false }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const rafRef = useRef(null);
@@ -88,58 +117,49 @@ export default function TicketScanner({
   const [message, setMessage] = useState("Scanning for QR…");
   const [lastValidateRequest, setLastValidateRequest] = useState(null);
 
+  const apiBase = resolveApiBase();
+  const derivedValidate = apiValidate || (apiPath ? apiPath.replace(/\/scan\/?$/, "/validate") : null);
+  const validateUrl = derivedValidate ? ( /^https?:\/\//i.test(derivedValidate) ? derivedValidate : joinUrl(apiBase, derivedValidate) ) : joinUrl(apiBase, "/api/tickets/validate");
+  const printUrl = apiPrint ? ( /^https?:\/\//i.test(apiPrint) ? apiPrint : joinUrl(apiBase, apiPrint) ) : joinUrl(apiBase, "/api/tickets/print");
+
   useEffect(() => {
     let mounted = true;
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        });
-        if (!mounted) {
-          stream.getTracks().forEach(t => t.stop());
-          return;
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:"environment", width:{ ideal:1280 }, height:{ ideal:720 } }, audio:false });
+        if (!mounted) { stream.getTracks().forEach(t=>t.stop()); return; }
         streamRef.current = stream;
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
-
         const canvas = canvasRef.current;
         const ctx = canvas.getContext("2d");
-
         const tick = () => {
           if (!mounted) return;
           try {
             if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
               canvas.width = videoRef.current.videoWidth;
               canvas.height = videoRef.current.videoHeight;
-              ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(videoRef.current,0,0,canvas.width,canvas.height);
+              const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
               const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
-
-              if (code && !busy) {
-                handleRawScan(code.data);
-              }
+              if (code && !busy) handleRawScan(code.data);
             }
           } catch (e) {
             console.warn("frame read error", e && e.message);
           }
           rafRef.current = requestAnimationFrame(tick);
         };
-
         rafRef.current = requestAnimationFrame(tick);
       } catch (err) {
         console.error("Camera start error", err);
         setMessage(`Camera error: ${err.message || err}`);
       }
     }
-
     startCamera();
-
     return () => {
       mounted = false;
-      try { if (rafRef.current) cancelAnimationFrame(rafRef.current); } catch {}
-      try { if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop()); } catch {}
+      try{ if(rafRef.current) cancelAnimationFrame(rafRef.current); }catch{}
+      try{ if(streamRef.current) streamRef.current.getTracks().forEach(t=>t.stop()); }catch{}
     };
   }, [busy]);
 
@@ -149,99 +169,54 @@ export default function TicketScanner({
     setMessage("QR detected — extracting id...");
     console.log("[TicketScanner] RAW QR:", data);
 
-    // extract ticket id
-    let extracted = null;
-    let parsed = tryParseJsonSafe(data);
-    if (parsed) {
-      extracted = extractTicketIdFromObject(parsed);
-      console.log("[TicketScanner] parsed JSON, extracted:", extracted, parsed);
-    } else {
-      if (looksLikeBase64(data)) {
-        try {
-          const decoded = atob(String(data));
-          parsed = tryParseJsonSafe(decoded);
-          if (parsed) {
-            extracted = extractTicketIdFromObject(parsed);
-            console.log("[TicketScanner] decoded base64->json, extracted:", extracted);
-          } else {
-            const m = decoded.match(/\d{3,12}/);
-            if (m) extracted = m[0];
-          }
-        } catch (e) {
-          console.log("[TicketScanner] base64 decode failed", e);
-        }
-      }
-      if (!extracted) {
-        const jsonMatch = String(data).match(/\{.*\}/s);
-        if (jsonMatch) {
-          parsed = tryParseJsonSafe(jsonMatch[0]);
-          if (parsed) extracted = extractTicketIdFromObject(parsed);
-        }
-      }
-      if (!extracted) {
-        const plain = String(data).trim();
-        if (/^[A-Za-z0-9\-_.]{3,64}$/.test(plain)) extracted = plain;
-        else {
-          const m = plain.match(/\d{3,12}/);
-          if (m) extracted = m[0];
-        }
-      }
-    }
-
+    const extracted = tryParseTicketId(data);
     if (!extracted) {
+      setValidation({ ok:false, error:"No ticket id extracted" });
       setMessage("QR scanned but no ticket id found.");
-      setValidation({ ok: false, error: "No ticket id extracted" });
       setBusy(false);
-      setTimeout(() => setBusy(false), 700);
+      setTimeout(()=>setBusy(false),700);
       return;
     }
 
     setTicketId(extracted);
     setMessage(`Validating ticket: ${extracted}...`);
 
-    // If validateUrl looks wrong, show clear message
     if (!validateUrl) {
-      setValidation({ ok: false, error: "validate endpoint not configured" });
+      setValidation({ ok:false, error: "validate endpoint not configured" });
       setMessage("Validation endpoint missing");
       setBusy(false);
       return;
     }
 
-    // POST to validateUrl, log request/response
+    // prepare request and log
+    const payload = { ticketId: extracted };
+    setLastValidateRequest({ url: validateUrl, payload, time: Date.now() });
+    console.info("[TicketScanner] POST", validateUrl, payload);
+
     try {
-      console.info("[TicketScanner] POST", validateUrl, { ticketId: extracted });
-      setLastValidateRequest({ url: validateUrl, payload: { ticketId: extracted }, time: Date.now() });
-
-      const res = await fetch(validateUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticketId: extracted }),
-        credentials: "same-origin",
-      });
-
-      const text = await res.text().catch(() => "");
+      const res = await fetch(validateUrl, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload), credentials: "same-origin" });
+      const text = await res.text().catch(()=>"");
       let js = null;
       try { js = text ? JSON.parse(text) : null; } catch { js = null; }
-      console.info("[TicketScanner] validate response", res.status, js || text.slice(0, 1000));
+      console.info("[TicketScanner] validate response", res.status, js || text.slice(0,1000));
 
       if (!res.ok) {
-        // 405 handling: show helpful message
         let hint = "";
-        if (res.status === 405) hint = "405 Method Not Allowed — the request may be hitting a static host or the endpoint expects a different method/path.";
-        setValidation({ ok: false, error: (js && (js.error || js.message)) || text || `Validate failed (${res.status}) ${hint}` });
+        if (res.status === 405) hint = "405 Method Not Allowed — request likely hit a static host or wrong host/path.";
+        setValidation({ ok:false, error:(js && (js.error||js.message)) || text || `Validate failed (${res.status}) ${hint}` });
         setMessage("Ticket validation failed");
       } else {
         const ticket = (js && (js.ticket || js)) || {};
-        setValidation({ ok: true, ticket });
+        setValidation({ ok:true, ticket });
         setMessage("Ticket validated ✔");
         if (autoPrintOnValidate) await doPrint(extracted);
       }
     } catch (e) {
       console.error("[TicketScanner] validate error", e);
-      setValidation({ ok: false, error: e.message || String(e) });
+      setValidation({ ok:false, error: e.message || String(e) });
       setMessage("Validation request error");
     } finally {
-      setTimeout(() => setBusy(false), 800);
+      setTimeout(()=>setBusy(false),800);
     }
   }
 
@@ -249,33 +224,34 @@ export default function TicketScanner({
     if (!id) return;
     setMessage("Requesting print...");
     try {
-      const res = await fetch(printUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticketId: id }),
-        credentials: "same-origin",
-      });
+      const res = await fetch(printUrl, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ ticketId: id }), credentials: "same-origin" });
       if (!res.ok) {
-        const text = await res.text().catch(() => "");
+        const txt = await res.text().catch(()=>"");
         setMessage("Print request failed");
-        setValidation({ ok: false, error: text || `Print failed (${res.status})` });
+        setValidation({ ok:false, error: txt || `Print failed (${res.status})` });
         return;
       }
-      const contentType = res.headers.get("content-type") || "";
-      if (contentType.includes("application/pdf")) {
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/pdf")) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         window.open(url, "_blank");
         setMessage("PDF opened in new tab");
       } else {
-        const text = await res.text().catch(() => "");
+        const txt = await res.text().catch(()=>"");
         setMessage("Print returned non-PDF response");
-        console.log("[TicketScanner] print response:", text);
+        console.log("[TicketScanner] print response:", txt);
       }
     } catch (e) {
       console.error("Print error", e);
       setMessage("Print error");
     }
+  }
+
+  function tryParseTicketId(s) {
+    try {
+      return tryParseTicketId; // placeholder to avoid linter errors (actual parser above)
+    } catch (e) { return null; }
   }
 
   function renderValidation() {
@@ -285,11 +261,7 @@ export default function TicketScanner({
         <div className="p-3 bg-red-50 text-red-700 rounded">
           <div><strong>Not matched</strong></div>
           <div className="text-sm">{validation.error || "Ticket not found"}</div>
-          {lastValidateRequest && (
-            <div className="text-xs text-gray-500 mt-2">
-              <div>Requested: <code>{lastValidateRequest.url}</code></div>
-            </div>
-          )}
+          {lastValidateRequest && <div className="text-xs text-gray-500 mt-2"><div>Requested: <code>{lastValidateRequest.url}</code></div></div>}
         </div>
       );
     }
@@ -330,9 +302,7 @@ export default function TicketScanner({
           <div className="font-mono text-sm p-2 bg-gray-50 rounded">{ticketId || "—"}</div>
         </div>
 
-        <div>
-          {renderValidation()}
-        </div>
+        <div>{renderValidation()}</div>
       </div>
     </div>
   );
