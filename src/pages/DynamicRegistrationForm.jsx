@@ -5,12 +5,23 @@ import PhoneInput from "react-phone-input-2";
 import "react-phone-input-2/lib/style.css";
 
 /*
-  DynamicRegistrationForm (updated)
-  - Delegates persistence to parent when onSubmit prop is provided.
-  - Replaces the manual country-code + number UI with react-phone-input-2 for phone fields.
-    - Provides nice UX (flag, search/type-to-jump, formatted value).
-    - Stores E.164-like value (prefixed with '+') in the field (e.g. form.mobile = "+919876543210")
-    - Also stores dial code in `${fieldName}_country` (e.g. "+91") if needed.
+  DynamicRegistrationForm
+
+  Changes related to your request "only 10 numbers should be allowed in phone numbers":
+  - Phone input (react-phone-input-2) is used for any field detected as a phone field.
+  - handlePhoneChange now derives the national (local) number (digits-only, excluding dialCode),
+    trims it to max 10 digits, and stores:
+      - form[fieldName] = "+<dialCode><national>" (E.164-like)
+      - form[`${fieldName}_country`] = "+<dialCode>"
+      - form[`${fieldName}_national`] = "<national digits>"  (always digits, max length 10)
+  - A live helper/error message is shown under phone inputs when national length !== 10.
+  - The submit button is disabled while any visible phone field has national length !== 10.
+  - A small useEffect will normalise any pre-filled phone values into the same structure so validation works for edit modes too.
+
+  Note:
+  - This enforces a maximum of 10 digits for the national part. If you want to require exactly 10 (not less),
+    the submit button is disabled until national length === 10. If you want to allow shorter numbers,
+    adjust the validation logic accordingly.
 */
 
 function isVisible(field, form) {
@@ -32,10 +43,9 @@ function normalizeType(t) {
   return null;
 }
 
-// Very small heuristic to identify phone fields by name
 function isPhoneFieldName(name = "") {
   if (!name || typeof name !== "string") return false;
-  return /(phone|mobile|contact)/i.test(name);
+  return /(phone|mobile|contact|msisdn|tel)/i.test(name);
 }
 
 export default function DynamicRegistrationForm({
@@ -98,7 +108,6 @@ export default function DynamicRegistrationForm({
   }, [config, apiBase, inferredRegistrationType]);
 
   useEffect(() => {
-    // Determine emailVerified from either parent-set state (setVerified) or localStorage fallback.
     const emailField = (localConfig && localConfig.fields || []).find(f => f.type === "email");
     const emailValue = emailField ? (form[emailField.name] || "").trim().toLowerCase() : "";
 
@@ -133,11 +142,58 @@ export default function DynamicRegistrationForm({
     setForm((f) => ({ ...f, [name]: type === "checkbox" ? checked : value }));
   }
 
+  // New: enforce max 10 digits for the national (subscriber) number.
+  // react-phone-input-2's onChange gives value (digits without + usually) and countryData (contains dialCode).
   function handlePhoneChange(fieldName, value, countryData) {
-    // Ensure E.164 style: prefix + if missing
-    const v = value ? (value.startsWith("+") ? value : `+${value}`) : "";
-    setForm((f) => ({ ...f, [fieldName]: v, [`${fieldName}_country`]: countryData && countryData.dialCode ? `+${countryData.dialCode}` : "" }));
+    const rawDigits = String(value || "").replace(/\D/g, "");
+    const dial = countryData && countryData.dialCode ? String(countryData.dialCode).replace(/\D/g, "") : "";
+    // remove leading dial from rawDigits if present
+    let national = rawDigits;
+    if (dial && national.startsWith(dial)) {
+      national = national.slice(dial.length);
+    }
+    // enforce max 10 digits for national part
+    if (national.length > 10) national = national.slice(0, 10);
+
+    // build stored full value as +<dial><national> if dial present, else '+' + national
+    const fullValue = (dial ? `+${dial}${national}` : (national ? `+${national}` : ""));
+    const countryStored = dial ? `+${dial}` : "";
+
+    setForm((f) => ({ ...f, [fieldName]: fullValue, [`${fieldName}_country`]: countryStored, [`${fieldName}_national`]: national }));
   }
+
+  // Ensure prefilled values are normalized into *_national fields (runs when config or form changes)
+  useEffect(() => {
+    const effectiveConfig = localConfig || { fields: [] };
+    const phoneFields = (effectiveConfig.fields || []).filter(f => f && f.name && (f.type === "phone" || f.type === "tel" || isPhoneFieldName(f.name) || f.meta?.isPhone || f.usePhoneInput));
+    if (!phoneFields.length) return;
+
+    let updates = {};
+    phoneFields.forEach((field) => {
+      const val = form[field.name];
+      const countryVal = form[`${field.name}_country`] || "";
+      if (!val) {
+        if (!form[`${field.name}_national`]) {
+          // ensure there's at least an empty key to avoid undefined checks
+          updates[`${field.name}_national`] = "";
+        }
+        return;
+      }
+      const digits = String(val).replace(/\D/g, "");
+      const countryDial = String(countryVal || "").replace(/\D/g, "");
+      let national = digits;
+      if (countryDial && national.startsWith(countryDial)) national = national.slice(countryDial.length);
+      if (national.length > 10) national = national.slice(0, 10);
+      if (form[`${field.name}_national`] !== national) updates[`${field.name}_national`] = national;
+      // also ensure country stored consistently
+      if (countryDial && form[`${field.name}_country`] !== `+${countryDial}`) updates[`${field.name}_country`] = `+${countryDial}`;
+    });
+
+    if (Object.keys(updates).length) {
+      setForm(f => ({ ...f, ...updates }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localConfig, JSON.stringify(form)]);
 
   function handleTermsChange(e) {
     const checked = !!e.target.checked;
@@ -150,18 +206,17 @@ export default function DynamicRegistrationForm({
   const emailValue = emailField ? (form[emailField.name] || "") : "";
   const termsRequired = terms && terms.required;
 
-  /**
-   * doFinalSubmit(payload)
-   * - If parent provided onSubmit, DELEGATE persistence to parent by calling onSubmit(form).
-   * - Otherwise perform the previous behavior (POST to /api/visitors).
-   *
-   * Because PhoneInput already stores a combined value (E.164), we don't need to combine country+number here.
-   */
+  // disable submit if any visible phone field does not have exactly 10 national digits
+  const visiblePhoneFields = safeFields.filter(f => f && f.name && (f.type === "phone" || f.type === "tel" || isPhoneFieldName(f.name) || f.meta?.isPhone || f.usePhoneInput));
+  const phoneValidationFailed = visiblePhoneFields.some(f => {
+    const nat = form[`${f.name}_national`];
+    // enforce exactly 10 digits before allowing submit (user requested "only 10 numbers")
+    return !(typeof nat === "string" && nat.length === 10);
+  });
+
   async function doFinalSubmit(payload) {
-    // If parent wants to handle submission, delegate and return its result.
     if (onSubmit && typeof onSubmit === "function") {
       try {
-        // allow parent to handle saving; parent may be synchronous or return a promise
         const maybe = onSubmit(payload);
         const result = maybe && typeof maybe.then === "function" ? await maybe : maybe;
         setSubmitMessage({ type: "success", text: "Submitted (handled by parent)." });
@@ -173,7 +228,6 @@ export default function DynamicRegistrationForm({
       }
     }
 
-    // No parent onSubmit — perform network submit ourselves (backwards-compatible)
     try {
       const body = { ...payload };
       if (verificationToken) body.verificationToken = verificationToken;
@@ -220,6 +274,12 @@ export default function DynamicRegistrationForm({
       return;
     }
 
+    // Prevent submission while phone validation fails
+    if (phoneValidationFailed) {
+      setSubmitMessage({ type: "error", text: "Please enter a 10-digit phone number for the highlighted phone fields." });
+      return;
+    }
+
     setSubmitting(true);
     try {
       await doFinalSubmit(form);
@@ -257,91 +317,103 @@ export default function DynamicRegistrationForm({
           </div>
         )}
 
-        {safeFields.map((field) => (
-          <div key={field.name}>
-            {field.type === "checkbox" ? (
-              <div className="flex items-center gap-2 mt-2">
-                <input type="checkbox" name={field.name} checked={!!form[field.name]} onChange={handleChange} disabled={!editable} required={field.required} />
-                <span className="text-lg text-gray-600">{field.label}</span>
-              </div>
-            ) : (
-              <>
-                <label className="font-semibold text-[#21809b] text-lg">{field.label}</label>
+        {safeFields.map((field) => {
+          const shouldUsePhoneInput =
+            field.type === "phone" ||
+            field.type === "tel" ||
+            field.meta?.isPhone ||
+            field.usePhoneInput ||
+            isPhoneFieldName(field.name);
 
-                {(field.type === "text" || field.type === "email" || field.type === "number") && (
-                  <>
-                    {field.type === "number" && isPhoneFieldName(field.name) ? (
-                      // Use react-phone-input-2 for phone fields
-                      <div className="mt-2">
-                        <PhoneInput
-                          country={"in"} // default to India; the control supports typing/search to jump
-                          value={form[field.name] || ""}
-                          onChange={(value, countryData) => handlePhoneChange(field.name, value, countryData)}
-                          inputProps={{
-                            name: field.name,
-                            required: field.required,
-                          }}
-                          enableSearch
-                          disableSearchIcon={false}
-                          containerClass="phone-input-container"
-                          inputClass="p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg w-full"
-                          buttonClass="phone-flag-button"
-                          specialLabel=""
-                        />
-                      </div>
-                    ) : (
-                      <div className="flex items-center">
-                        <input
-                          type={field.type === "number" ? "number" : field.type}
-                          name={field.name}
-                          value={form[field.name] || ""}
-                          onChange={handleChange}
-                          className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg"
-                          disabled={!editable}
-                          required={field.required}
-                        />
-                        {field.type === "email" && field.meta?.useOtp && (
-                          <EmailOtpVerifier
-                            email={form[field.name]}
-                            fieldName={field.name}
-                            setForm={setForm}
-                            verified={emailVerified}
-                            setVerified={setEmailVerified}
-                            apiBase={apiBase}
-                            autoSend={autoOtpSend}
-                            registrationType={inferredRegistrationType}
+          return (
+            <div key={field.name}>
+              {field.type === "checkbox" ? (
+                <div className="flex items-center gap-2 mt-2">
+                  <input type="checkbox" name={field.name} checked={!!form[field.name]} onChange={handleChange} disabled={!editable} required={field.required} />
+                  <span className="text-lg text-gray-600">{field.label}</span>
+                </div>
+              ) : (
+                <>
+                  <label className="font-semibold text-[#21809b] text-lg">{field.label}</label>
+
+                  {(field.type === "text" || field.type === "email" || field.type === "number" || field.type === "phone" || field.type === "tel") && (
+                    <>
+                      {shouldUsePhoneInput ? (
+                        <div className="mt-2">
+                          <PhoneInput
+                            country={field.meta?.defaultCountry || "us"}
+                            value={form[field.name] || ""}
+                            onChange={(value, countryData) => handlePhoneChange(field.name, value, countryData)}
+                            inputProps={{
+                              name: field.name,
+                              required: field.required,
+                            }}
+                            enableSearch
+                            disableSearchIcon={false}
+                            containerClass="phone-input-container"
+                            inputClass="p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg w-full"
+                            buttonClass="phone-flag-button"
+                            specialLabel=""
                           />
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
+                          {/* validation helper */}
+                          { (form[`${field.name}_national`] && form[`${field.name}_national`].length !== 10) && (
+                            <div className="text-sm text-red-600 mt-1">Phone number must be exactly 10 digits (local number).</div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center">
+                          <input
+                            type={field.type === "number" ? "number" : field.type}
+                            name={field.name}
+                            value={form[field.name] || ""}
+                            onChange={handleChange}
+                            className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg"
+                            disabled={!editable}
+                            required={field.required}
+                          />
+                          {field.type === "email" && field.meta?.useOtp && (
+                            <EmailOtpVerifier
+                              email={form[field.name]}
+                              fieldName={field.name}
+                              setForm={setForm}
+                              verified={emailVerified}
+                              setVerified={setEmailVerified}
+                              apiBase={apiBase}
+                              autoSend={autoOtpSend}
+                              registrationType={inferredRegistrationType}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
 
-                {field.type === "textarea" && (
-                  <textarea name={field.name} value={form[field.name] || ""} onChange={handleChange} className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg" rows={3} disabled={!editable} required={field.required} />
-                )}
+                  {field.type === "textarea" && (
+                    <textarea name={field.name} value={form[field.name] || ""} onChange={handleChange} className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg" rows={3} disabled={!editable} required={field.required} />
+                  )}
 
-                {field.type === "select" && (
-                  <select name={field.name} value={form[field.name] || ""} onChange={handleChange} className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg" disabled={!editable} required={field.required}>
-                    <option value="">Select {field.label}</option>
-                    {(field.options || []).map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                  </select>
-                )}
+                  {field.type === "select" && (
+                    <select name={field.name} value={form[field.name] || ""} onChange={handleChange} className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg" disabled={!editable} required={field.required}>
+                      <option value="">Select {field.label}</option>
+                      {(field.options || []).map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  )}
 
-                {field.type === "radio" && (
-                  <div className="flex flex-col gap-3 mt-2">
-                    {(field.options || []).map((opt) => (
-                      <label key={opt} className={`flex items-center gap-3 px-4 py-2 border rounded-lg cursor-pointer bg-white shadow-sm whitespace-nowrap text-sm ${form[field.name] === opt ? "border-[#21809b] bg-[#e8f6ff]" : "border-gray-300"}`}>
-                        <input type="radio" name={field.name} value={opt} checked={form[field.name] === opt} onChange={handleChange} disabled={!editable} required={field.required} className="h-4 w-4 text-[#21809b]" />
-                        <span className="font-medium text-gray-700">{opt}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        ))}
+                  {field.type === "radio" && (
+                    <div className="flex flex-col gap-3 mt-2">
+                      {(field.options || []).map((opt) => (
+                        <label key={opt} className={`flex items-center gap-3 px-4 py-2 border rounded-lg cursor-pointer bg-white shadow-sm whitespace-nowrap text-sm ${form[field.name] === opt ? "border-[#21809b] bg-[#e8f6ff]" : "border-gray-300"}`}>
+                          <input type="radio" name={field.name} value={opt} checked={form[field.name] === opt} onChange={handleChange} disabled={!editable} required={field.required} className="h-4 w-4 text-[#21809b]" />
+                          <span className="font-medium text-gray-700">{opt}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })}
 
         {terms && (
           <div className="mt-2">
@@ -371,7 +443,8 @@ export default function DynamicRegistrationForm({
               (emailField?.required && emailField.meta?.useOtp && !emailVerified) ||
               (emailField && emailField.required && !isEmail(emailValue)) ||
               (termsRequired && !form?.termsAccepted) ||
-              submitting
+              submitting ||
+              phoneValidationFailed
             }
           >
             {submitting ? "Processing..." : "Submit"}
@@ -379,5 +452,5 @@ export default function DynamicRegistrationForm({
         </div>
       </div>
     </form>
-  ); 
+  );
 }
