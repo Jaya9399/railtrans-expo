@@ -72,7 +72,7 @@ function buildApiUrl(path) {
 
 /* ---------- fetching helpers ---------- */
 async function tryFetchCandidates(pathVariants = []) {
-  // Try absolute (API_BASE-based) candidates first is handled by callers (we return variants already ordered).
+  // Iterate candidates (caller should order abs -> rel)
   for (const url of pathVariants) {
     try {
       const res = await fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" });
@@ -179,10 +179,8 @@ export default function TicketUpgrade() {
         let js = null;
         if (id) {
           const candidates = idCandidatesForVisitors(id);
-          // try absolute first (API_BASE) then relative
           js = await tryFetchCandidates(candidates);
           if (!js) {
-            // fallback: treat id as query
             js = await tryFetchCandidates(qCandidatesForVisitors(id));
             if (Array.isArray(js)) js = js[0] || null;
             if (js && Array.isArray(js.rows)) js = js.rows[0] || null;
