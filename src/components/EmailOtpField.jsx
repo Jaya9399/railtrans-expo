@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
   - Shows which collection/role was matched (info.collection / info.id) when email already exists.
   - "Upgrade Ticket" button now navigates using plural `entity=` (e.g. entity=visitors&id=...) OR uses ticket_code fallback.
   - Persists verifiedEmail to storage and notifies parent via setVerified and setForm.
+  - If registrationType prop is missing, infers role from URL query param `entity` or `type`; logs a warning so you can pass explicit prop.
 */
 
 function isEmail(str) {
@@ -36,7 +37,7 @@ export default function EmailOtpVerifier({
   setVerified,
   apiBase = "",
   autoSend = false,
-  registrationType = "visitor",
+  registrationType = undefined, // changed: allow undefined so we can infer from URL if missing
 }) {
   const navigate = useNavigate();
   const [otpSent, setOtpSent] = useState(false);
@@ -52,7 +53,32 @@ export default function EmailOtpVerifier({
 
   const emailNorm = (email || "").trim();
   const emailValid = isEmail(emailNorm);
-  const role = normalizeToRole(registrationType);
+
+  // Resolve role: prefer explicit prop, else infer from URL query (entity|type), else fall back to visitor
+  let inferredFromUrl = false;
+  let initialRole = registrationType;
+  if (!initialRole) {
+    try {
+      if (typeof window !== "undefined") {
+        const qs = new URLSearchParams(window.location.search || "");
+        const urlRole = qs.get("entity") || qs.get("type") || qs.get("registrationType") || "";
+        if (urlRole) {
+          initialRole = urlRole;
+          inferredFromUrl = true;
+        }
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  const role = normalizeToRole(initialRole || "visitor");
+
+  useEffect(() => {
+    if (inferredFromUrl) {
+      console.warn(`[EmailOtpVerifier] registrationType prop not provided — inferred role="${role}" from URL. Prefer passing registrationType prop to this component for accuracy.`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once
 
   // Resolve backend base (prop -> window -> env -> "")
   const resolvedApiBase = (apiBase && String(apiBase).trim())
