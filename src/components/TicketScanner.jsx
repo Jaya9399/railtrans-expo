@@ -54,46 +54,11 @@ function extractTicketIdFromObject(obj) {
 }
 
 function extractTicketId(input) {
-  if (input === undefined || input === null) return null;
-  if (typeof input === "number") return String(input);
-  if (typeof input === "string") {
-    const s = input.trim();
-    if (!s) return null;
-
-    const parsed = tryParseJsonSafe(s);
-    if (parsed && typeof parsed === "object") {
-      const f = extractTicketIdFromObject(parsed);
-      if (f) return f;
-    }
-
-    if (looksLikeBase64(s)) {
-      try {
-        const dec = atob(s);
-        const p2 = tryParseJsonSafe(dec);
-        if (p2 && typeof p2 === "object") {
-          const f2 = extractTicketIdFromObject(p2);
-          if (f2) return f2;
-        }
-        const tokenDec = dec.match(/[A-Za-z0-9._-]{3,64}/);
-        if (tokenDec) return tokenDec[0];
-        const digDec = dec.match(/\d{3,12}/);
-        if (digDec) return digDec[0];
-      } catch (e) {}
-    }
-
-    const token = s.match(/[A-Za-z0-9._-]{3,64}/);
-    if (token) return token[0];
-
-    const m = s.match(/\d{3,12}/);
-    if (m) return m[0];
-
-    return null;
-  }
-  if (typeof input === "object") {
-    return extractTicketIdFromObject(input);
-  }
-  return null;
+  if (!input) return null;
+  const m = String(input).match(/\b\d{4,12}\b/);
+  return m ? m[0] : null;
 }
+
 
 export default function TicketScanner({ apiPath = null, autoPrintOnValidate = false }) {
   const videoRef = useRef(null);
@@ -108,8 +73,9 @@ export default function TicketScanner({ apiPath = null, autoPrintOnValidate = fa
   const [validation, setValidation] = useState(null);
 
   // derive absolute endpoints
-  const validateUrl = apiPath ? (apiPath.endsWith("/scan") ? apiUrl(apiPath.replace(/\/scan\/?$/, "/validate")) : apiUrl(`${apiPath}/validate`)) : apiUrl("/api/tickets/validate");
-  const printUrl = apiPath ? (apiPath.endsWith("/scan") ? apiUrl(apiPath.replace(/\/scan\/?$/, "/print")) : apiUrl(`${apiPath}/print`)) : apiUrl("/api/tickets/print");
+  const validateUrl = apiUrl("/api/tickets/validate");
+  const printUrl = apiUrl("/api/tickets/scan");
+
 
   useEffect(() => {
     let mounted = true;
