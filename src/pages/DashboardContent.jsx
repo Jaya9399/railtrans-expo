@@ -3,6 +3,7 @@ import EditModal from "../components/EditModal";
 import DeleteModal from "../components/DeleteModal";
 import AdminExhibitor from "../pages/AdminExhibitor";
 import AdminPartner from "../pages/AdminPartner";
+import DataTable from "../components/DataTable";
 import { buildTicketEmail } from "../utils/emailTemplate";
 
 /* ---------- helpers ---------- */
@@ -15,65 +16,63 @@ const apiEndpoints = [
 ];
 const TABLE_KEYS = ["visitors", "exhibitors", "partners", "speakers", "awardees"];
 
-// DO NOT hide any fields — keep the hidden set empty
+// Fields to hide from lists (empty by default)
 const HIDDEN_FIELDS = new Set([]);
 
-const PAGE_SIZE = 5;
+// default page size
+const PAGE_SIZE = 10;
 
 function normalizeData(d) { if (Array.isArray(d)) return d; if (d && typeof d === "object") return [d]; return []; }
+
+/*
+  sanitizeRow:
+  - Convert nested objects into readable strings only when necessary.
+  - Keep primary scalar fields intact.
+*/
 function sanitizeRow(row) {
   if (!row || typeof row !== "object") return {};
   const out = {};
   for (const k of Object.keys(row)) {
     const v = row[k];
-    if (v === null || typeof v === "undefined") out[k] = "";
-    else if (typeof v === "object") {
-      try { out[k] = JSON.stringify(v); } catch { out[k] = String(v); }
-    } else out[k] = String(v);
+    if (v === null || typeof v === "undefined") { out[k] = ""; continue; }
+    if (typeof v === "object") {
+      // If it's a simple object with name/email keys, flatten selectively.
+      if (v.name || v.email || v.company) {
+        const parts = [];
+        if (v.name) parts.push(String(v.name));
+        if (v.company) parts.push(String(v.company));
+        if (v.email) parts.push(String(v.email));
+        out[k] = parts.join(" • ");
+      } else {
+        // keep compact JSON string for unknown nested objects
+        try { out[k] = JSON.stringify(v); } catch { out[k] = String(v); }
+      }
+    } else {
+      out[k] = String(v);
+    }
   }
   return out;
 }
-function getColumnsFromRows(rows) {
-  const cols = []; const seen = new Set();
-  for (const r of rows || []) for (const k of Object.keys(r)) if (!seen.has(k)) { seen.add(k); cols.push(k); }
-  return cols;
-}
 
-/* ---------- small components ---------- */
-function Pagination({ currentPage, totalPages, onPageChange }) {
-  if (!totalPages || totalPages <= 1) return null;
-  return (
-    <div className="flex items-center space-x-2 mt-3">
-      <button className="px-2 py-1 border rounded disabled:opacity-50" onClick={() => onPageChange(Math.max(1, currentPage - 1))} disabled={currentPage === 1}>Prev</button>
-      {[...Array(totalPages)].map((_, i) => (
-        <button key={i} className={`px-2 py-1 border rounded ${currentPage === i + 1 ? "bg-indigo-100 font-bold" : ""}`} onClick={() => onPageChange(i + 1)}>{i + 1}</button>
-      ))}
-      <button className="px-2 py-1 border rounded disabled:opacity-50" onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))} disabled={currentPage === totalPages}>Next</button>
-    </div>
-  );
-}
-function ActionsMenu({ onEdit, onDelete, onRefresh }) {
-  const [open, setOpen] = useState(false);
-  const ref = React.useRef();
-  useEffect(() => {
-    function handleClick(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
-    if (open) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
-  return (
-    <div className="relative" ref={ref}>
-      <button className="text-gray-600 hover:bg-gray-100 rounded-full p-2" onClick={() => setOpen(v => !v)} style={{ minWidth: 32 }}>
-        <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="4" cy="10" r="2" /><circle cx="10" cy="10" r="2" /><circle cx="16" cy="10" r="2" /></svg>
-      </button>
-      {open && (
-        <div className="absolute z-10 right-0 mt-2 bg-white border shadow-lg rounded-lg w-44">
-          <button className="block w-full text-left px-4 py-2 hover:bg-indigo-50 text-indigo-700 font-semibold" onClick={() => { setOpen(false); onEdit(); }}>Edit</button>
-          <button className="block w-full text-left px-4 py-2 hover:bg-gray-50 text-gray-700 font-medium" onClick={() => { setOpen(false); onRefresh(); }}>Refresh</button>
-          <button className="block w-full text-left px-4 py-2 hover:bg-red-50 text-red-700 font-semibold" onClick={() => { setOpen(false); onDelete(); }}>Delete</button>
-        </div>
-      )}
-    </div>
-  );
+/* Get columns with preferred ordering so UI shows the meaningful columns first */
+function getColumnsFromRowsOrdered(rows) {
+  const seen = new Set();
+  const cols = [];
+  // preferred order
+  const preferred = ["name", "full_name", "company", "org", "organization", "email", "email_address", "ticket_code", "ticketCode", "ticket_category", "category", "mobile", "phone", "id", "_id"];
+  for (const p of preferred) {
+    // if present in any row, add
+    if (rows.some(r => Object.prototype.hasOwnProperty.call(r, p))) {
+      if (!seen.has(p)) { seen.add(p); cols.push(p); }
+    }
+  }
+  // then add all other keys discovered
+  for (const r of rows || []) {
+    for (const k of Object.keys(r || {})) {
+      if (!seen.has(k) && !HIDDEN_FIELDS.has(k)) { seen.add(k); cols.push(k); }
+    }
+  }
+  return cols;
 }
 
 /* ---------- DashboardContent ---------- */
@@ -129,7 +128,7 @@ export default function DashboardContent() {
     }));
     if (mountedRef.current) setConfigs(out);
     return out;
-  }, [API_BASE]); // API_BASE included by closure
+  }, [API_BASE]);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -140,9 +139,10 @@ export default function DashboardContent() {
         try {
           const res = await fetch(buildApiUrl(url));
           let j = await res.json().catch(() => null);
-          // Some APIs return [rows, count] in older adapters; normalize.
+          // normalize old adapters
           if (Array.isArray(j) && j.length === 2 && Array.isArray(j[0])) j = j[0];
           if (j && typeof j === "object" && !Array.isArray(j)) j = j.data || j.rows || j;
+          // sanitize rows to show human-readable values when possible
           results[label.toLowerCase()] = normalizeData(j).map(sanitizeRow);
         } catch (e) { console.warn("fetch data", label, e); results[label.toLowerCase()] = []; }
       }));
@@ -169,34 +169,8 @@ export default function DashboardContent() {
     });
   }, [report]);
 
-  // Helper to determine public frontend base (prefer explicit window overrides or origin)
-  function getFrontendBase() {
-    try {
-      if (typeof window !== "undefined") {
-        if (window.__FRONTEND_BASE__) return String(window.__FRONTEND_BASE__).replace(/\/$/, "");
-        if (window.__API_BASE__) return String(window.__API_BASE__).replace(/\/$/, "");
-        if (window.location && window.location.origin) return String(window.location.origin).replace(/\/$/, "");
-      }
-      if (typeof process !== "undefined" && process.env) {
-        return (process.env.REACT_APP_API_BASE_URL || process.env.PUBLIC_BASE_URL || process.env.REACT_APP_API_BASE || "").replace(/\/$/, "");
-      }
-    } catch (e) {}
-    return "";
-  }
-
-  // Helper: detect image attachments (contentType or filename)
-  function isImageAttachmentMeta(a = {}) {
-    const ct = String(a.contentType || a.content_type || a.type || "").toLowerCase();
-    if (ct && ct.startsWith("image/")) return true;
-    const fn = String(a.filename || a.name || a.path || "").toLowerCase();
-    if (fn.endsWith(".png") || fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".gif") || fn.endsWith(".webp") || fn.endsWith(".svg")) return true;
-    return false;
-  }
-
-  // NEW HELPERS: robust email extraction (deep search)
-  function isEmailLike(v) {
-    return typeof v === "string" && /\S+@\S+\.\S+/.test(v);
-  }
+  // Helper: detect email inside possibly nested shapes
+  function isEmailLike(v) { return typeof v === "string" && /\S+@\S+\.\S+/.test(v); }
   function findEmailDeep(obj, seen = new Set()) {
     if (!obj || typeof obj !== "object") return "";
     if (seen.has(obj)) return "";
@@ -212,7 +186,6 @@ export default function DashboardContent() {
   }
   function extractEmailFromObject(obj) {
     if (!obj) return "";
-    // common keys
     const keys = ["email", "email_address", "emailAddress", "contactEmail", "contact", "visitorEmail", "user_email", "primaryEmail"];
     for (const k of keys) {
       try {
@@ -222,7 +195,6 @@ export default function DashboardContent() {
         }
       } catch (e) {}
     }
-    // if obj has nested 'data' or 'row', try them
     if (obj.data && typeof obj.data === "object") {
       const e = extractEmailFromObject(obj.data);
       if (e) return e;
@@ -231,11 +203,10 @@ export default function DashboardContent() {
       const e = extractEmailFromObject(obj.row);
       if (e) return e;
     }
-    // deep search
     return findEmailDeep(obj);
   }
 
-  // --- send templated email using buildTicketEmail; ensure frontendBase is set, and strip image attachments
+  // --- sendTemplatedEmail, generateAndEmailTicket, handlers (unchanged semantics) ---
   const sendTemplatedEmail = useCallback(async ({ entity, id, row, premium = false }) => {
     try {
       const email = extractEmailFromObject(row);
@@ -243,16 +214,22 @@ export default function DashboardContent() {
         console.warn("[sendTemplatedEmail] no recipient email for", entity, id, "row:", row);
         return { ok: false };
       }
+      if (typeof buildTicketEmail !== "function") return { ok: false, reason: "no-builder" };
 
-      if (typeof buildTicketEmail !== "function") {
-        console.warn("[sendTemplatedEmail] no buildTicketEmail");
-        return { ok: false, reason: "no-builder" };
-      }
+      const frontendBase = (() => {
+        try {
+          if (typeof window !== "undefined") {
+            if (window.__FRONTEND_BASE__) return String(window.__FRONTEND_BASE__).replace(/\/$/, "");
+            if (window.__API_BASE__) return String(window.__API_BASE__).replace(/\/$/, "");
+            if (window.location && window.location.origin) return String(window.location.origin).replace(/\/$/, "");
+          }
+          if (typeof process !== "undefined" && process.env) {
+            return (process.env.REACT_APP_API_BASE_URL || process.env.PUBLIC_BASE_URL || process.env.REACT_APP_API_BASE || "").replace(/\/$/, "");
+          }
+        } catch (e) {}
+        return "";
+      })();
 
-      // Choose a reliable frontendBase so template resolves relative uploads to public host
-      const frontendBase = getFrontendBase();
-
-      // Resolve admin-config logo (prefer configs loaded by dashboard)
       let logoCandidate = "";
       try {
         if (configs && configs[entity] && Array.isArray(configs[entity].images) && configs[entity].images.length) {
@@ -268,7 +245,6 @@ export default function DashboardContent() {
         }
       } catch (e) { logoCandidate = ""; }
 
-      // Helper to resolve relative -> absolute using frontendBase
       function resolveAbsoluteUrl(url) {
         if (!url) return "";
         const s = String(url).trim();
@@ -281,10 +257,8 @@ export default function DashboardContent() {
       }
 
       const resolvedLogo = resolveAbsoluteUrl(logoCandidate || "");
-      // Resolve badge preview from the row if present
       const resolvedBadgePreview = resolveAbsoluteUrl(row?.badgePreviewUrl || row?.badge_preview || row?.badge || "");
 
-      // Try to fetch canonical event-details here and pass to template (as before)
       let eventDetails = null;
       try {
         const cfgRes = await fetch(buildApiUrl("/api/configs/event-details"), { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
@@ -298,10 +272,7 @@ export default function DashboardContent() {
             eventDetails = legacyJs && legacyJs.value !== undefined ? legacyJs.value : legacyJs;
           }
         }
-      } catch (e) {
-        console.debug("[sendTemplatedEmail] fetching event-details failed, will fallback to form event data", e && e.message);
-        eventDetails = null;
-      }
+      } catch (e) { eventDetails = null; }
 
       const model = {
         frontendBase,
@@ -313,7 +284,7 @@ export default function DashboardContent() {
         badgePreviewUrl: resolvedBadgePreview || "",
         downloadUrl: row?.downloadUrl || row?.download_url || "",
         upgradeUrl: premium ? "" : (row?.upgradeUrl || row?.upgrade_url || ""),
-        logoUrl: resolvedLogo || "",     // explicit absolute logo URL
+        logoUrl: resolvedLogo || "",
         form: row || null,
         pdfBase64: row?.pdfBase64 || null,
         event: eventDetails || (row && row.event) || null,
@@ -323,14 +294,13 @@ export default function DashboardContent() {
       let { subject, text, html, attachments } = tpl;
       attachments = Array.isArray(attachments) ? attachments : [];
 
-      // Defensive: filter out image attachments (these show up as attachments in mail clients)
       const safeAttachments = [];
       for (const a of attachments) {
-        if (isImageAttachmentMeta(a)) {
-          console.log("[Dashboard] stripping image attachment from template before mailer:", a.filename || a.path || "<unknown>");
+        const ct = String(a.contentType || a.content_type || a.type || "").toLowerCase();
+        const fn = String(a.filename || a.name || a.path || "").toLowerCase();
+        if ((ct && ct.startsWith("image/")) || fn.match(/\.(png|jpe?g|gif|webp|svg)$/)) {
           continue;
         }
-        // normalize attachment fields for the mailer
         const out = {};
         if (a.filename) out.filename = a.filename;
         if (a.content) out.content = a.content;
@@ -340,7 +310,6 @@ export default function DashboardContent() {
         safeAttachments.push(out);
       }
 
-      // fallback to minimal content if template returned nothing
       const finalSubject = (subject && String(subject).trim()) ? subject : `RailTrans Expo — Your E‑Badge`;
       const finalText = text || `Hello ${model.name || "Participant"},\n\nYour ticket category: ${model.ticket_category || ""}\n\nDownload: ${model.downloadUrl || frontendBase}`;
       const finalHtml = html || `<p>Hello ${model.name || "Participant"},</p><p>Your ticket info has been generated.</p><p><a href="${model.downloadUrl || frontendBase}">Download E‑Badge</a></p>`;
@@ -353,35 +322,23 @@ export default function DashboardContent() {
         attachments: safeAttachments,
       };
 
-      console.debug("[sendTemplatedEmail] mailPayload preview:", { to: mailPayload.to, subject: mailPayload.subject, attachments: mailPayload.attachments.length });
-
       const r = await fetch(buildApiUrl("/api/mailer".replace(/^\/+/, "/")), { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(mailPayload) });
       const body = await parseErrorBody(r);
-      if (!r.ok) {
-        console.warn("[sendTemplatedEmail] mailer responded non-ok:", body);
-        return { ok: false, reason: "mailer-failed", body };
-      }
+      if (!r.ok) return { ok: false, reason: "mailer-failed", body };
       const resJson = await r.json().catch(() => null);
-      console.debug("[sendTemplatedEmail] mailer success", resJson);
       return { ok: true, info: resJson };
     } catch (e) { console.warn("[sendTemplatedEmail] exception", e); return { ok: false, reason: "exception", error: String(e) }; }
   }, [configs, parseErrorBody, API_BASE]);
 
-  // --- generate ticket (server endpoints optional). If not available, create client ticket_code and PATCH entity.
   const generateAndEmailTicket = useCallback(async ({ tableKey, row, premium = false }) => {
     setActionMsg(`Generating ticket for ${row?.name || row?.company || row?.id || ""}...`);
     try {
       const base = apiMap.current[tableKey];
       if (!base) { setActionMsg("Unknown table"); return { ok: false }; }
-
-      // canonical id extraction
       const id = row.id || row._id || row.ID || row.Id || (row && row._id && (row._id.$oid || row._id.toString())) || "";
       if (!id) { setActionMsg("Missing id"); return { ok: false }; }
-
-      // If a ticket_code already exists, skip generate step
       let ticket_code = row && (row.ticket_code || row.ticketCode || row.code) || "";
 
-      // try server generate endpoints
       if (!ticket_code) {
         const candidates = [
           `${base}/${encodeURIComponent(String(id))}/generate-ticket`,
@@ -397,11 +354,10 @@ export default function DashboardContent() {
             const js = await r.json().catch(() => null);
             const maybe = js && (js.ticket_code || js.code || js.ticketCode || (js.data && (js.data.ticket_code || js.data.code)));
             if (maybe) { ticket_code = maybe; break; }
-          } catch (e) { /* ignore and continue */ }
+          } catch (e) { /* ignore */ }
         }
       }
 
-      // fallback: create local ticket_code and PATCH the entity
       if (!ticket_code) {
         ticket_code = String(Math.floor(100000 + Math.random() * 900000));
         try {
@@ -413,7 +369,6 @@ export default function DashboardContent() {
         } catch(e){}
       }
 
-      // fetch latest row
       let workingRow = row;
       try {
         const r2 = await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(id))}`));
@@ -423,7 +378,6 @@ export default function DashboardContent() {
         }
       } catch(e){}
 
-      // send email; pass premium flag so template hides upgrade button
       const mailResult = await sendTemplatedEmail({ entity: tableKey, id: String(id), row: workingRow, premium });
       if (mailResult && mailResult.ok) {
         setActionMsg("Ticket generated and emailed");
@@ -450,21 +404,17 @@ export default function DashboardContent() {
       meta = cfg.fields.map(f => ({ name: f.name, label: f.label || f.name, type: f.type || "text" })).filter(x => x.name && !HIDDEN_FIELDS.has(x.name));
     } else {
       const rows = Array.isArray(report[key]) ? report[key] : [];
-      const cols = rows.length ? getColumnsFromRows(rows) : Object.keys(row || {});
+      const cols = rows.length ? getColumnsFromRowsOrdered(rows) : Object.keys(row || {});
       meta = cols.filter(c => !HIDDEN_FIELDS.has(c)).map(c => ({ name: c, label: c.replace(/_/g, " "), type: "text" }));
     }
-    // Ensure email field present in modal
     if (!meta.some(m => m.name === "email" || m.name === "email_address")) {
       meta.push({ name: "email", label: "Email", type: "text" });
     }
-
-    // IMPORTANT: sanitize row values so modal inputs receive strings, not nested objects
     const sanitized = sanitizeRow(row || {});
     const prepared = {};
     meta.forEach(f => prepared[f.name] = (sanitized[f.name] !== undefined ? sanitized[f.name] : ""));
-
     setModalColumns(meta);
-    setNewIsPremium(false); // editing existing => not a new premium creation
+    setNewIsPremium(false);
     setEditTable(key);
     setEditRow(prepared);
     setIsCreating(false);
@@ -481,15 +431,12 @@ export default function DashboardContent() {
       awardees: [{ name: "name", label: "Name" }, { name: "email", label: "Email" }],
     };
     let meta = (configs[key] && Array.isArray(configs[key].fields) ? configs[key].fields.map(f => ({ name: f.name, label: f.label || f.name })) : (defaults[key] || [{ name: "name", label: "Name" }])).filter(m => m.name && !HIDDEN_FIELDS.has(m.name));
-    // Ensure email exists
     if (!meta.some(m => m.name === "email" || m.name === "email_address")) {
       meta.push({ name: "email", label: "Email", type: "text" });
     }
     setModalColumns(meta);
     const empty = {};
     meta.forEach(m => empty[m.name] = "");
-
-    // DO NOT prefill eventDetails — template will fetch canonical event-details itself
     setEditTable(key);
     setEditRow(empty);
     setIsCreating(true);
@@ -550,7 +497,7 @@ export default function DashboardContent() {
     } catch (e) { console.error(e); setActionMsg("Refresh failed"); }
   }, [parseErrorBody, API_BASE]);
 
-  // CREATE/UPDATE flow with robust id detection and email sending
+  // CREATE/UPDATE flow (keeps setting pendingPremium on create so UI can show Generate)
   const handleEditSave = useCallback(async (edited) => {
     setActionMsg("");
     setEditOpen(false);
@@ -559,9 +506,7 @@ export default function DashboardContent() {
       if (!base) { setActionMsg("Unknown table"); return; }
 
       if (isCreating) {
-        // create payload as-is (do NOT attach eventDetails)
         const payload = { ...edited };
-
         const res = await fetch(buildApiUrl(base), { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" }, body: JSON.stringify(payload) });
         const createdRaw = await res.json().catch(() => null);
         if (!res.ok) {
@@ -570,15 +515,13 @@ export default function DashboardContent() {
           return;
         }
         setActionMsg("Created");
-        // robust id extraction and row extraction
+
         let newId = createdRaw && (createdRaw.insertedId || createdRaw.insertId || createdRaw.id || createdRaw._id || (createdRaw.data && (createdRaw.data.id || createdRaw.data._id)) || null);
         let createdRow = null;
-        // if API returned created row directly
         if (createdRaw && (createdRaw.id || createdRaw._id || createdRaw.email || createdRaw.name)) {
           createdRow = sanitizeRow(createdRaw);
           if (!newId) newId = createdRow.id || createdRow._id || null;
         }
-        // if we have id, fetch the fresh row to ensure canonical shape
         if (!createdRow && newId) {
           try {
             const r = await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(newId))}`));
@@ -588,33 +531,28 @@ export default function DashboardContent() {
             }
           } catch (e) { console.warn("post-create fetch failed", e); }
         }
-        // fallback: refresh all if we couldn't fetch createdRow
         if (!createdRow) {
           await fetchAll();
           setActionMsg("Created");
         } else {
-          // insert sanitized row into report
           setReport(prev => ({ ...prev, [editTable]: [createdRow, ...(prev[editTable] || [])] }));
 
-          // set pending premium for quick generate UI; include premium flag from newIsPremium
-          // Use robust email extraction for pendingPremium
+          // set pending premium only for newly created row -> used to show Generate button
           const pendingEmail = (createdRaw && typeof createdRaw === "object" && extractEmailFromObject(createdRaw)) || extractEmailFromObject(createdRow) || "";
-          setPendingPremium({ table: editTable, id: String(newId || createdRow.id || createdRow._id || ""), email: pendingEmail, premium: !!newIsPremium });
+          const canonicalNewId = String(newId || createdRow.id || createdRow._id || "");
+          setPendingPremium({ table: editTable, id: canonicalNewId, email: pendingEmail, premium: !!newIsPremium });
 
-          // if email present, attempt to send templated email immediately with premium info
-          const email = pendingEmail;
-          if (email) {
+          // If we have email, try send immediately
+          if (pendingEmail) {
             setActionMsg("Created — sending email...");
-            // pass createdRaw if available (original object), otherwise pass sanitized createdRow
             const emailRow = (createdRaw && typeof createdRaw === "object") ? createdRaw : createdRow;
-            const mailResult = await sendTemplatedEmail({ entity: editTable, id: String(newId || createdRow.id || createdRow._id || ""), row: emailRow, premium: !!newIsPremium });
+            const mailResult = await sendTemplatedEmail({ entity: editTable, id: canonicalNewId, row: emailRow, premium: !!newIsPremium });
             if (mailResult && mailResult.ok) setActionMsg("Created and emailed");
             else setActionMsg((mailResult && mailResult.reason) ? `Created  (${mailResult.reason})` : "Created");
           }
         }
         setNewIsPremium(false);
       } else {
-        // update path
         let id = edited.id || edited._id;
         if (!id && edited._id && typeof edited.__id === "object") id = edited._id.$oid || edited._id.toString() || "";
         if (!id) { setActionMsg("Missing id for update"); return; }
@@ -624,7 +562,6 @@ export default function DashboardContent() {
           setActionMsg(`Update failed: ${JSON.stringify(body)}`);
           return;
         }
-        // fetch updated row and replace
         try {
           const r = await fetch(buildApiUrl(`${base}/${encodeURIComponent(String(id))}`));
           if (r.ok) {
@@ -651,6 +588,74 @@ export default function DashboardContent() {
     speakers: (report.speakers || []).length,
     awardees: (report.awardees || []).length,
   }), [report]);
+
+  // Helper to render a friendly details block (no raw JSON unless user requests)
+  function renderDetailsForRow(key, r) {
+    const canonicalId = r.id || r._id || r.ID || "";
+    const isPending = pendingPremium && pendingPremium.table === key && String(pendingPremium.id) === String(canonicalId);
+    const premiumFlag = !!(isPending || String((r.ticket_category || "").toLowerCase()).includes("premium"));
+
+    // list of primary fields to show upfront
+    const primary = {
+      Name: r.name || r.full_name || r.company || "",
+      Email: r.email || r.email_address || "",
+      Company: r.company || r.org || r.organization || "",
+      Ticket: r.ticket_code || r.ticketCode || r.code || "—",
+      Category: r.ticket_category || r.category || "",
+      Phone: r.mobile || r.phone || "",
+    };
+
+    // other fields (exclude primary keys)
+    const primaryKeys = new Set(["name", "full_name", "company", "org", "organization", "email", "email_address", "ticket_code", "ticketCode", "code", "ticket_category", "category", "mobile", "phone", "id", "_id"]);
+    const others = {};
+    for (const k of Object.keys(r || {})) {
+      if (primaryKeys.has(k)) continue;
+      others[k] = r[k];
+    }
+
+    return (
+      <div>
+        <div className="flex items-start justify-between">
+          <div>
+            <h4 className="font-semibold">{primary.Name || primary.Email || primary.Company}</h4>
+            <div className="text-xs text-gray-600">{primary.Email} {primary.Company ? `• ${primary.Company}` : ""}</div>
+            <div className="mt-2 text-sm">
+              <div><strong>Ticket:</strong> {primary.Ticket}</div>
+              <div><strong>Category:</strong> {primary.Category}</div>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            {/* Generate button only for newly created pending entry (Add New) */}
+            {isPending && (
+              <button className="px-3 py-1 bg-[#196e87] text-white rounded text-sm" onClick={() => generateAndEmailTicket({ tableKey: key, row: r, premium: premiumFlag })}>
+                {premiumFlag ? "Generate (Premium)" : "Generate"}
+              </button>
+            )}
+            <button className="px-3 py-1 border rounded text-sm" onClick={() => { navigator.clipboard?.writeText(JSON.stringify(r)); }}>
+              Copy JSON
+            </button>
+          </div>
+        </div>
+
+        {Object.keys(others).length > 0 && (
+          <div className="mt-3">
+            <div className="text-xs text-gray-500 mb-1">Other fields</div>
+            <table className="w-full text-sm">
+              <tbody>
+                {Object.entries(others).map(([k, v]) => (
+                  <tr key={k} className="border-b">
+                    <td className="px-2 py-1 align-top w-1/3 text-xs text-gray-600">{k}</td>
+                    <td className="px-2 py-1 align-top">{typeof v === "object" ? String(v) : String(v)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="pt-4 pb-6 w-full">
@@ -701,11 +706,8 @@ export default function DashboardContent() {
           {TABLE_KEYS.map((key) => {
             const label = key.charAt(0).toUpperCase() + key.slice(1);
             const rows = report[key] || [];
-            const cols = getColumnsFromRows(rows).filter(c => !HIDDEN_FIELDS.has(c));
-            const current = Math.max(1, Number(pageState[key] || 1));
-            const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-            const start = (current - 1) * PAGE_SIZE;
-            const shown = rows.slice(start, start + PAGE_SIZE);
+            const colsKeys = getColumnsFromRowsOrdered(rows).filter(c => !HIDDEN_FIELDS.has(c));
+            const cols = colsKeys.map(k => ({ key: k, label: k.replace(/_/g, " ") }));
             const showManage = (key === "exhibitors" || key === "partners");
 
             return (
@@ -721,54 +723,18 @@ export default function DashboardContent() {
                   </div>
                 </div>
 
-                <div className="p-0 flex-1 min-h-0">
-                  {shown.length === 0 ? (
-                    <div className="p-6 text-gray-500">No records</div>
-                  ) : (
-                    <div className="overflow-auto h-full max-h-[56vh] md:max-h-[60vh]">
-                      <div className="min-w-full">
-                        <table className="min-w-full w-full table-auto border-collapse">
-                          <thead className="bg-gray-50 sticky top-0">
-                            <tr>
-                              {cols.slice(0, 5).map(c => <th key={c} className="text-left text-sm px-3 py-2 text-gray-600">{c}</th>)}
-                              <th className="px-3 py-2 text-left">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {shown.map((r, idx) => {
-                              const canonicalId = r.id || r._id || r.ID || "";
-                              const isPendingPremium = pendingPremium && pendingPremium.table === key && String(pendingPremium.id) === String(canonicalId);
-                              const premiumFlag = isPendingPremium || String((r.ticket_category || "").toLowerCase()).includes("premium");
-                              return (
-                                <tr key={r.id ?? `${key}-${idx}`} className="border-t">
-                                  {cols.slice(0, 5).map(c => <td key={c} className="px-3 py-3 text-sm text-gray-700 align-top whitespace-pre-wrap break-words">{r[c] ?? ""}</td>)}
-                                  <td className="px-3 py-3">
-                                    <div className="flex items-center gap-2">
-                                      {pendingPremium && pendingPremium.table === key && String(pendingPremium.id) === String(canonicalId) ? (
-                                        <button className="px-2 py-1 border rounded text-sm" onClick={() => generateAndEmailTicket({ tableKey: key, row: r, premium: premiumFlag })}>
-                                          {premiumFlag ? "Generate (Premium)" : "Generate"}
-                                        </button>
-                                      ) : null}
-
-                                      <ActionsMenu
-                                        onEdit={() => handleEdit(label, r)}
-                                        onRefresh={() => handleRefreshRow(key, r)}
-                                        onDelete={() => handleDelete(label, r)}
-                                      />
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="p-4 border-t">
-                  <Pagination currentPage={current} totalPages={totalPages} onPageChange={(pg) => setPageState(prev => ({ ...prev, [key]: pg }))} />
+                <div className="p-4 flex-1 min-h-0">
+                  <DataTable
+                    columns={cols}
+                    data={rows}
+                    defaultPageSize={PAGE_SIZE}
+                    onRowAction={(action, row) => {
+                      if (action === "edit") handleEdit(label, row);
+                      else if (action === "refresh") handleRefreshRow(key, row);
+                      else if (action === "delete") handleDelete(label, row);
+                    }}
+                    renderRowDetails={(r) => renderDetailsForRow(key, r)}
+                  />
                 </div>
               </section>
             );
