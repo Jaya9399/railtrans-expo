@@ -1,280 +1,142 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 
-/**
- * DataTable
- * - columns: [{ key, label }] preferred order and labels
- * - data: array of objects
- * - defaultPageSize
- * - onRowAction(action, row)
- * - renderRowDetails(row)
- */
 export default function DataTable({
   columns = [],
   data = [],
-  pageSizeOptions = [5, 10, 25, 50],
   defaultPageSize = 10,
-  onRowAction,
-  renderRowDetails,
+  onEdit,
+  onDelete,
+  onRefreshRow,
+  prettifyKey,
 }) {
-  const [query, setQuery] = useState("");
-  const [sortBy, setSortBy] = useState({ key: null, dir: "asc" });
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(defaultPageSize);
-  const [visibleCols, setVisibleCols] = useState([]);
-  const [expandedRow, setExpandedRow] = useState(null);
+  const [page, setPage] = useState(0);
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState("asc");
 
-  // friendly label map (fallback)
-  const LABEL_MAP = {
-    name: "Name",
-    full_name: "Name",
-    company: "Company",
-    org: "Company",
-    organization: "Company",
-    email: "Email",
-    email_address: "Email",
-    ticket_code: "Ticket",
-    ticketCode: "Ticket",
-    code: "Ticket",
-    ticket_category: "Category",
-    category: "Category",
-    mobile: "Phone",
-    phone: "Phone",
-    id: "ID",
-    _id: "ID",
-  };
-
-  // prettify a key like "first_name" or "ticketCode" -> "Ticket Code" fallback
-  function prettifyKey(k) {
-    if (!k) return "";
-    if (LABEL_MAP[k]) return LABEL_MAP[k];
-    // split snake_case and camelCase
-    const spaced = k
-      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-      .replace(/[_-]+/g, " ")
-      .toLowerCase();
-    return spaced.split(" ").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
-  }
-
-  // Build full column list (preserve order passed in columns prop, else discover from data)
-  const allCols = useMemo(() => {
-    if (columns && columns.length) {
-      return columns.map(c => ({ key: c.key, label: c.label || prettifyKey(c.key) }));
-    }
-    const seen = new Set();
-    const cols = [];
-    for (const row of data || []) {
-      for (const k of Object.keys(row || {})) {
-        if (!seen.has(k)) {
-          seen.add(k);
-          cols.push({ key: k, label: prettifyKey(k) });
-        }
-      }
-    }
-    return cols;
-  }, [columns, data]);
-
-  useEffect(() => {
-    if (allCols.length && visibleCols.length === 0) {
-      setVisibleCols(allCols.map(c => c.key));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allCols]);
-
-  // utility: render cell value in readable form (avoid raw JSON)
-  function renderCellValue(v) {
-    if (v === undefined || v === null) return "";
-    if (typeof v === "object") {
-      // If small object with name/email/company, flatten
-      const picks = [];
-      if (v.name) picks.push(String(v.name));
-      if (v.full_name && !v.name) picks.push(String(v.full_name));
-      if (v.company) picks.push(String(v.company));
-      if (v.email) picks.push(String(v.email));
-      if (picks.length) return picks.join(" • ");
-      // otherwise show placeholder and allow tooltip with JSON
-      const json = JSON.stringify(v);
-      return { __raw: json }; // special sentinel to show tooltip
-    }
-    return String(v);
-  }
-
-  // filter by query (search)
-  const filtered = useMemo(() => {
-    const q = (query || "").toLowerCase().trim();
-    if (!q) return data;
-    return (data || []).filter(row => {
-      return visibleCols.some(colKey => {
-        const v = row?.[colKey];
-        if (v === undefined || v === null) return false;
-        const s = typeof v === "object" ? JSON.stringify(v) : String(v);
-        return s.toLowerCase().includes(q);
-      });
-    });
-  }, [data, query, visibleCols]);
-
-  // sort
-  const sorted = useMemo(() => {
-    if (!sortBy.key) return filtered;
-    const arr = [...filtered];
-    arr.sort((a, b) => {
-      const va = (a?.[sortBy.key] ?? "").toString().toLowerCase();
-      const vb = (b?.[sortBy.key] ?? "").toString().toLowerCase();
-      if (va < vb) return sortBy.dir === "asc" ? -1 : 1;
-      if (va > vb) return sortBy.dir === "asc" ? 1 : -1;
+  const sortedData = useMemo(() => {
+    if (!sortKey) return data || [];
+    return [...(data || [])].sort((a, b) => {
+      const aVal = a?.[sortKey] ?? "";
+      const bVal = b?.[sortKey] ?? "";
+      const sa = typeof aVal === "string" ? aVal.toLowerCase() : String(aVal);
+      const sb = typeof bVal === "string" ? bVal.toLowerCase() : String(bVal);
+      if (sa < sb) return sortDir === "asc" ? -1 : 1;
+      if (sa > sb) return sortDir === "asc" ? 1 : -1;
       return 0;
     });
-    return arr;
-  }, [filtered, sortBy]);
+  }, [data, sortKey, sortDir]);
 
-  const total = sorted.length;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const pageData = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return sorted.slice(start, start + pageSize);
-  }, [sorted, page, pageSize]);
+  const pageCount = Math.max(1, Math.ceil((sortedData || []).length / defaultPageSize));
 
-  // CSV export
-  function exportCsv() {
-    const keys = visibleCols;
-    const rows = [keys.map(k => `"${prettifyKey(k).replace(/"/g, '""')}"`).join(",")].concat(sorted.map(r => keys.map(k => {
-      const v = r?.[k];
-      if (v === undefined || v === null) return "";
-      const s = typeof v === "object" ? JSON.stringify(v) : String(v);
-      return `"${s.replace(/"/g, '""')}"`;
-    }).join(",")));
-    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `export-${Date.now()}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
+  const pagedData = useMemo(() => {
+    const start = page * defaultPageSize;
+    return (sortedData || []).slice(start, start + defaultPageSize);
+  }, [sortedData, page, defaultPageSize]);
 
-  function toggleSort(key) {
-    if (sortBy.key !== key) return setSortBy({ key, dir: "asc" });
-    setSortBy(prev => ({ key, dir: prev.dir === "asc" ? "desc" : "asc" }));
-  }
-
-  function toggleCol(key) {
-    setVisibleCols(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
-  }
-
-  // cell renderer element
-  function Cell({ value }) {
-    if (value === undefined || value === null) return <span className="text-sm text-gray-600">—</span>;
-    if (typeof value === "object" && value.__raw) {
-      const full = value.__raw;
-      const short = full.length > 40 ? `${full.slice(0, 40)}…` : full;
-      return <div title={full} className="text-sm text-gray-700 truncate max-w-xs">{short}</div>;
+  function toggleSort(colKey) {
+    if (sortKey === colKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(colKey);
+      setSortDir("asc");
     }
-    const s = String(value);
-    if (s.length > 60) {
-      const short = s.slice(0, 55) + "…";
-      return <div title={s} className="text-sm text-gray-800">{short}</div>;
-    }
-    return <div className="text-sm text-gray-800">{s}</div>;
+    setPage(0);
   }
 
   return (
-    <div className="bg-white rounded shadow p-3">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <input
-            className="border rounded px-2 py-1 text-sm w-full sm:w-56"
-            placeholder="Search..."
-            value={query}
-            onChange={(e) => { setQuery(e.target.value); setPage(1); }}
-          />
-          <button className="px-2 py-1 bg-gray-100 rounded text-sm" onClick={() => { setQuery(""); }}>Clear</button>
-          <button className="px-2 py-1 bg-indigo-600 text-white rounded text-sm" onClick={exportCsv}>Export CSV</button>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="text-xs text-gray-500 hidden sm:block">Columns</div>
-          <div className="flex gap-1 flex-wrap max-w-xs">
-            {allCols.map(c => (
-              <label key={c.key} className="inline-flex items-center text-xs bg-gray-50 border rounded px-2 py-1">
-                <input type="checkbox" checked={visibleCols.includes(c.key)} onChange={() => toggleCol(c.key)} className="mr-1" />
-                <span>{c.label}</span>
-              </label>
+    <div className="w-full overflow-x-auto max-h-[420px] overflow-y-auto rounded border border-gray-200">
+      <table className="w-full text-left text-sm border-collapse">
+        <thead className="bg-gray-100 sticky top-0 z-10">
+          <tr>
+            {columns.map(({ key, label }) => (
+              <th
+                key={key}
+                className="px-3 py-2 border-b border-gray-300 cursor-pointer select-none whitespace-nowrap"
+                onClick={() => toggleSort(key)}
+                title={`Sort by ${label || key}`}
+              >
+                <div className="flex items-center gap-1">
+                  <span className="font-medium">{label || (prettifyKey ? prettifyKey(key) : key)}</span>
+                  {sortKey === key && <span className="text-xs">{sortDir === "asc" ? "▲" : "▼"}</span>}
+                </div>
+              </th>
             ))}
-          </div>
-          <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} className="ml-2 border rounded px-2 py-1 text-sm">
-            {pageSizeOptions.map(s => <option key={s} value={s}>{s} / page</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div className="overflow-auto">
-        <table className="min-w-full table-auto border-collapse">
-          <thead className="bg-gray-50 sticky top-0">
+            <th className="px-3 py-2 border-b border-gray-300 text-center w-28">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pagedData.length === 0 && (
             <tr>
-              {allCols.filter(c => visibleCols.includes(c.key)).map(c => (
-                <th key={c.key} className="text-left text-sm px-3 py-2 text-gray-600 cursor-pointer" onClick={() => toggleSort(c.key)}>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{c.label}</span>
-                    {sortBy.key === c.key ? <span className="text-xs text-gray-400">{sortBy.dir === "asc" ? "▲" : "▼"}</span> : null}
-                  </div>
-                </th>
-              ))}
-              <th className="px-3 py-2 text-left text-sm">Actions</th>
+              <td colSpan={columns.length + 1} className="text-center py-6 text-gray-500">
+                No data available.
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {pageData.length === 0 ? (
-              <tr><td colSpan={visibleCols.length + 1} className="p-6 text-gray-500">No records</td></tr>
-            ) : pageData.map((row, i) => (
-              <tr key={row.id ?? i} className="border-t hover:bg-gray-50 align-top">
-                {allCols.filter(c => visibleCols.includes(c.key)).map(c => {
-                  const raw = row?.[c.key];
-                  const val = renderCellValue(raw);
-                  return (
-                    <td key={c.key} className="px-3 py-2 align-top max-w-xs">
-                      <Cell value={val} />
-                    </td>
-                  );
-                })}
-                <td className="px-3 py-2 text-sm align-top">
-                  <div className="flex items-center gap-2">
-                    <button className="px-2 py-1 border rounded text-xs" onClick={() => onRowAction?.("edit", row)}>Edit</button>
-                    <button className="px-2 py-1 border rounded text-xs" onClick={() => onRowAction?.("refresh", row)}>Refresh</button>
-                    <button className="px-2 py-1 border rounded text-xs" onClick={() => onRowAction?.("delete", row)}>Delete</button>
-                    {renderRowDetails && <button className="px-2 py-1 border rounded text-xs" onClick={() => setExpandedRow(row)}>Details</button>}
-                  </div>
+          )}
+          {pagedData.map((row, i) => {
+            const keyId = row?.id ?? row?._id ?? row?.ID ?? i;
+            return (
+              <tr key={String(keyId)} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                {columns.map(({ key }) => (
+                  <td
+                    key={key}
+                    className="px-2 py-2 border-b border-gray-200 max-w-xs truncate"
+                    title={row?.[key] !== undefined && row?.[key] !== null ? String(row[key]) : ""}
+                  >
+                    {typeof row?.[key] === "string" && row[key].length > 100
+                      ? row[key].slice(0, 97) + "..."
+                      : (row?.[key] ?? "")}
+                  </td>
+                ))}
+                <td className="px-2 py-2 border-b border-gray-200 text-center whitespace-nowrap">
+                  <button
+                    className="mr-2 text-blue-600 hover:underline text-xs"
+                    onClick={() => typeof onEdit === "function" && onEdit(row)}
+                    title="Edit"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="mr-2 text-red-600 hover:underline text-xs"
+                    onClick={() => typeof onDelete === "function" && onDelete(row)}
+                    title="Delete"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    className="text-gray-600 hover:underline text-xs"
+                    onClick={() => typeof onRefreshRow === "function" && onRefreshRow(row)}
+                    title="Refresh this row"
+                  >
+                    ↻
+                  </button>
                 </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            );
+          })}
+        </tbody>
+      </table>
 
-      <div className="flex items-center justify-between mt-3">
-        <div className="text-sm text-gray-600">Showing {(page - 1) * pageSize + 1} — {Math.min(page * pageSize, total)} of {total}</div>
-        <div className="flex items-center gap-2">
-          <button className="px-2 py-1 border rounded disabled:opacity-50" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>Prev</button>
-          <div className="text-sm">Page</div>
-          <input type="number" min={1} max={totalPages} value={page} onChange={(e) => setPage(Math.min(Math.max(1, Number(e.target.value || 1)), totalPages))} className="w-12 text-center border rounded px-1 py-1" />
-          <div className="text-sm">/ {totalPages}</div>
-          <button className="px-2 py-1 border rounded disabled:opacity-50" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Next</button>
-        </div>
-      </div>
-
-      {/* details modal */}
-      {expandedRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-          <div className="absolute inset-0 bg-black opacity-40" onClick={() => setExpandedRow(null)} />
-          <div className="relative z-60 w-full max-w-3xl bg-white rounded shadow-lg p-4 overflow-auto" style={{ maxHeight: "90vh" }}>
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-lg font-semibold">Details</h3>
-              <button className="px-3 py-1 border rounded" onClick={() => setExpandedRow(null)}>Close</button>
-            </div>
-            <div className="text-sm">
-              {renderRowDetails ? renderRowDetails(expandedRow) : <pre className="whitespace-pre-wrap">{JSON.stringify(expandedRow, null, 2)}</pre>}
-            </div>
-          </div>
+      {pageCount > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-2 p-2">
+          <button
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={page === 0}
+            className="px-2 py-1 border rounded disabled:opacity-50"
+            aria-label="Previous Page"
+          >
+            Prev
+          </button>
+          <span className="text-sm">
+            Page {Math.min(page + 1, pageCount)} of {pageCount}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+            disabled={page === pageCount - 1}
+            className="px-2 py-1 border rounded disabled:opacity-50"
+            aria-label="Next Page"
+          >
+            Next
+          </button>
         </div>
       )}
     </div>
