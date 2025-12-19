@@ -135,40 +135,56 @@ export default function VisitorTicket({
   }, [downloadUrl, name]);
 
   // Print badge-only: open a window that contains only the badge card HTML and print it
-  const handlePrintCard = useCallback(() => {
-    if (!cardRef.current) {
-      window.print();
-      return;
-    }
-    const cardHtml = cardRef.current.outerHTML;
-    const win = window.open("", "_blank", "noopener,noreferrer");
-    if (!win) {
-      window.print();
-      return;
-    }
-    const style = `
-      <style>
-        @media print {
-          body { margin: 0; -webkit-print-color-adjust: exact; }
-          .ticket-wrapper { width: 100%; display: flex; align-items: center; justify-content: center; }
-        }
-        body { margin: 0; font-family: Helvetica, Arial, sans-serif; background: #f3f4f6; }
-        .ticket-wrapper { padding: 24px; display:flex; align-items:center; justify-content:center; min-height:100vh; box-sizing: border-box; }
-        .badge-card { box-shadow: none; background: transparent; }
-      </style>
-    `;
-    win.document.write(`<!doctype html><html><head><meta charset="utf-8">${style}</head><body><div class="ticket-wrapper">${cardHtml}</div></body></html>`);
-    win.document.close();
-    win.onload = () => {
-      try {
-        win.focus();
-        win.print();
-        setTimeout(() => { try { win.close(); } catch {} }, 500);
-      } catch (e) {
-        console.warn("Print failed", e);
+async function handlePrintCard() {
+  if (!validation || !validation.ok) return;
+  const t = validation.ticket;
+
+  const name = t.name || t.full_name || "Unknown";
+  const company = t.company || t.org || "";
+  const email = t.email || "";
+  const ticketCode = t.ticket_code || t.ticketId || "";
+
+  // QR for ticket code only
+  const qrSize = 220;
+  const qrUrl = ticketCode
+    ? `https://chart.googleapis.com/chart?cht=qr&chs=${qrSize}x${qrSize}&chl=${encodeURIComponent(ticketCode)}&choe=UTF-8`
+    : null;
+
+  const cardHtml = `
+    <div style="max-width: 520px; margin:0 auto; background:#fff; border-radius:12px; padding:28px; text-align:center; font-family:Arial, sans-serif; box-shadow:0 6px 18px rgba(0,0,0,0.1)">
+      <div style="font-size:28px; font-weight:700; margin-bottom:6px;">${name}</div>
+      ${qrUrl ? `<img src="${qrUrl}" width="${qrSize}" height="${qrSize}" style="border-radius:8px; margin:12px 0;" />` : `<div style="width:${qrSize}px; height:${qrSize}px; display:flex; align-items:center; justify-content:center; background:#f1f5f9; color:#9ca3af; border-radius:8px;">QR not available</div>`}
+      <div style="font-size:16px; color:#333; margin-top:12px;">${company}</div>
+      <div style="font-size:14px; color:#555; margin-top:4px;">${email}</div>
+    </div>
+  `;
+
+  const win = window.open("", "_blank", "noopener,noreferrer");
+  if (!win) return window.print();
+
+  const style = `
+    <style>
+      @media print {
+        body { margin:0; -webkit-print-color-adjust: exact; }
+        .ticket-wrapper { width:100%; display:flex; align-items:center; justify-content:center; min-height:100vh; box-sizing:border-box; }
       }
-    };
-  }, []);
+      body { margin:0; background:#f3f4f6; display:flex; align-items:center; justify-content:center; }
+    </style>
+  `;
+
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8">${style}</head><body><div class="ticket-wrapper">${cardHtml}</div></body></html>`);
+  win.document.close();
+  win.onload = () => {
+    try {
+      win.focus();
+      win.print();
+      setTimeout(() => { try { win.close(); } catch {} }, 500);
+    } catch (e) {
+      console.warn("Print failed", e);
+    }
+  };
+}
+
 
   if (!visitor) return null;
 
