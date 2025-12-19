@@ -2,24 +2,27 @@ import React, { useEffect, useRef } from "react";
 
 /**
  * Lightweight uncontrolled EditModal
- * - columns: [{ name, label, type, options, required, showIf }]
- * - row: initial values
+ * - columns: [{ name|key, label, type, options, required, showIf }]
+ * - row: initial values (raw backend object preferred)
  * - onSave(payload)
  */
 
 const normalize = (cols = []) =>
-  (Array.isArray(cols) ? cols : []).map((c) =>
-    typeof c === "string"
-      ? { name: c, label: c.replace(/_/g, " "), type: "text", options: [], required: false }
-      : {
-          name: c.name,
-          label: c.label || c.name,
-          type: c.type || "text",
-          options: c.options || [],
-          required: !!c.required,
-          showIf: c.showIf || null,
-        }
-  );
+  (Array.isArray(cols) ? cols : []).map((c) => {
+    if (typeof c === "string") {
+      return { name: c, label: c.replace(/_/g, " "), type: "text", options: [], required: false };
+    }
+    // accept either { name } or { key } from various config shapes
+    const name = c.name || c.key || c.field || c.id;
+    return {
+      name,
+      label: c.label || c.name || c.key || name,
+      type: c.type || "text",
+      options: c.options || [],
+      required: !!c.required,
+      showIf: c.showIf || null,
+    };
+  });
 
 function toCamel(s = "") {
   return String(s).replace(/[_-]([a-zA-Z0-9])/g, (_, ch) => ch.toUpperCase());
@@ -69,6 +72,7 @@ function dedupeMeta(meta = []) {
   const out = [];
   for (const m of meta) {
     const name = String(m.name || "").trim();
+    if (!name) continue;
     const key = name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -76,6 +80,8 @@ function dedupeMeta(meta = []) {
   }
   return out;
 }
+
+const DISABLE_TICKET_KEYS = new Set(["ticket_code", "ticketCode", "code"]);
 
 export default function EditModal({
   open,
@@ -110,24 +116,64 @@ export default function EditModal({
 
   const refs = useRef({});
 
+  // Ensure refs exist for each meta field before rendering (some types use object-holder instead of DOM ref)
   useEffect(() => {
     if (!open) return;
     meta.forEach((f) => {
-      if (!refs.current[f.name]) refs.current[f.name] = React.createRef();
+      // initial value for the field from row
+      const initial = row?.[f.name] ?? (f.type === "checkbox" ? false : "");
+      if (!refs.current[f.name]) {
+        if (f.type === "radio") {
+          // use a small holder for group value
+          refs.current[f.name] = { current: { value: initial } };
+        } else {
+          refs.current[f.name] = React.createRef();
+        }
+      }
     });
+    // cleanup any leftover refs for removed meta fields
     Object.keys(refs.current).forEach((k) => {
       if (!meta.find((m) => m.name === k)) delete refs.current[k];
     });
-  }, [open, meta]);
+  }, [open, meta, row]);
+
+  // When modal opens or row changes, write values into DOM refs (uncontrolled inputs use defaultValue only once)
+  useEffect(() => {
+    if (!open) return;
+    meta.forEach((f) => {
+      const r = refs.current[f.name];
+      const initial = row?.[f.name] ?? (f.type === "checkbox" ? false : "");
+      if (!r) return;
+      // radio groups use holder
+      if (f.type === "radio") {
+        r.current = r.current || {};
+        r.current.value = initial;
+        return;
+      }
+      // DOM ref exists
+      const el = r.current;
+      if (!el) return;
+      try {
+        if (f.type === "checkbox") {
+          el.checked = !!initial;
+        } else {
+          // set value for selects/inputs/textarea
+          el.value = initial === undefined || initial === null ? "" : initial;
+        }
+      } catch (e) {
+        // ignore if DOM not ready
+      }
+    });
+  }, [open, meta, row]);
 
   const isVisible = (f) => {
     if (!f.showIf) return true;
-    const dep = refs.current[f.showIf.field];
+    const depRef = refs.current[f.showIf.field];
     const current =
-      dep && dep.current
-        ? dep.current.type === "checkbox"
-          ? dep.current.checked
-          : dep.current.value
+      depRef && depRef.current
+        ? depRef.current.type === "checkbox"
+          ? depRef.current.checked
+          : depRef.current.value
         : row[f.showIf.field];
     return Array.isArray(f.showIf.value)
       ? f.showIf.value.includes(current)
@@ -141,22 +187,32 @@ export default function EditModal({
     meta.forEach((f) => {
       if (!isVisible(f)) return;
       const r = refs.current[f.name];
+      // If no ref (shouldn't happen) fall back to the provided row value
       if (!r || !r.current) {
         payload[f.name] = row[f.name] ?? "";
         return;
       }
-      const el = r.current;
-      if (f.type === "checkbox") payload[f.name] = !!el.checked;
-      else if (f.type === "number")
-        payload[f.name] = el.value === "" ? "" : Number(el.value);
-      else payload[f.name] = el.value;
+
+      if (f.type === "radio") {
+        // value holder
+        payload[f.name] = r.current.value ?? "";
+      } else if (f.type === "checkbox") {
+        payload[f.name] = !!r.current.checked;
+      } else if (f.type === "number") {
+        payload[f.name] = r.current.value === "" ? "" : Number(r.current.value);
+      } else {
+        payload[f.name] = r.current.value;
+      }
     });
 
     const normalized = normalizePayloadKeys(payload);
     const expanded = expandCompanyAliases(normalized);
 
-    console.debug("[EditModal] Final payload:", expanded);
-    await Promise.resolve(onSave(expanded));
+    try {
+      await Promise.resolve(onSave(expanded));
+    } catch (err) {
+      console.error("[EditModal] onSave error:", err);
+    }
   };
 
   if (!open) return null;
@@ -165,24 +221,27 @@ export default function EditModal({
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="bg-white rounded-lg shadow-xl z-10 w-full max-w-2xl mx-4">
         <div className="px-4 py-3 border-b flex justify-between items-center">
-          <div className="text-lg font-semibold">
-            {isNew ? "Add New" : "Edit"}
-          </div>
-          <button onClick={onClose}>✕</button>
+          <div className="text-lg font-semibold">{isNew ? "Add New" : "Edit"}</div>
+          <button onClick={onClose} aria-label="Close">✕</button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-4 max-h-[70vh] overflow-auto">
-          {meta.length === 0 && (
-            <div className="text-gray-500">No fields</div>
-          )}
+          {meta.length === 0 && <div className="text-gray-500">No fields</div>}
 
           {meta.map((f) => {
             if (!isVisible(f)) return null;
-            const initial =
-              row?.[f.name] ?? (f.type === "checkbox" ? false : "");
-            if (!refs.current[f.name])
-              refs.current[f.name] = React.createRef();
 
+            const initial = row?.[f.name] ?? (f.type === "checkbox" ? false : "");
+            if (!refs.current[f.name]) {
+              // ensure ref exists during render as a fallback
+              if (f.type === "radio") refs.current[f.name] = { current: { value: initial } };
+              else refs.current[f.name] = React.createRef();
+            }
+
+            // compute disable state for ticket fields
+            const isTicketField = DISABLE_TICKET_KEYS.has(f.name);
+
+            // text area
             if (f.type === "textarea")
               return (
                 <div key={f.name} className="mb-3">
@@ -194,10 +253,14 @@ export default function EditModal({
                     ref={refs.current[f.name]}
                     defaultValue={initial}
                     className="w-full border rounded px-3 py-2"
+                    readOnly={isTicketField}
+                    disabled={isTicketField}
+                    placeholder={isTicketField && isNew ? "auto-generated" : undefined}
                   />
                 </div>
               );
 
+            // select
             if (f.type === "select")
               return (
                 <div key={f.name} className="mb-3">
@@ -209,13 +272,15 @@ export default function EditModal({
                     ref={refs.current[f.name]}
                     defaultValue={initial}
                     className="w-full border rounded px-3 py-2"
+                    disabled={isTicketField}
+                    title={isTicketField ? "Ticket code cannot be edited" : undefined}
                   >
-                    <option value="">Select</option>
-                    {f.options.map((o, i) => {
+                    <option value="">{isTicketField && isNew ? "auto-generated" : "Select"}</option>
+                    {Array.isArray(f.options) && f.options.map((o, i) => {
                       const val = typeof o === "object" ? o.value : o;
                       const lab = typeof o === "object" ? o.label : o;
                       return (
-                        <option key={i} value={val}>
+                        <option key={String(val ?? i)} value={val}>
                           {lab}
                         </option>
                       );
@@ -224,6 +289,7 @@ export default function EditModal({
                 </div>
               );
 
+            // checkbox
             if (f.type === "checkbox")
               return (
                 <label key={f.name} className="mb-3 flex items-center gap-2">
@@ -231,6 +297,8 @@ export default function EditModal({
                     ref={refs.current[f.name]}
                     type="checkbox"
                     defaultChecked={!!initial}
+                    disabled={isTicketField}
+                    title={isTicketField ? "Ticket code cannot be edited" : undefined}
                   />
                   <span>
                     {f.label}
@@ -239,6 +307,7 @@ export default function EditModal({
                 </label>
               );
 
+            // radio group (store selection in holder ref)
             if (f.type === "radio")
               return (
                 <div key={f.name} className="mb-3">
@@ -247,21 +316,25 @@ export default function EditModal({
                     {f.required && " *"}
                   </label>
                   <div className="flex gap-4">
-                    {f.options.map((o, i) => {
+                    {Array.isArray(f.options) && f.options.map((o, i) => {
                       const val = typeof o === "object" ? o.value : o;
                       const lab = typeof o === "object" ? o.label : o;
+                      const checked = String(initial) === String(val);
                       return (
-                        <label key={i} className="flex items-center gap-2">
+                        <label key={String(val ?? i)} className="flex items-center gap-2">
                           <input
                             name={f.name}
                             type="radio"
-                            defaultChecked={String(initial) === String(val)}
+                            defaultChecked={checked}
                             value={val}
                             onChange={(e) => {
-                              refs.current[f.name].current = e.target;
+                              // update holder value
+                              refs.current[f.name] = refs.current[f.name] || { current: {} };
+                              refs.current[f.name].current.value = e.target.value;
                             }}
+                            disabled={isTicketField}
                           />
-                          {lab}
+                          <span>{lab}</span>
                         </label>
                       );
                     })}
@@ -269,6 +342,7 @@ export default function EditModal({
                 </div>
               );
 
+            // default single-line input
             return (
               <div key={f.name} className="mb-3">
                 <label className="block mb-1">
@@ -280,25 +354,17 @@ export default function EditModal({
                   defaultValue={initial}
                   type={f.type || "text"}
                   className="w-full border rounded px-3 py-2"
+                  readOnly={isTicketField}
+                  disabled={isTicketField}
+                  placeholder={isTicketField && isNew ? "auto-generated" : undefined}
                 />
               </div>
             );
           })}
 
           <div className="flex justify-end gap-3 mt-4">
-            <button
-              type="button"
-              className="px-4 py-2 border"
-              onClick={onClose}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 bg-indigo-600 text-white rounded"
-            >
-              Save
-            </button>
+            <button type="button" className="px-4 py-2 border" onClick={onClose}>Cancel</button>
+            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded">Save</button>
           </div>
         </form>
       </div>

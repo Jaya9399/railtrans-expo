@@ -1,6 +1,13 @@
 import React, { useMemo, useCallback } from "react";
 import DataTable from "./DataTable";
 
+/**
+ * DashboardSection
+ * - When "Add New" is clicked this component will attempt to fetch
+ *   /api/registration-configs/:page and extract fields to use for the Add-New modal.
+ * - It then calls onAddNew(tableKey, premium, configCols) so the parent can open the modal
+ *   with the provided columns. If fetch fails we call onAddNew(tableKey, premium) as before.
+ */
 export default function DashboardSection({
   label,
   data = [],
@@ -24,7 +31,8 @@ export default function DashboardSection({
       });
     });
 
-    let configCols = configs?.[tableKey]?.columns?.map((c) => c.key);
+    // Prefer configured column order if available
+    let configCols = configs?.[tableKey]?.columns?.map((c) => c.key) || configs?.[tableKey]?.fields?.map((c) => c.name);
     if (configCols && configCols.length > 0) {
       const missing = [...keysSet].filter((k) => !configCols.includes(k));
       configCols = [...configCols, ...missing];
@@ -64,6 +72,52 @@ export default function DashboardSection({
     else if (tableKey === "partners") setShowPartnerManager && setShowPartnerManager(true);
   }
 
+  // Called when the "Add New" button is pressed.
+  // This will try to fetch per-page config at /api/registration-configs/:page and pass it to parent.
+  async function handleAddClick() {
+    // determine singular page name for the API: visitors -> visitor
+    const page = String(tableKey || "").replace(/s$/i, "").toLowerCase();
+    let configCols = null;
+
+    try {
+      const res = await fetch(`/api/registration-configs/${encodeURIComponent(page)}`);
+      if (res.ok) {
+        const js = await res.json().catch(() => null);
+        // Support a few shapes: { config: {...} } or { fields: [...] } or the config object itself
+        const cfg = js && (js.config || js.value || js) ? (js.config || js.value || js) : null;
+        if (cfg) {
+          // find fields in common places
+          configCols = cfg.fields || cfg.columns || (cfg.form && cfg.form.fields) || null;
+        }
+      } else {
+        // if 404 or other, we'll fallback to parent behavior
+        console.debug(`[DashboardSection] no central config for ${page}: ${res.status}`);
+      }
+    } catch (e) {
+      console.debug('[DashboardSection] fetch registration-configs failed', e && e.message);
+    }
+
+    if (Array.isArray(configCols) && configCols.length > 0) {
+      // Normalize columns to { name, label, type, options, required }
+      const normalized = configCols.map((c) => {
+        if (typeof c === "string") return { name: c, label: prettifyKey(c), type: "text" };
+        const name = c.name || c.key || c.field || c.id;
+        return {
+          name,
+          label: c.label || prettifyKey(name),
+          type: c.type || "text",
+          options: c.options || [],
+          required: !!c.required,
+        };
+      });
+      // pass normalized columns to parent (third parameter)
+      return typeof onAddNew === "function" ? onAddNew(tableKey, true, normalized) : null;
+    }
+
+    // fallback: call parent with existing signature (no config cols)
+    return typeof onAddNew === "function" ? onAddNew(tableKey) : null;
+  }
+
   return (
     <section className="border border-gray-200 rounded bg-white p-4 shadow">
       <header className="flex items-center justify-between mb-3">
@@ -74,7 +128,7 @@ export default function DashboardSection({
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => typeof onAddNew === "function" && onAddNew(tableKey)}
+            onClick={handleAddClick}
             className="text-sm px-3 py-1 border rounded bg-blue-100 text-blue-700 hover:bg-blue-200"
           >
             Add New

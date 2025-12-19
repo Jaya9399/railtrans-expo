@@ -80,10 +80,16 @@ function prettifyKey(k) {
     .join(" ");
 }
 
+// pattern used to detect fields we will hide on "Add New"
+const HIDE_ON_CREATE_RE = /(ticket|tx|transaction|payment|paid|(^id$)|id$|created(_at)?|updated(_at)?|timestamp|_at)$/i;
+function shouldHideOnCreate(name = "") {
+  if (!name) return false;
+  return HIDE_ON_CREATE_RE.test(String(name));
+}
+
 export default function DashboardContent() {
-  // report -> sanitized for display
+  // store both sanitized display rows (report) and raw backend rows (rawReport)
   const [report, setReport] = useState({});
-  // rawReport -> raw backend objects used for edit/update
   const [rawReport, setRawReport] = useState({});
   const [configs, setConfigs] = useState({});
   const [loading, setLoading] = useState(true);
@@ -145,7 +151,6 @@ export default function DashboardContent() {
     return out;
   }, [API_BASE]);
 
-  // fetchAll now populates rawReport and report (sanitized)
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
@@ -196,11 +201,9 @@ export default function DashboardContent() {
     setEditTable(table);
     setIsCreating(false);
 
-    // find raw row by id/_id/ID etc
     const raws = rawReport[table] || [];
     const idKeys = ["id", "_id", "ID", "Id"];
     let raw = null;
-    // try to find by matching any id-like field values
     for (const r of raws) {
       for (const k of idKeys) {
         if (r && r[k] !== undefined && String(r[k]) === String(displayRow[k])) {
@@ -210,16 +213,13 @@ export default function DashboardContent() {
       }
       if (raw) break;
     }
-    // if not found, try matching by email or name as fallback (may be ambiguous)
     if (!raw && displayRow && displayRow.email) {
       raw = raws.find((r) => r && String(r.email || r.data?.email || r.form?.email || "").toLowerCase() === String(displayRow.email).toLowerCase());
     }
-    // fallback to using displayRow (sanitized) to avoid blocking edit
     if (!raw) raw = displayRow || null;
 
-    // build modal columns: prefer config columns or keys from raw/display row
     let configCols = (configs[table] && configs[table].columns) || null;
-    if (!configCols && raw) configCols = Object.keys(raw).map((k) => ({ key: k, label: prettifyKey(k) }));
+    if (!configCols && raw) configCols = Object.keys(raw).map((k) => ({ key: k, name: k, label: prettifyKey(k) }));
     if (!configCols) configCols = [];
 
     setModalColumns(configCols);
@@ -227,27 +227,56 @@ export default function DashboardContent() {
     setEditOpen(true);
   }
 
-  function handleAddNew(table, premium = false) {
+  // ADD NEW: ensure modalColumns has fields even when configs missing
+  function handleAddNew(table, premium = false, configCols = null) {
     setEditTable(table);
     setIsCreating(true);
     setEditRow(null);
 
-    let configCols = (configs[table] && configs[table].columns) || [];
-    setModalColumns(configCols);
+    // If caller provided configCols (from DashboardSection fetch), use it directly.
+    if (Array.isArray(configCols) && configCols.length > 0) {
+      // normalize to objects accepted by EditModal
+      const normalizedCols = configCols.map((c) => {
+        if (typeof c === "string") return { name: c, label: prettifyKey(c), type: "text" };
+        return { name: c.name || c.key, label: c.label || prettifyKey(c.name || c.key), type: c.type || "text", options: c.options || [], required: !!c.required };
+      });
+      setModalColumns(normalizedCols);
+    } else {
+      // existing fallback behavior (infer from configs/rawReport/defaults)
+      let cfg = (configs[table] && (configs[table].fields || configs[table].columns)) || null;
+      if (!cfg && rawReport[table] && rawReport[table].length > 0) {
+        const sample = rawReport[table][0];
+        const keys = Object.keys(sample).filter(k => !HIDDEN_FIELDS.has(k));
+        cfg = keys.map(k => ({ name: k, label: prettifyKey(k), type: 'text' }));
+      }
+      if (!cfg || cfg.length === 0) {
+        const defaultsMap = {
+          visitors: ["name", "email", "company", "mobile"],
+          exhibitors: ["company", "name", "email", "mobile"],
+          partners: ["company", "name", "email", "mobile"],
+          speakers: ["name", "email", "company"],
+          awardees: ["name", "email", "company"],
+        };
+        const keys = defaultsMap[table] || ["name", "email", "company"];
+        cfg = keys.map(k => ({ name: k, label: prettifyKey(k), type: 'text' }));
+      }
+      // filter out ticket/payment/id/created fields for create
+      const normalizedCols = cfg.map(c => (typeof c === 'string' ? { name: c, label: prettifyKey(c), type: 'text' } : { name: c.name || c.key, label: c.label || prettifyKey(c.name || c.key), type: c.type || 'text', options: c.options || [], required: !!c.required })).filter(c => !shouldHideOnCreate(c.name));
+      setModalColumns(normalizedCols);
+    }
 
     setPendingPremium(false);
     setNewIsPremium(!!premium);
-
     setEditOpen(true);
   }
 
-  function handleDelete(table, displayRow) {
-    setDeleteTable(table);
-    // store raw deleteRow if possible
+  async function handleDelete(table, displayRow) {
+    if (!table || !displayRow) return;
     const raws = rawReport[table] || [];
     const idVal = displayRow?.id || displayRow?._id || displayRow?.ID || "";
     let raw = raws.find((r) => String(r.id || r._id || r.ID || "") === String(idVal));
     if (!raw) raw = displayRow;
+    setDeleteTable(table);
     setDeleteRow(raw);
     setDeleteOpen(true);
   }
@@ -318,7 +347,6 @@ export default function DashboardContent() {
   async function handleRefreshRow(table, displayRow) {
     if (!table || !displayRow) return;
     try {
-      // find raw id from rawReport or displayRow
       const raws = rawReport[table] || [];
       const idVal = displayRow.id || displayRow._id || displayRow.ID || "";
       if (!idVal) { setActionMsg("Cannot refresh: missing id"); return; }
@@ -332,7 +360,6 @@ export default function DashboardContent() {
         return;
       }
       const fresh = await res.json().catch(() => null);
-      // update rawReport and report sanitized
       setRawReport((prev) => {
         const prevList = [...(prev[table] || [])];
         const idx = prevList.findIndex((r) => String(r.id || r._id || r.ID || "") === String(idVal));
