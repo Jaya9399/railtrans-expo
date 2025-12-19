@@ -1,14 +1,12 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 
 /**
- * Simple DataTable
- * Props:
- *  - columns: [{ key: 'email', label: 'Email' }, ...]
- *  - data: array of objects
- *  - pageSizeOptions: [5,10,25]
- *  - defaultPageSize: number
- *  - onRowAction: (action, row) => {}
- *  - renderRowDetails: (row) => ReactNode  // content for details modal/expanded row
+ * DataTable
+ * - columns: [{ key, label }] preferred order and labels
+ * - data: array of objects
+ * - defaultPageSize
+ * - onRowAction(action, row)
+ * - renderRowDetails(row)
  */
 export default function DataTable({
   columns = [],
@@ -22,34 +20,94 @@ export default function DataTable({
   const [sortBy, setSortBy] = useState({ key: null, dir: "asc" });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(defaultPageSize);
-  const [visibleCols, setVisibleCols] = useState(() => (columns && columns.length ? columns.map(c => c.key) : []));
+  const [visibleCols, setVisibleCols] = useState([]);
   const [expandedRow, setExpandedRow] = useState(null);
 
-  // normalized columns (fall back to data keys if not provided)
-  const allKeys = useMemo(() => {
-    if (columns && columns.length) return columns;
-    const keys = new Set();
-    data.forEach(r => Object.keys(r || {}).forEach(k => keys.add(k)));
-    return Array.from(keys).map(k => ({ key: k, label: k }));
+  // friendly label map (fallback)
+  const LABEL_MAP = {
+    name: "Name",
+    full_name: "Name",
+    company: "Company",
+    org: "Company",
+    organization: "Company",
+    email: "Email",
+    email_address: "Email",
+    ticket_code: "Ticket",
+    ticketCode: "Ticket",
+    code: "Ticket",
+    ticket_category: "Category",
+    category: "Category",
+    mobile: "Phone",
+    phone: "Phone",
+    id: "ID",
+    _id: "ID",
+  };
+
+  // prettify a key like "first_name" or "ticketCode" -> "Ticket Code" fallback
+  function prettifyKey(k) {
+    if (!k) return "";
+    if (LABEL_MAP[k]) return LABEL_MAP[k];
+    // split snake_case and camelCase
+    const spaced = k
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/[_-]+/g, " ")
+      .toLowerCase();
+    return spaced.split(" ").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
+  }
+
+  // Build full column list (preserve order passed in columns prop, else discover from data)
+  const allCols = useMemo(() => {
+    if (columns && columns.length) {
+      return columns.map(c => ({ key: c.key, label: c.label || prettifyKey(c.key) }));
+    }
+    const seen = new Set();
+    const cols = [];
+    for (const row of data || []) {
+      for (const k of Object.keys(row || {})) {
+        if (!seen.has(k)) {
+          seen.add(k);
+          cols.push({ key: k, label: prettifyKey(k) });
+        }
+      }
+    }
+    return cols;
   }, [columns, data]);
 
-  // ensure visibleCols contains defaults when columns prop is provided after mount
-  React.useEffect(() => {
-    if (columns && columns.length && visibleCols.length === 0) {
-      setVisibleCols(columns.map(c => c.key));
+  useEffect(() => {
+    if (allCols.length && visibleCols.length === 0) {
+      setVisibleCols(allCols.map(c => c.key));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [columns]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allCols]);
 
-  // filter
+  // utility: render cell value in readable form (avoid raw JSON)
+  function renderCellValue(v) {
+    if (v === undefined || v === null) return "";
+    if (typeof v === "object") {
+      // If small object with name/email/company, flatten
+      const picks = [];
+      if (v.name) picks.push(String(v.name));
+      if (v.full_name && !v.name) picks.push(String(v.full_name));
+      if (v.company) picks.push(String(v.company));
+      if (v.email) picks.push(String(v.email));
+      if (picks.length) return picks.join(" • ");
+      // otherwise show placeholder and allow tooltip with JSON
+      const json = JSON.stringify(v);
+      return { __raw: json }; // special sentinel to show tooltip
+    }
+    return String(v);
+  }
+
+  // filter by query (search)
   const filtered = useMemo(() => {
-    const q = String(query || "").trim().toLowerCase();
+    const q = (query || "").toLowerCase().trim();
     if (!q) return data;
-    return data.filter(row => {
+    return (data || []).filter(row => {
       return visibleCols.some(colKey => {
         const v = row?.[colKey];
         if (v === undefined || v === null) return false;
-        return String(typeof v === "object" ? JSON.stringify(v) : v).toLowerCase().includes(q);
+        const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+        return s.toLowerCase().includes(q);
       });
     });
   }, [data, query, visibleCols]);
@@ -68,7 +126,6 @@ export default function DataTable({
     return arr;
   }, [filtered, sortBy]);
 
-  // paging
   const total = sorted.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const pageData = useMemo(() => {
@@ -79,7 +136,7 @@ export default function DataTable({
   // CSV export
   function exportCsv() {
     const keys = visibleCols;
-    const rows = [keys.join(",")].concat(sorted.map(r => keys.map(k => {
+    const rows = [keys.map(k => `"${prettifyKey(k).replace(/"/g, '""')}"`).join(",")].concat(sorted.map(r => keys.map(k => {
       const v = r?.[k];
       if (v === undefined || v === null) return "";
       const s = typeof v === "object" ? JSON.stringify(v) : String(v);
@@ -105,19 +162,40 @@ export default function DataTable({
     setVisibleCols(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
   }
 
+  // cell renderer element
+  function Cell({ value }) {
+    if (value === undefined || value === null) return <span className="text-sm text-gray-600">—</span>;
+    if (typeof value === "object" && value.__raw) {
+      const full = value.__raw;
+      const short = full.length > 40 ? `${full.slice(0, 40)}…` : full;
+      return <div title={full} className="text-sm text-gray-700 truncate max-w-xs">{short}</div>;
+    }
+    const s = String(value);
+    if (s.length > 60) {
+      const short = s.slice(0, 55) + "…";
+      return <div title={s} className="text-sm text-gray-800">{short}</div>;
+    }
+    return <div className="text-sm text-gray-800">{s}</div>;
+  }
+
   return (
     <div className="bg-white rounded shadow p-3">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2">
-          <input className="border rounded px-2 py-1 text-sm" placeholder="Search..." value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} />
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <input
+            className="border rounded px-2 py-1 text-sm w-full sm:w-56"
+            placeholder="Search..."
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setPage(1); }}
+          />
           <button className="px-2 py-1 bg-gray-100 rounded text-sm" onClick={() => { setQuery(""); }}>Clear</button>
           <button className="px-2 py-1 bg-indigo-600 text-white rounded text-sm" onClick={exportCsv}>Export CSV</button>
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="text-xs text-gray-500">Columns</div>
+          <div className="text-xs text-gray-500 hidden sm:block">Columns</div>
           <div className="flex gap-1 flex-wrap max-w-xs">
-            {allKeys.map(c => (
+            {allCols.map(c => (
               <label key={c.key} className="inline-flex items-center text-xs bg-gray-50 border rounded px-2 py-1">
                 <input type="checkbox" checked={visibleCols.includes(c.key)} onChange={() => toggleCol(c.key)} className="mr-1" />
                 <span>{c.label}</span>
@@ -134,10 +212,10 @@ export default function DataTable({
         <table className="min-w-full table-auto border-collapse">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
-              {allKeys.filter(c => visibleCols.includes(c.key)).map(c => (
+              {allCols.filter(c => visibleCols.includes(c.key)).map(c => (
                 <th key={c.key} className="text-left text-sm px-3 py-2 text-gray-600 cursor-pointer" onClick={() => toggleSort(c.key)}>
                   <div className="flex items-center gap-2">
-                    <span>{c.label}</span>
+                    <span className="font-medium">{c.label}</span>
                     {sortBy.key === c.key ? <span className="text-xs text-gray-400">{sortBy.dir === "asc" ? "▲" : "▼"}</span> : null}
                   </div>
                 </th>
@@ -149,18 +227,17 @@ export default function DataTable({
             {pageData.length === 0 ? (
               <tr><td colSpan={visibleCols.length + 1} className="p-6 text-gray-500">No records</td></tr>
             ) : pageData.map((row, i) => (
-              <tr key={row.id ?? i} className="border-t hover:bg-gray-50">
-                {allKeys.filter(c => visibleCols.includes(c.key)).map(c => (
-                  <td key={c.key} className="px-3 py-2 text-sm align-top whitespace-pre-wrap break-words">
-                    {(() => {
-                      const v = row?.[c.key];
-                      if (v === undefined || v === null) return "";
-                      if (typeof v === "object") return <pre className="text-xs whitespace-pre-wrap break-words">{JSON.stringify(v)}</pre>;
-                      return String(v);
-                    })()}
-                  </td>
-                ))}
-                <td className="px-3 py-2 text-sm">
+              <tr key={row.id ?? i} className="border-t hover:bg-gray-50 align-top">
+                {allCols.filter(c => visibleCols.includes(c.key)).map(c => {
+                  const raw = row?.[c.key];
+                  const val = renderCellValue(raw);
+                  return (
+                    <td key={c.key} className="px-3 py-2 align-top max-w-xs">
+                      <Cell value={val} />
+                    </td>
+                  );
+                })}
+                <td className="px-3 py-2 text-sm align-top">
                   <div className="flex items-center gap-2">
                     <button className="px-2 py-1 border rounded text-xs" onClick={() => onRowAction?.("edit", row)}>Edit</button>
                     <button className="px-2 py-1 border rounded text-xs" onClick={() => onRowAction?.("refresh", row)}>Refresh</button>
