@@ -686,6 +686,16 @@ export default function Speakers() {
       setProcessing(false);
     }
   }
+   // Redirect to home page after successful registration
+  useEffect(() => {
+    if (step === 4) {
+      const timer = setTimeout(() => {
+        window.location.href = "https://www.railtransexpo.com/";
+      }, 3000); // redirect after 3 seconds
+
+      return () => clearTimeout(timer);
+    }
+  }, [step]);
 
   /* render */
   return (
