@@ -20,7 +20,9 @@ const FRONTEND_BASE = (
   process.env.REACT_APP_FRONTEND_BASE ||
   process.env.FRONTEND_BASE ||
   window.__FRONTEND_BASE__ ||
-  (typeof window !== "undefined" && window.location ? window.location.origin : "")
+  (typeof window !== "undefined" && window.location
+    ? window.location.origin
+    : "")
 ).replace(/\/$/, "");
 
 /* ---------- small helpers ---------- */
@@ -147,7 +149,9 @@ function normalizeAdminUrl(url) {
           parsed.hostname === "127.0.0.1"
         ) {
           return (
-            FRONTEND_BASE.replace(/\/$/, "") + parsed.pathname + (parsed.search || "")
+            FRONTEND_BASE.replace(/\/$/, "") +
+            parsed.pathname +
+            (parsed.search || "")
           );
         }
       } catch {}
@@ -216,7 +220,10 @@ async function sendTicketEmailUsingTemplate({
     visitor?.id || visitor?.visitorId || visitor?.insertedId || "";
   const ticketCode = visitor?.ticket_code || visitor?.ticketCode || "";
 
-  const downloadUrl = `${frontendBase.replace(/\/$/, "")}/ticket-download?entity=visitors&${
+  const downloadUrl = `${frontendBase.replace(
+    /\/$/,
+    ""
+  )}/ticket-download?entity=visitors&${
     visitorId
       ? `id=${encodeURIComponent(String(visitorId))}`
       : `ticket_code=${encodeURIComponent(String(ticketCode || ""))}`
@@ -224,15 +231,28 @@ async function sendTicketEmailUsingTemplate({
 
   // Resolve logo: prefer config values (normalized to frontend), fallback to localStorage admin:topbar
   let logoUrl = "";
-  if (config && (config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl))) {
-    logoUrl = normalizeAdminUrl(config.logoUrl || config.topbarLogo || (config.adminTopbar && config.adminTopbar.logoUrl)) || "";
+  if (
+    config &&
+    (config.logoUrl ||
+      config.topbarLogo ||
+      (config.adminTopbar && config.adminTopbar.logoUrl))
+  ) {
+    logoUrl =
+      normalizeAdminUrl(
+        config.logoUrl ||
+          config.topbarLogo ||
+          (config.adminTopbar && config.adminTopbar.logoUrl)
+      ) || "";
   } else {
     try {
-      const res = await fetch(`${API_BASE.replace(/\/$/, "")}/api/admin-config`);
+      const res = await fetch(
+        `${API_BASE.replace(/\/$/, "")}/api/admin-config`
+      );
       if (res.ok) {
         const js = await res.json().catch(() => null);
         if (js) {
-          logoUrl = normalizeAdminUrl(js.logoUrl || js.logo_url || js.url || "") || "";
+          logoUrl =
+            normalizeAdminUrl(js.logoUrl || js.logo_url || js.url || "") || "";
         }
       }
     } catch (e) {
@@ -246,7 +266,8 @@ async function sendTicketEmailUsingTemplate({
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && parsed.logoUrl) {
-          logoUrl = normalizeAdminUrl(parsed.logoUrl) || String(parsed.logoUrl).trim();
+          logoUrl =
+            normalizeAdminUrl(parsed.logoUrl) || String(parsed.logoUrl).trim();
         }
       }
     } catch {}
@@ -272,7 +293,7 @@ async function sendTicketEmailUsingTemplate({
     form: visitor || null,
     logoUrl,
     // pass event object if we have canonical event details on the client
-    event: (config && config.eventDetails) ? config.eventDetails : null,
+    event: config && config.eventDetails ? config.eventDetails : null,
   };
 
   // buildTicketEmail must not return image attachments; we strip any if present
@@ -283,13 +304,23 @@ async function sendTicketEmailUsingTemplate({
   const templateAttachments = tpl.attachments || [];
 
   // Ensure we do not send any image attachments from the template (defensive)
-  const attachments = Array.isArray(templateAttachments) ? templateAttachments.filter(a => {
-    const ct = String(a.contentType || a.content_type || "").toLowerCase();
-    if (ct && ct.startsWith("image/")) return false;
-    const name = (a.filename || a.name || "").toLowerCase();
-    if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".gif") || name.endsWith(".svg") || name.endsWith(".webp")) return false;
-    return true;
-  }) : [];
+  const attachments = Array.isArray(templateAttachments)
+    ? templateAttachments.filter((a) => {
+        const ct = String(a.contentType || a.content_type || "").toLowerCase();
+        if (ct && ct.startsWith("image/")) return false;
+        const name = (a.filename || a.name || "").toLowerCase();
+        if (
+          name.endsWith(".png") ||
+          name.endsWith(".jpg") ||
+          name.endsWith(".jpeg") ||
+          name.endsWith(".gif") ||
+          name.endsWith(".svg") ||
+          name.endsWith(".webp")
+        )
+          return false;
+        return true;
+      })
+    : [];
 
   const mailPayload = {
     to: visitor?.email,
@@ -302,7 +333,10 @@ async function sendTicketEmailUsingTemplate({
 
   const result = await postMailer(mailPayload);
   if (!result.ok) {
-    const errMsg = result.body?.error || result.error || `Mailer failed (${result.status || "unknown"})`;
+    const errMsg =
+      result.body?.error ||
+      result.error ||
+      `Mailer failed (${result.status || "unknown"})`;
     throw new Error(errMsg);
   }
   return result.body;
@@ -344,9 +378,13 @@ export default function Visitors() {
     const mq = window.matchMedia("(max-width: 900px)");
     const onChange = () => setIsMobile(!!mq.matches);
     onChange();
-    mq.addEventListener ? mq.addEventListener("change", onChange) : mq.addListener(onChange);
+    mq.addEventListener
+      ? mq.addEventListener("change", onChange)
+      : mq.addListener(onChange);
     return () => {
-      mq.removeEventListener ? mq.removeEventListener("change", onChange) : mq.removeListener(onChange);
+      mq.removeEventListener
+        ? mq.removeEventListener("change", onChange)
+        : mq.removeListener(onChange);
     };
   }, []);
 
@@ -363,7 +401,10 @@ export default function Visitors() {
       const url = `${API_BASE}/api/configs/event-details`;
       const res = await fetch(`${url}?cb=${Date.now()}`, {
         cache: "no-store",
-        headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" },
+        headers: {
+          Accept: "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
       });
       if (res.ok) {
         const js = await res.json().catch(() => ({}));
@@ -376,7 +417,13 @@ export default function Visitors() {
       // fallback to legacy endpoint
       const legacyUrl = `${API_BASE}/api/event-details`;
       try {
-        const r2 = await fetch(`${legacyUrl}?cb=${Date.now()}`, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+        const r2 = await fetch(`${legacyUrl}?cb=${Date.now()}`, {
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+            "ngrok-skip-browser-warning": "69420",
+          },
+        });
         if (r2.ok) {
           const js2 = await r2.json().catch(() => ({}));
           setCanonicalEvent(normalizeEvent(js2 || {}));
@@ -456,7 +503,8 @@ export default function Visitors() {
     window.addEventListener("visitor-config-updated", onCfg);
     window.addEventListener("config-updated", (e) => {
       const key = e && e.detail && e.detail.key ? e.detail.key : null;
-      if (!key || key === "event-details") fetchCanonicalEvent().catch(()=>{});
+      if (!key || key === "event-details")
+        fetchCanonicalEvent().catch(() => {});
     });
     window.addEventListener("event-details-updated", fetchCanonicalEvent);
 
@@ -531,16 +579,30 @@ export default function Visitors() {
             (payload && payload.ticket_code) ||
             null;
           const existed = !!(json && (json.existed || json.existing));
-          return { ok: true, id: id ? String(id) : null, ticket_code: ticket || null, raw: json || null, existed };
+          return {
+            ok: true,
+            id: id ? String(id) : null,
+            ticket_code: ticket || null,
+            raw: json || null,
+            existed,
+          };
         }
 
         if (res.status === 409 && json && json.existing) {
           const id = json.existing.id || null;
           const ticket = json.existing.ticket_code || null;
-          return { ok: true, id: id ? String(id) : null, ticket_code: ticket || null, raw: json, existed: true };
+          return {
+            ok: true,
+            id: id ? String(id) : null,
+            ticket_code: ticket || null,
+            raw: json,
+            existed: true,
+          };
         }
 
-        const errMsg = (json && (json.message || json.error)) || `Save failed (${res.status})`;
+        const errMsg =
+          (json && (json.message || json.error)) ||
+          `Save failed (${res.status})`;
         return { ok: false, error: errMsg, raw: json };
       } catch (err) {
         console.error("[Visitors] saveVisitor network error:", err);
@@ -595,7 +657,8 @@ export default function Visitors() {
         return;
       }
       const finalEmail = form && form.email ? form.email : bestEmail;
-      let ticket_code = form.ticket_code || (visitor && visitor.ticket_code) || null;
+      let ticket_code =
+        form.ticket_code || (visitor && visitor.ticket_code) || null;
 
       // --- Persist only once here (when completing) ---
       if (!savedAttemptedRef.current) {
@@ -631,12 +694,20 @@ export default function Visitors() {
       if (!ticket_code && savedVisitorId) {
         try {
           const r = await fetch(
-            `${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}`,
-            { headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69440" } }
+            `${API_BASE}/api/visitors/${encodeURIComponent(
+              String(savedVisitorId)
+            )}`,
+            {
+              headers: {
+                Accept: "application/json",
+                "ngrok-skip-browser-warning": "69440",
+              },
+            }
           );
           if (r.ok) {
             const row = await r.json().catch(() => null);
-            ticket_code = row?.ticket_code || row?.ticketCode || row?.code || null;
+            ticket_code =
+              row?.ticket_code || row?.ticketCode || row?.code || null;
             if (ticket_code) setForm((prev) => ({ ...prev, ticket_code }));
           }
         } catch (e) {
@@ -651,7 +722,11 @@ export default function Visitors() {
 
         if (!savedAttemptedRef.current) {
           try {
-            const saved = await saveVisitor({ ...form, ticket_code: gen, email: finalEmail });
+            const saved = await saveVisitor({
+              ...form,
+              ticket_code: gen,
+              email: finalEmail,
+            });
             if (saved.ok && saved.id) {
               setSavedVisitorId(saved.id);
             }
@@ -663,7 +738,9 @@ export default function Visitors() {
         } else if (savedVisitorId) {
           try {
             await fetch(
-              `${API_BASE}/api/visitors/${encodeURIComponent(String(savedVisitorId))}/confirm`,
+              `${API_BASE}/api/visitors/${encodeURIComponent(
+                String(savedVisitorId)
+              )}/confirm`,
               {
                 method: "POST",
                 headers: {
@@ -694,7 +771,10 @@ export default function Visitors() {
       if (!emailSent) {
         setEmailSent(true);
         try {
-          const bannerUrl = config?.images && config.images.length ? normalizeAdminUrl(config.images[0]) : "";
+          const bannerUrl =
+            config?.images && config.images.length
+              ? normalizeAdminUrl(config.images[0])
+              : "";
           await sendTicketEmailUsingTemplate({
             visitor: fullVisitor,
             badgePreviewUrl: "",
@@ -735,6 +815,15 @@ export default function Visitors() {
       completeRegistrationAndEmail();
     }
   }, [step, ticketMeta, processing, completeRegistrationAndEmail]);
+  useEffect(() => {
+    if (step === 4) {
+      const timer = setTimeout(() => {
+        window.location.href = "https://www.railtransexpo.com/";
+      }, 3000); // redirect after 3 seconds
+
+      return () => clearTimeout(timer);
+    }
+  }, [step]);
 
   /* ---------- render (uses canonical event details for UI; emails use FRONTEND_BASE) ---------- */
   if (isMobile) {
@@ -857,37 +946,68 @@ export default function Visitors() {
           </button>
         </div>
       )}
-      <div className="absolute inset-0 bg-white/50 pointer-events-none" style={{ zIndex: -900 }} />
+      <div
+        className="absolute inset-0 bg-white/50 pointer-events-none"
+        style={{ zIndex: -900 }}
+      />
       <div className="relative z-10">
         <Topbar />
         <div className="max-w-7xl mx-auto pt-8">
-          <div className="flex flex-col sm:flex-row items-stretch mb-10" style={{ minHeight: 370 }}>
+          <div
+            className="flex flex-col sm:flex-row items-stretch mb-10"
+            style={{ minHeight: 370 }}
+          >
             <div className="sm:w-[60%] w-full flex items-center justify-center">
               {loading ? (
-                <div className="text-[#21809b] text-2xl font-bold">Loading...</div>
+                <div className="text-[#21809b] text-2xl font-bold">
+                  Loading...
+                </div>
               ) : (
                 <div className="rounded-3xl overflow-hidden shadow-2xl h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] bg-white/75 flex items-center justify-center">
-                  {config?.images?.length ? <img src={normalizeAdminUrl(config.images[0])} alt="banner" className="object-cover w-full h-full" /> : null}
+                  {config?.images?.length ? (
+                    <img
+                      src={normalizeAdminUrl(config.images[0])}
+                      alt="banner"
+                      className="object-cover w-full h-full"
+                    />
+                  ) : null}
                 </div>
               )}
             </div>
             <div className="sm:w-[40%] w-full flex items-center justify-center">
               <div className="flex flex-col items-center justify-center h-full w-full mt-6">
-                <div className="font-extrabold text-3xl sm:text-5xl mb-3 text-center" style={{ background: "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
-                  { (canonicalEvent && canonicalEvent.name) || config?.title || "Welcome" }
+                <div
+                  className="font-extrabold text-3xl sm:text-5xl mb-3 text-center"
+                  style={{
+                    background:
+                      "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                  }}
+                >
+                  {(canonicalEvent && canonicalEvent.name) ||
+                    config?.title ||
+                    "Welcome"}
                 </div>
 
                 <div className="text-xl sm:text-2xl font-bold mb-1 text-center text-[#21809b]">
-                  { (canonicalEvent && (canonicalEvent.date || canonicalEvent.dates)) || config?.eventDetails?.date || "Event Date" }
+                  {(canonicalEvent &&
+                    (canonicalEvent.date || canonicalEvent.dates)) ||
+                    config?.eventDetails?.date ||
+                    "Event Date"}
                 </div>
                 <div className="text-base sm:text-xl font-semibold text-center text-[#196e87]">
-                  { (canonicalEvent && canonicalEvent.venue) || config?.eventDetails?.venue || "Event Venue" }
+                  {(canonicalEvent && canonicalEvent.venue) ||
+                    config?.eventDetails?.venue ||
+                    "Event Venue"}
                 </div>
-                { (canonicalEvent && canonicalEvent.time) || (config?.eventDetails && config.eventDetails.time) ? (
+                {(canonicalEvent && canonicalEvent.time) ||
+                (config?.eventDetails && config.eventDetails.time) ? (
                   <div className="text-sm mt-2 text-center text-gray-700">
-                    { (canonicalEvent && canonicalEvent.time) || (config?.eventDetails && config.eventDetails.time) }
+                    {(canonicalEvent && canonicalEvent.time) ||
+                      (config?.eventDetails && config.eventDetails.time)}
                   </div>
-                ) : null }
+                ) : null}
               </div>
             </div>
           </div>
@@ -926,17 +1046,19 @@ export default function Visitors() {
             />
           )}
 
-          {step === 3 && !/free|general|0/i.test(String(ticketCategory || "")) && !processing && (
-            <ManualPaymentStep
-              ticketType={ticketCategory}
-              ticketPrice={ticketMeta.total || 0}
-              onProofUpload={() => completeRegistrationAndEmail()}
-              onTxIdChange={(val) => setTxId(val)}
-              txId={txId}
-              proofFile={proofFile}
-              setProofFile={setProofFile}
-            />
-          )}
+          {step === 3 &&
+            !/free|general|0/i.test(String(ticketCategory || "")) &&
+            !processing && (
+              <ManualPaymentStep
+                ticketType={ticketCategory}
+                ticketPrice={ticketMeta.total || 0}
+                onProofUpload={() => completeRegistrationAndEmail()}
+                onTxIdChange={(val) => setTxId(val)}
+                txId={txId}
+                proofFile={proofFile}
+                setProofFile={setProofFile}
+              />
+            )}
 
           {step === 3 && processing && (
             <ProcessingCard
@@ -947,19 +1069,27 @@ export default function Visitors() {
           )}
 
           {step === 4 && (
-            <ThankYouMessage email={visitor?.email} messageOverride="Thank you for registering — check your email for the ticket." />
+            <ThankYouMessage
+              email={visitor?.email}
+              messageOverride="Thank you for registering — check your email for the ticket."
+            />
           )}
 
           {!isMobile && bgVideoErrorMsg && (
             <div className="mt-4 p-3 bg-yellow-50 text-yellow-800 rounded text-sm max-w-3xl mx-auto">
-              Background video not playing: {String(bgVideoErrorMsg)}. Check console for details.
+              Background video not playing: {String(bgVideoErrorMsg)}. Check
+              console for details.
             </div>
           )}
 
-          {error && <div className="text-red-400 text-center mt-4">{error}</div>}
+          {error && (
+            <div className="text-red-400 text-center mt-4">{error}</div>
+          )}
 
           <div className="mt-10 sm:mt-12 pb-8">
-            <footer className="text-center text-white font-semibold py-4 text-sm sm:text-lg">© {new Date().getFullYear()} RailTrans Expo</footer>
+            <footer className="text-center text-white font-semibold py-4 text-sm sm:text-lg">
+              © {new Date().getFullYear()} RailTrans Expo
+            </footer>
           </div>
         </div>
       </div>
