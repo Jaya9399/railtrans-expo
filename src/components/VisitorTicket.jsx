@@ -5,12 +5,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
  *
  * - QR encodes the ticket code ONLY (not a URL).
  * - Ticket code is NOT displayed as plain text anywhere on the badge or preview.
- * - Removed "Fetch server ticket code" and "Copy payload" buttons.
- * - Always shows the QR area in the preview; if no ticket code is available a "QR not available" placeholder is shown.
+ * - Shows the QR area in the preview; if no ticket code is available a "QR not available" placeholder is shown.
  * - Print button opens a new window that contains only the badge (badge-only print).
+ * - Role label logic (bottom strip) determines VISITOR / DELEGATE / PARTNER / AWARDEE.
  *
  * Props:
- * - visitor: { id, name, designation, company, ticket_category, ticket_code, email, mobile, logoUrl, eventName, bannerUrl, sponsorLogos }
+ * - visitor: { id, name, designation, company, ticket_category, ticket_code, ticket_total, entity, role, email, mobile, logoUrl, eventName, bannerUrl, sponsorLogos }
  * - pdfBlob: Blob | string (data url or base64) (optional)
  * - roleLabel, accentColor, showQRCode, qrSize, className
  */
@@ -30,6 +30,31 @@ function base64ToBlob(base64, contentType = "application/pdf") {
   }
 }
 
+/* Determine role label for badge */
+function determineRoleLabel(visitor = {}, overrideRoleLabel) {
+  if (overrideRoleLabel && String(overrideRoleLabel).trim()) {
+    return String(overrideRoleLabel).toUpperCase();
+  }
+  if (!visitor || typeof visitor !== "object") return "VISITOR";
+
+  const entity = String(visitor.entity || visitor.role || visitor.type || "").toLowerCase();
+  if (entity.includes("partner")) return "PARTNER";
+  if (entity.includes("award")) return "AWARDEE";
+
+  const cat = String(visitor.ticket_category || visitor.ticketCategory || visitor.category || "").toLowerCase();
+  if (cat.includes("partner")) return "PARTNER";
+  if (cat.includes("award")) return "AWARDEE";
+  if (/(delegate|vip|combo|paid)/i.test(cat)) return "DELEGATE";
+
+  const total = Number(visitor.ticket_total || visitor.total || visitor.amount || visitor.price || 0) || 0;
+  if (!Number.isNaN(total) && total > 0) return "DELEGATE";
+
+  if (visitor.isPartner || visitor.partner) return "PARTNER";
+  if (visitor.isAwardee || visitor.awardee) return "AWARDEE";
+
+  return "VISITOR";
+}
+
 export default function VisitorTicket({
   visitor,
   pdfBlob,
@@ -39,6 +64,7 @@ export default function VisitorTicket({
   qrSize = 220,
   className = "",
 }) {
+  // Hooks must run unconditionally
   const [downloadUrl, setDownloadUrl] = useState(null);
   const downloadUrlRef = useRef(null);
   const cardRef = useRef(null);
@@ -91,6 +117,7 @@ export default function VisitorTicket({
     };
   }, [pdfBlob]);
 
+  // clean up on unmount
   useEffect(() => {
     return () => {
       if (downloadUrlRef.current) {
@@ -102,39 +129,22 @@ export default function VisitorTicket({
 
   // keep localTicketCode in sync when visitor prop changes
   useEffect(() => {
-    if (!visitor) {
-      setLocalTicketCode("");
-      return;
-    }
-    const canonical = visitor.ticket_code || visitor.ticketCode || visitor.ticketId || "";
+    const canonical = visitor ? (visitor.ticket_code || visitor.ticketCode || visitor.ticketId || "") : "";
     setLocalTicketCode(canonical ? String(canonical).trim() : "");
   }, [visitor]);
 
-  // stable derived values
-  const v = visitor || {};
-  const name = v.name || v.full_name || v.title || "";
-  const company = v.company || v.organization || "";
-  const ticketCategory = (v.ticket_category || v.category || roleLabel || "VISITOR").toString().toUpperCase();
-  const providedTicketCode = v.ticket_code || v.ticketCode || v.ticketId || "";
-  const safeTicketCode = localTicketCode ? String(localTicketCode).trim() : (providedTicketCode ? String(providedTicketCode).trim() : "");
-  // QR must contain only the ticket code
-  const qrData = safeTicketCode || "";
-  const qrUrl = qrData
-    ? `https://chart.googleapis.com/chart?cht=qr&chs=${qrSize}x${qrSize}&chl=${encodeURIComponent(qrData)}&choe=UTF-8`
-    : null;
-
+  // callbacks (defined unconditionally)
   const handleDownload = useCallback(() => {
     if (!downloadUrl) return;
     const a = document.createElement("a");
-    const filenameSafe = (name || "ticket").replace(/\s+/g, "_");
+    const filenameSafe = ((visitor && (visitor.name || visitor.full_name)) || "ticket").replace(/\s+/g, "_");
     a.href = downloadUrl;
     a.download = `RailTransExpo-${filenameSafe}.pdf`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  }, [downloadUrl, name]);
+  }, [downloadUrl, visitor]);
 
-  // Print badge-only: open a window that contains only the badge card HTML and print it
   const handlePrintCard = useCallback(() => {
     if (!cardRef.current) {
       window.print();
@@ -170,9 +180,23 @@ export default function VisitorTicket({
     };
   }, []);
 
+  // Only after hooks: early return when no visitor
   if (!visitor) return null;
 
-  // Render badge layout designed to resemble provided images.
+  // derived values
+  const v = visitor || {};
+  const name = v.name || v.full_name || v.title || "";
+  const company = v.company || v.organization || "";
+  const derivedRoleLabel = determineRoleLabel(v, roleLabel);
+  const ticketCategoryDisplay = derivedRoleLabel;
+
+  const providedTicketCode = v.ticket_code || v.ticketCode || v.ticketId || "";
+  const safeTicketCode = localTicketCode ? String(localTicketCode).trim() : (providedTicketCode ? String(providedTicketCode).trim() : "");
+  const qrData = safeTicketCode || "";
+  const qrUrl = qrData
+    ? `https://chart.googleapis.com/chart?cht=qr&chs=${qrSize}x${qrSize}&chl=${encodeURIComponent(qrData)}&choe=UTF-8`
+    : null;
+
   return (
     <div ref={cardRef} className={`mx-auto max-w-[860px] bg-transparent ${className}`}>
       {/* Top banner */}
@@ -180,11 +204,11 @@ export default function VisitorTicket({
         {v.bannerUrl ? (
           <img src={v.bannerUrl} alt="Event banner" style={{ width: "100%", display: "block", borderTopLeftRadius: 8, borderTopRightRadius: 8 }} />
         ) : (
-          <div style={{ padding: 18, textAlign: "center", fontWeight: 700, color: "#8b5e34" }}>{v.eventName || "RailTrans Expo 2026"}</div>
+          <div style={{ padding: 18, textAlign: "center", fontWeight: 700, color: "#8b5e34" }}>{v.eventName || "RailTrans Expo"}</div>
         )}
       </div>
 
-      {/* Background area with light blue gradient */}
+      {/* Background area with light gradient */}
       <div style={{ background: "linear-gradient(#e8f8fb, #ffffff)", padding: "28px 28px 0", borderLeft: "1px solid rgba(0,0,0,0.03)", borderRight: "1px solid rgba(0,0,0,0.03)" }}>
         {/* central white card */}
         <div className="badge-card" style={{
@@ -226,7 +250,7 @@ export default function VisitorTicket({
           ) : null}
         </div>
 
-        {/* sponsors / logos strip (placeholder) */}
+        {/* sponsors / logos strip */}
         <div style={{ marginTop: 22, display: "flex", justifyContent: "center", gap: 18, alignItems: "center", paddingBottom: 8 }}>
           {v.sponsorLogos && Array.isArray(v.sponsorLogos) && v.sponsorLogos.length ? (
             v.sponsorLogos.slice(0, 3).map((src, i) => (
@@ -245,7 +269,7 @@ export default function VisitorTicket({
       {/* bottom colored bar with role label */}
       <div style={{ background: accentColor, padding: "26px 0", borderBottomLeftRadius: 8, borderBottomRightRadius: 8 }}>
         <div style={{ textAlign: "center", color: "#ffffff", fontSize: 48, fontWeight: 900, letterSpacing: "0.06em" }}>
-          {ticketCategory || "VISITOR"}
+          {ticketCategoryDisplay || "VISITOR"}
         </div>
       </div>
 

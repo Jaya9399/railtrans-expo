@@ -1,13 +1,18 @@
-// Email template for ticket / e-badge delivery
-// Robust fetching of event details and admin logo that works in browser and server (Node).
-// Improvements:
-// - When attempting to fetch /api/configs/event-details and /api/admin-config,
-//   try multiple candidate origins in this order:
-//     1) relative path (will go to current origin / proxy)
-//     2) API_BASE / BACKEND_URL env or window.__API_BASE__ (backend host)
-//     3) explicit frontendBase passed to buildTicketEmail (frontend origin)
-// This fixes cases where the client calls buildTicketEmail and the canonical
-// endpoints are only reachable via the backend host (not the frontend origin).
+/**
+ * emailTemplate.js
+ *
+ * buildTicketEmail(...) - robust email template builder for ticket / e-badge delivery.
+ *
+ * Responsibilities / improvements:
+ * - Best-effort resolution of canonical event details and admin logo (tries relative path, API_BASE/BACKEND_URL, then frontendBase).
+ * - Determines a human-friendly ticket/role label (VISITOR / DELEGATE / PARTNER / AWARDEE) from the provided record/form.
+ * - Resolves relative URLs to a public FRONTEND_BASE so links/images in emails point to the public frontend origin.
+ * - Returns { subject, text, html, attachments } suitable for POSTing to /api/mailer.
+ *
+ * Usage:
+ *   const payload = await buildTicketEmail({ frontendBase, entity, id, name, company, ticket_category, badgePreviewUrl, downloadUrl, upgradeUrl, logoUrl, form, pdfBase64 });
+ *   // then post payload.subject/text/html/attachments to your mailer
+ */
 
 function normalizeBase64(b) {
   if (!b) return "";
@@ -23,8 +28,7 @@ function getEnvFrontendBase() {
     if (typeof process !== "undefined" && process.env) {
       const env =
         process.env.FRONTEND_BASE ||
-        process.env.REACT_APP_API_BASE ||
-        process.env.REACT_APP_API_BASE_URL ||
+        process.env.REACT_APP_FRONTEND_BASE ||
         process.env.PUBLIC_BASE_URL ||
         "";
       if (env && String(env).trim()) return String(env).replace(/\/$/, "");
@@ -35,11 +39,16 @@ function getEnvFrontendBase() {
       return String(window.__FRONTEND_BASE__).replace(/\/$/, "");
     }
   } catch (e) {}
+  // fallback to window.location.origin in browser
+  try {
+    if (typeof window !== "undefined" && window.location && window.location.origin) {
+      return String(window.location.origin).replace(/\/$/, "");
+    }
+  } catch (e) {}
   return "";
 }
 
 function getEnvApiBase() {
-  // Prefer explicit backend/api host envs, then window override
   try {
     if (typeof process !== "undefined" && process.env) {
       const env =
@@ -67,42 +76,25 @@ function buildAbsolute(base, path) {
   if (path.startsWith("/")) return b + path;
   return b + "/" + path.replace(/^\//, "");
 }
-
 function buildRelative(path) {
-  // Return relative path (as-is) so fetch(path) will go to current origin (useful with dev proxy)
   return path;
 }
-
-/**
- * Produce candidate absolute/relative URLs for a given API path.
- * Order is important: try relative first (current origin / proxy), then apiBase, then frontendBase.
- */
 function candidateUrlsForPath(path, frontendBase, apiBase) {
   const c = [];
   if (!path) return c;
-  // relative first (so developer proxy /api -> backend can work)
   c.push(buildRelative(path));
   if (apiBase) c.push(buildAbsolute(apiBase, path));
   if (frontendBase) c.push(buildAbsolute(frontendBase, path));
   return c;
 }
 
-/**
- * safeFetchJson(url, opts)
- * - Uses global fetch if present, otherwise attempts to require('node-fetch').
- * - Reads response text and:
- *    - If content-type indicates JSON, parses and returns it (throws on parse error).
- *    - If not JSON, tries JSON.parse on text; if parse fails returns null (caller will fallback).
- * - On non-2xx responses throws an Error including a snippet of response body to aid debugging.
- */
+/* safeFetchJson: works in browser and Node (tries node-fetch if needed) */
 async function safeFetchJson(url, opts = {}) {
   let _fetch = typeof fetch !== "undefined" ? fetch : null;
   if (!_fetch) {
-    // Attempt to load node-fetch dynamically for Node environments (CJS)
     try {
       // eslint-disable-next-line global-require
       const nf = require("node-fetch");
-      // node-fetch v3 is ESM default export; handle both shapes
       _fetch = nf && nf.default ? nf.default : nf;
     } catch (e) {
       throw new Error("fetch is not available in this environment. Install node-fetch or use Node 18+.");
@@ -111,7 +103,6 @@ async function safeFetchJson(url, opts = {}) {
 
   const res = await _fetch(url, opts);
   const headers = res.headers || {};
-  // Normalize getting content-type for both node-fetch and browser
   const ct = (typeof headers.get === "function" ? headers.get("content-type") : headers["content-type"]) || "";
   const text = await res.text().catch(() => "");
   if (!res.ok) {
@@ -128,24 +119,14 @@ async function safeFetchJson(url, opts = {}) {
       throw new Error("Invalid JSON response: " + (e && e.message));
     }
   }
-  // Try to parse text as JSON even if content-type wrong (some servers mis-set headers)
   try {
     return JSON.parse(text);
   } catch {
-    // Non-JSON (HTML or plain) — return null to let caller fallback
     return null;
   }
 }
 
-/**
- * Try to fetch canonical event-details from admin endpoint(s).
- * Tries these in order (resolved via candidateUrlsForPath):
- *   /api/configs/event-details
- *   /api/event-details
- *
- * This version tries the API host (getEnvApiBase) as well as frontendBase so it works when called
- * from client or server and avoids returning the frontend index.html by mistake.
- */
+/* canonical event details */
 async function fetchCanonicalEventDetails(frontendBase) {
   const apiBase = getEnvApiBase();
   const paths = ["/api/configs/event-details", "/api/event-details"];
@@ -159,7 +140,6 @@ async function fetchCanonicalEventDetails(frontendBase) {
         const val = js && js.value !== undefined ? js.value : js;
         if (val && typeof val === "object" && Object.keys(val).length) return val;
       } catch (e) {
-        // try next URL
         continue;
       }
     }
@@ -167,12 +147,7 @@ async function fetchCanonicalEventDetails(frontendBase) {
   return null;
 }
 
-/**
- * Try to fetch admin-config logo from preferred endpoints.
- * Returns first found logo URL string, or empty string.
- *
- * Same multi-origin strategy as event-details fetch above.
- */
+/* admin logo fetch */
 async function fetchAdminLogo(frontendBase) {
   const apiBase = getEnvApiBase();
   const paths = ["/api/admin-config", "/api/admin/logo-url"];
@@ -207,13 +182,10 @@ function normalizeForEmailUrl(url, frontendBase) {
   return base + "/" + s.replace(/^\//, "");
 }
 
-/**
- * Extract event details from the registration form ONLY.
- */
+/* extract event details from form if canonical not available */
 function getEventFromFormStrict(form) {
   const out = { name: "", dates: "", time: "", venue: "", tagline: "" };
   if (!form || typeof form !== "object") return out;
-
   const pickFromObj = (obj) => {
     if (!obj || typeof obj !== "object") return;
     if (obj.name && !out.name) out.name = String(obj.name);
@@ -225,29 +197,57 @@ function getEventFromFormStrict(form) {
     if (obj.location && !out.venue) out.venue = String(obj.location);
     if (obj.tagline && !out.tagline) out.tagline = String(obj.tagline);
   };
-
   if (form.event && typeof form.event === "object") pickFromObj(form.event);
   if (form.eventDetails && typeof form.eventDetails === "object") pickFromObj(form.eventDetails);
-
   const name = form.eventName || form.event_name || form.eventTitle || form.eventtitle;
   const dates = form.eventDates || form.event_dates || form.dates || form.date;
   const time = form.eventTime || form.event_time;
   const venue = form.eventVenue || form.event_venue || form.venue;
   const tagline = form.eventTagline || form.tagline;
-
   if (name && !out.name) out.name = String(name);
   if (dates && !out.dates) out.dates = String(dates);
   if (time && !out.time) out.time = String(time);
   if (venue && !out.venue) out.venue = String(venue);
   if (tagline && !out.tagline) out.tagline = String(tagline);
-
   return out;
+}
+
+/* Role label determination used for both badge and email template */
+function determineRoleLabel(visitor = {}, explicitTicketCategory = "") {
+  if (explicitTicketCategory && String(explicitTicketCategory).trim()) {
+    const c = String(explicitTicketCategory).trim().toLowerCase();
+    if (c.includes("partner")) return "PARTNER";
+    if (c.includes("award")) return "AWARDEE";
+    if (/(delegate|vip|combo|paid)/i.test(c)) return "DELEGATE";
+  }
+
+  if (!visitor || typeof visitor !== "object") return "VISITOR";
+
+  // Prefer explicit entity / role / type
+  const ent = String(visitor.entity || visitor.role || visitor.type || "").toLowerCase();
+  if (ent.includes("partner")) return "PARTNER";
+  if (ent.includes("award")) return "AWARDEE";
+
+  // Numeric paid amount
+  const total =
+    Number(visitor.ticket_total || visitor.total || visitor.amount || visitor.price || 0) || 0;
+  if (!Number.isNaN(total) && total > 0) return "DELEGATE";
+
+  // Category fields
+  const cat = String(visitor.ticket_category || visitor.ticketCategory || visitor.category || "").toLowerCase();
+  if (cat.includes("partner")) return "PARTNER";
+  if (cat.includes("award")) return "AWARDEE";
+  if (/(delegate|vip|combo|paid)/i.test(cat)) return "DELEGATE";
+
+  // boolean flags
+  if (visitor.isPartner || visitor.partner) return "PARTNER";
+  if (visitor.isAwardee || visitor.awardee) return "AWARDEE";
+
+  return "VISITOR";
 }
 
 /**
  * buildTicketEmail(...)
- * - frontendBase: pass explicit base when calling from server (e.g. process.env.FRONTEND_BASE)
- * - best-effort fetch of canonical event details and admin logo.
  */
 export async function buildTicketEmail({
   frontendBase = "",
@@ -265,7 +265,7 @@ export async function buildTicketEmail({
 } = {}) {
   const effectiveFrontend = String(frontendBase || getEnvFrontendBase() || (typeof window !== "undefined" && window.location ? window.location.origin : "")).replace(/\/$/, "");
 
-  // canonical event details (best-effort) - try multiple origins
+  // canonical event details (best-effort)
   let canonicalEvent = null;
   try { canonicalEvent = await fetchCanonicalEventDetails(effectiveFrontend); } catch (e) { canonicalEvent = null; }
   const ev = canonicalEvent && typeof canonicalEvent === "object" ? {
@@ -276,7 +276,7 @@ export async function buildTicketEmail({
     tagline: canonicalEvent.tagline || canonicalEvent.subtitle || "",
   } : getEventFromFormStrict(form);
 
-  // resolve logo using admin-config (trying backend + frontend) then passed logoUrl
+  // admin logo (best-effort)
   let adminLogo = "";
   try { adminLogo = await fetchAdminLogo(effectiveFrontend); } catch (e) { adminLogo = ""; }
   const chosenLogoSource = adminLogo || logoUrl || "";
@@ -290,13 +290,17 @@ export async function buildTicketEmail({
     resolvedUpgrade = `${effectiveFrontend}/ticket-upgrade?entity=visitors&${id ? `id=${encodeURIComponent(String(id))}` : `ticket_code=${encodeURIComponent(String(form?.ticket_code || ""))}`}`;
   }
 
+  // Determine ticket label using same logic as badge
+  const effectiveTicketCategory = ticket_category || (form && (form.ticket_category || form.category)) || "";
+  const ticketLabelForTemplate = determineRoleLabel(form || {}, effectiveTicketCategory);
+
   const subject = `RailTrans Expo — Your E‑Badge & Registration`;
 
   const text = [
     `Dear ${name || "Participant"},`,
     "",
     "Thank you for registering for RailTrans Expo 2026.",
-    ticket_category ? `Ticket category: ${ticket_category}` : "",
+    ticketLabelForTemplate ? `Ticket category: ${ticketLabelForTemplate}` : "",
     entity ? `Entity: ${entity}` : "",
     company ? `Company: ${company}` : "",
     "",
@@ -376,7 +380,7 @@ export async function buildTicketEmail({
         <div class="name">${name || ""}${company ? ` — ${company}` : ""}</div>
 
         <div class="meta-row">
-          ${ticket_category ? `<div class="meta-item">${ticket_category}</div>` : ""}
+          ${ticketLabelForTemplate ? `<div class="meta-item">${ticketLabelForTemplate}</div>` : ""}
           ${entity ? `<div class="meta-item">${entity}</div>` : ""}
         </div>
 
@@ -390,7 +394,7 @@ export async function buildTicketEmail({
         <div class="details">
           <h4>Other details</h4>
           <ul>
-            ${ticket_category ? `<li><strong>Ticket category:</strong> ${ticket_category}</li>` : ""}
+            ${ticketLabelForTemplate ? `<li><strong>Ticket category:</strong> ${ticketLabelForTemplate}</li>` : ""}
             ${entity ? `<li><strong>Entity:</strong> ${entity}</li>` : ""}
             ${company ? `<li><strong>Company:</strong> ${company}</li>` : ""}
           </ul>
