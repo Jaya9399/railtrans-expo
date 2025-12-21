@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import Topbar from "../components/Topbar";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
 import ThankYouMessage from "../components/ThankYouMessage";
-
 /*
   Speakers.jsx - updated reminder integration and thank-you email signature
   - Replaced calls to non-existent /api/reminders/send and /api/reminders/create
@@ -167,6 +166,8 @@ function EventDetailsBlock({ event }) {
     </div>
   );
 }
+
+
 function ImageSlider({ images = [], intervalMs = 3500 }) {
   const [active, setActive] = useState(0);
   useEffect(() => {
@@ -199,7 +200,15 @@ export default function Speakers() {
 
   const videoRef = useRef(null);
   const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    if (submissionComplete) {
+      const timer = setTimeout(() => {
+        window.location.href = "https://www.railtransexpo.com/";
+      }, 3000); // 3 seconds delay to show thank-you message
 
+      return () => clearTimeout(timer); // cleanup
+    }
+  }, [submissionComplete]);
   const fetchCanonicalEvent = useCallback(async () => {
     try {
       const url = apiUrl("/api/configs/event-details");
