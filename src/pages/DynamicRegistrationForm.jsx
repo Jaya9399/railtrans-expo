@@ -341,7 +341,7 @@ export default function DynamicRegistrationForm({
                       {shouldUsePhoneInput ? (
                         <div className="mt-2">
                           <PhoneInput
-                            country={field.meta?.defaultCountry || "us"}
+                            country={field.meta?.defaultCountry || "in"}
                             value={form[field.name] || ""}
                             onChange={(value, countryData) => handlePhoneChange(field.name, value, countryData)}
                             inputProps={{
