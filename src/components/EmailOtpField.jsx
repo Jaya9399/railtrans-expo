@@ -224,26 +224,47 @@ export default function EmailOtpVerifier({
     }
   }
 
-  function handleUpgradeNavigate() {
-    if (!existing) return;
-    // Determine plural collection name: prefer backend-provided collection, else role-based plural
-    const collection = existing.collection || ensurePluralRole(existing.registrationType || role);
-    const id = existing.id || existing._id || existing._id_str || (existing._id && existing._id.$oid) || null;
-    const ticket = existing.ticket_code || existing.ticketCode || null;
+function handleUpgradeNavigate() {
+  if (!existing) return;
 
-    if (id) {
-      // Navigate using plural entity and id
-      navigate(`/ticket-upgrade?entity=${encodeURIComponent(collection)}&id=${encodeURIComponent(String(id))}`);
-      return;
-    }
-    if (ticket) {
-      // Fallback: use ticket_code search param
-      navigate(`/ticket-upgrade?entity=${encodeURIComponent(collection)}&ticket_code=${encodeURIComponent(String(ticket))}`);
-      return;
-    }
-    // As a last resort, open upgrade for visitors with email as q param (some backends support q=)
-    navigate(`/ticket-upgrade?entity=visitors&email=${encodeURIComponent(emailNorm)}`);
+  const collection =
+    existing.collection || ensurePluralRole(existing.registrationType || role);
+
+  const id =
+    existing.id ||
+    existing._id ||
+    existing._id_str ||
+    (existing._id && existing._id.$oid) ||
+    null;
+
+  const ticket = existing.ticket_code || existing.ticketCode || null;
+
+  const emailParam = encodeURIComponent(emailNorm);
+
+  if (id) {
+    navigate(
+      `/ticket-upgrade?entity=${encodeURIComponent(
+        collection
+      )}&id=${encodeURIComponent(String(id))}&email=${emailParam}`
+    );
+    return;
   }
+
+  if (ticket) {
+    navigate(
+      `/ticket-upgrade?entity=${encodeURIComponent(
+        collection
+      )}&ticket_code=${encodeURIComponent(String(ticket))}&email=${emailParam}`
+    );
+    return;
+  }
+
+  // last resort (rare)
+  navigate(
+    `/ticket-upgrade?entity=visitors&email=${emailParam}`
+  );
+}
+
 
   return (
     <div className="ml-3 flex flex-col gap-2">

@@ -15,6 +15,8 @@ export default function DashboardSection({
   onAddNew, // intentionally may be null now
   onDelete,
   onRefreshRow,
+  onResend, // callback to send/resend ticket
+  resendLoadingId,
   setShowExhibitorManager,
   setShowPartnerManager,
   PAGE_SIZE = 10,
@@ -70,6 +72,9 @@ export default function DashboardSection({
     else if (tableKey === "partners") setShowPartnerManager && setShowPartnerManager(true);
   }
 
+  // showSendTicket only for non-visitors
+  const showSendTicket = tableKey !== "visitors";
+
   return (
     <section className="border border-gray-200 rounded bg-white p-4 shadow">
       <header className="flex items-center justify-between mb-3">
@@ -95,6 +100,9 @@ export default function DashboardSection({
           onEdit={(row) => handleRowAction("edit", row)}
           onDelete={(row) => handleRowAction("delete", row)}
           onRefreshRow={(row) => handleRowAction("refresh", row)}
+          onResend={(row) => typeof onResend === "function" && onResend(tableKey, row)}
+          resendLoadingId={resendLoadingId}
+          showSendTicket={showSendTicket}
           prettifyKey={prettifyKey}
         />
       </div>

@@ -219,6 +219,18 @@ export default function EditModal({
     e && e.preventDefault();
     const payload = collectPayload();
 
+    // CRITICAL FIX: preserve identifiers from the original row so backend updates work
+    try {
+      if (row) {
+        if (row.id !== undefined && (payload.id === undefined || payload.id === "")) payload.id = row.id;
+        if (row._id !== undefined && (payload._id === undefined || payload._id === "")) payload._id = row._id;
+        if (row.ID !== undefined && (payload.ID === undefined || payload.ID === "")) payload.ID = row.ID;
+      }
+    } catch (err) {
+      // defensive - do not block save if something odd happens
+      console.warn("[EditModal] id-preserve warning:", err && (err.message || err));
+    }
+
     try {
       await Promise.resolve(onSave(payload));
     } catch (err) {
@@ -233,6 +245,18 @@ export default function EditModal({
     try {
       setPendingPremium(true);
       const payload = collectPayload();
+
+      // If creating but we have an id present in row (unlikely), preserve it too.
+      try {
+        if (row) {
+          if (row.id !== undefined && (payload.id === undefined || payload.id === "")) payload.id = row.id;
+          if (row._id !== undefined && (payload._id === undefined || payload._id === "")) payload._id = row._id;
+          if (row.ID !== undefined && (payload.ID === undefined || payload.ID === "")) payload.ID = row.ID;
+        }
+      } catch (err) {
+        console.warn("[EditModal] id-preserve on create warning:", err && (err.message || err));
+      }
+
       await Promise.resolve(onSave(payload));
     } catch (err) {
       console.error("[EditModal] create+generate error:", err);

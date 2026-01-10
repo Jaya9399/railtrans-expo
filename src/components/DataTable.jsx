@@ -7,9 +7,10 @@ export default function DataTable({
   onEdit,
   onDelete,
   onRefreshRow,
-  onResend, // callback(row) -> may be async
+  onResend, // callback(row) -> may be async; used for "Send Ticket"
   prettifyKey,
-  resendLoadingId, // new: id currently being resent
+  resendLoadingId, // id currently being resent / sent
+  showSendTicket = false, // if true, show "Send Ticket" button (otherwise show refresh)
 }) {
   const [page, setPage] = useState(0);
   const [sortKey, setSortKey] = useState(null);
@@ -81,20 +82,14 @@ export default function DataTable({
                     {label || (prettifyKey ? prettifyKey(key) : key)}
                   </span>
                   {sortKey === key && (
-                    <span className="text-xs">
-                      {sortDir === "asc" ? "▲" : "▼"}
-                    </span>
+                    <span className="text-xs">{sortDir === "asc" ? "▲" : "▼"}</span>
                   )}
                 </div>
               </th>
             ))}
 
-            <th className="px-3 py-2 border-b border-gray-300 text-center w-24">
-              Admin
-            </th>
-            <th className="px-3 py-2 border-b border-gray-300 text-center w-36">
-              Actions
-            </th>
+            <th className="px-3 py-2 border-b border-gray-300 text-center w-24">Admin</th>
+            <th className="px-3 py-2 border-b border-gray-300 text-center w-36">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -112,10 +107,7 @@ export default function DataTable({
             const keyId = row?.id ?? row?._id ?? row?.ID ?? i;
             const isResending = String(resendLoadingId || "") === String(keyId);
             return (
-              <tr
-                key={String(keyId)}
-                className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}
-              >
+              <tr key={String(keyId)} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
                 {columns.map(({ key }) => (
                   <td
                     key={key}
@@ -157,9 +149,7 @@ export default function DataTable({
                       Admin
                     </span>
                   ) : (
-                    <span className="inline-block bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
-                      —
-                    </span>
+                    <span className="inline-block bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">—</span>
                   )}
                 </td>
 
@@ -174,33 +164,26 @@ export default function DataTable({
 
                   <button
                     className="mr-2 text-red-600 hover:underline text-xs"
-                    onClick={() =>
-                      typeof onDelete === "function" && onDelete(row)
-                    }
+                    onClick={() => typeof onDelete === "function" && onDelete(row)}
                     title="Delete"
                   >
                     Delete
                   </button>
 
-                  {typeof onResend === "function" ? (
+                  {showSendTicket && typeof onResend === "function" ? (
                     <button
-                      className={`mr-2 text-indigo-600 hover:underline text-xs ${
-                        isResending ? "opacity-60 cursor-not-allowed" : ""
-                      }`}
-                      onClick={() => {
-                        if (!isResending) onResend(row);
-                      }}
-                      title="Resend Email"
+                      className={`mr-2 text-indigo-600 hover:underline text-xs ${isResending ? "opacity-60 cursor-not-allowed" : ""}`}
+                      onClick={() => { if (!isResending) onResend(row); }}
+                      title="Send Ticket"
                       disabled={isResending}
                     >
-                      {isResending ? "Sending..." : "Resend"}
+                      {isResending ? "Sending..." : "Send Ticket"}
                     </button>
                   ) : (
+                    // No send-permission: show refresh action
                     <button
                       className="text-gray-600 hover:underline text-xs"
-                      onClick={() =>
-                        typeof onRefreshRow === "function" && onRefreshRow(row)
-                      }
+                      onClick={() => typeof onRefreshRow === "function" && onRefreshRow(row)}
                       title="Refresh this row"
                     >
                       ↻
@@ -223,9 +206,7 @@ export default function DataTable({
           >
             Prev
           </button>
-          <span className="text-sm">
-            Page {Math.min(page + 1, pageCount)} of {pageCount}
-          </span>
+          <span className="text-sm">Page {Math.min(page + 1, pageCount)} of {pageCount}</span>
           <button
             onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             disabled={page === pageCount - 1}

@@ -1,4 +1,10 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
 import EditModal from "../components/EditModal";
 import DeleteModal from "../components/DeleteModal";
 import AdminExhibitor from "../pages/AdminExhibitor";
@@ -9,12 +15,22 @@ import AddRegistrantModal from "../components/AddRegistrantModal";
 
 const apiEndpoints = [
   { label: "Visitors", url: "/api/visitors", configUrl: "/api/visitor-config" },
-  { label: "Exhibitors", url: "/api/exhibitors", configUrl: "/api/exhibitor-config" },
+  {
+    label: "Exhibitors",
+    url: "/api/exhibitors",
+    configUrl: "/api/exhibitor-config",
+  },
   { label: "Partners", url: "/api/partners", configUrl: "/api/partner-config" },
   { label: "Speakers", url: "/api/speakers", configUrl: "/api/speaker-config" },
   { label: "Awardees", url: "/api/awardees", configUrl: "/api/awardee-config" },
 ];
-const TABLE_KEYS = ["visitors", "exhibitors", "partners", "speakers", "awardees"];
+const TABLE_KEYS = [
+  "visitors",
+  "exhibitors",
+  "partners",
+  "speakers",
+  "awardees",
+];
 const HIDDEN_FIELDS = new Set([]);
 const PAGE_SIZE = 10;
 
@@ -74,7 +90,10 @@ const LABEL_MAP = {
 function prettifyKey(k) {
   if (!k) return "";
   if (LABEL_MAP[k]) return LABEL_MAP[k];
-  const spaced = k.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+  const spaced = k
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase();
   return spaced
     .split(" ")
     .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
@@ -82,7 +101,8 @@ function prettifyKey(k) {
 }
 
 // pattern used to detect fields we will hide on "Add New"
-const HIDE_ON_CREATE_RE = /(ticket|tx|transaction|payment|paid|(^id$)|id$|created(_at)?|updated(_at)?|timestamp|_at)$/i;
+const HIDE_ON_CREATE_RE =
+  /(ticket|tx|transaction|payment|paid|(^id$)|id$|created(_at)?|updated(_at)?|timestamp|_at)$/i;
 function shouldHideOnCreate(name = "") {
   if (!name) return false;
   return HIDE_ON_CREATE_RE.test(String(name));
@@ -126,7 +146,9 @@ export default function DashboardContent() {
   );
 
   const RAW_API_BASE =
-    (typeof window !== "undefined" && (window.__API_BASE__ || "")) || (process.env.REACT_APP_API_BASE || "");
+    (typeof window !== "undefined" && (window.__API_BASE__ || "")) ||
+    process.env.REACT_APP_API_BASE ||
+    "";
   const API_BASE = String(RAW_API_BASE || "").replace(/\/$/, "");
   function buildApiUrl(path) {
     if (!path) return API_BASE || path;
@@ -167,8 +189,10 @@ export default function DashboardContent() {
           try {
             const res = await fetch(buildApiUrl(url));
             let j = await res.json().catch(() => null);
-            if (Array.isArray(j) && j.length === 2 && Array.isArray(j[0])) j = j[0];
-            if (j && typeof j === "object" && !Array.isArray(j)) j = j.data || j.rows || j;
+            if (Array.isArray(j) && j.length === 2 && Array.isArray(j[0]))
+              j = j[0];
+            if (j && typeof j === "object" && !Array.isArray(j))
+              j = j.data || j.rows || j;
             const raw = normalizeData(j);
             raws[label.toLowerCase()] = raw;
             results[label.toLowerCase()] = raw.map(sanitizeRow);
@@ -219,12 +243,23 @@ export default function DashboardContent() {
       if (raw) break;
     }
     if (!raw && displayRow && displayRow.email) {
-      raw = raws.find((r) => r && String(r.email || r.data?.email || r.form?.email || "").toLowerCase() === String(displayRow.email).toLowerCase());
+      raw = raws.find(
+        (r) =>
+          r &&
+          String(
+            r.email || r.data?.email || r.form?.email || ""
+          ).toLowerCase() === String(displayRow.email).toLowerCase()
+      );
     }
     if (!raw) raw = displayRow || null;
 
     let configCols = (configs[table] && configs[table].columns) || null;
-    if (!configCols && raw) configCols = Object.keys(raw).map((k) => ({ key: k, name: k, label: prettifyKey(k) }));
+    if (!configCols && raw)
+      configCols = Object.keys(raw).map((k) => ({
+        key: k,
+        name: k,
+        label: prettifyKey(k),
+      }));
     if (!configCols) configCols = [];
 
     setModalColumns(configCols);
@@ -236,7 +271,9 @@ export default function DashboardContent() {
     if (!table || !displayRow) return;
     const raws = rawReport[table] || [];
     const idVal = displayRow?.id || displayRow?._id || displayRow?.ID || "";
-    let raw = raws.find((r) => String(r.id || r._id || r.ID || "") === String(idVal));
+    let raw = raws.find(
+      (r) => String(r.id || r._id || r.ID || "") === String(idVal)
+    );
     if (!raw) raw = displayRow;
     setDeleteTable(table);
     setDeleteRow(raw);
@@ -269,7 +306,9 @@ export default function DashboardContent() {
 
   // onSave now simply creates/updates via existing backend endpoints.
   // The backend (for visitors/speakers/awardees) will generate tickets and send emails if implemented server-side.
-  async function handleEditSave(updatedRowRaw /*, opts ignored - server handles generation */) {
+  async function handleEditSave(
+    updatedRowRaw /*, opts ignored - server handles generation */
+  ) {
     if (!editTable) return null;
     const base = apiMap.current[editTable];
     if (!base) {
@@ -280,7 +319,8 @@ export default function DashboardContent() {
       let url = buildApiUrl(base);
       let method = "POST";
       if (!isCreating) {
-        const idVal = updatedRowRaw.id || updatedRowRaw._id || updatedRowRaw.ID || "";
+        const idVal =
+          updatedRowRaw.id || updatedRowRaw._id || updatedRowRaw.ID || "";
         if (!idVal) {
           setActionMsg("Missing id for update");
           return null;
@@ -303,13 +343,22 @@ export default function DashboardContent() {
       }
 
       if (res.ok) {
-        let message = isCreating ? `Created new ${editTable}` : `Updated ${editTable}`;
+        let message = isCreating
+          ? `Created new ${editTable}`
+          : `Updated ${editTable}`;
         if (json) {
           if (json.ticket_code) message += ` • Ticket: ${json.ticket_code}`;
-          if (json.saved && json.saved.ticket_code) message += ` • Ticket: ${json.saved.ticket_code}`;
-          if (json.mail && (json.mail.ok || json.mail.info || json.mail.error)) {
+          if (json.saved && json.saved.ticket_code)
+            message += ` • Ticket: ${json.saved.ticket_code}`;
+          if (
+            json.mail &&
+            (json.mail.ok || json.mail.info || json.mail.error)
+          ) {
             if (json.mail.ok) message += ` • Email sent`;
-            else message += ` • Email result: ${json.mail.error || JSON.stringify(json.mail)}`;
+            else
+              message += ` • Email result: ${
+                json.mail.error || JSON.stringify(json.mail)
+              }`;
           } else if (json.mailError) {
             message += ` • Email error: ${json.mailError}`;
           }
@@ -319,7 +368,11 @@ export default function DashboardContent() {
         await fetchAll();
         return json;
       } else {
-        const bodyText = json && json.error ? json.error : (typeof json === "string" ? json : null) || (await res.text().catch(() => null));
+        const bodyText =
+          json && json.error
+            ? json.error
+            : (typeof json === "string" ? json : null) ||
+              (await res.text().catch(() => null));
         setActionMsg(`Failed to save: ${bodyText || res.status}`);
         return null;
       }
@@ -335,9 +388,15 @@ export default function DashboardContent() {
     try {
       const raws = rawReport[table] || [];
       const idVal = displayRow.id || displayRow._id || displayRow.ID || "";
-      if (!idVal) { setActionMsg("Cannot refresh: missing id"); return; }
+      if (!idVal) {
+        setActionMsg("Cannot refresh: missing id");
+        return;
+      }
       const base = apiMap.current[table];
-      if (!base) { setActionMsg("Unknown table"); return; }
+      if (!base) {
+        setActionMsg("Unknown table");
+        return;
+      }
       const url = buildApiUrl(`${base}/${encodeURIComponent(String(idVal))}`);
       const res = await fetch(url);
       if (!res.ok) {
@@ -348,14 +407,18 @@ export default function DashboardContent() {
       const fresh = await res.json().catch(() => null);
       setRawReport((prev) => {
         const prevList = [...(prev[table] || [])];
-        const idx = prevList.findIndex((r) => String(r.id || r._id || r.ID || "") === String(idVal));
+        const idx = prevList.findIndex(
+          (r) => String(r.id || r._id || r.ID || "") === String(idVal)
+        );
         if (idx >= 0) prevList[idx] = fresh;
         else prevList.unshift(fresh);
         return { ...prev, [table]: prevList };
       });
       setReport((prev) => {
         const prevList = [...(prev[table] || [])];
-        const idx = prevList.findIndex((r) => String(r.id || r._id || r.ID || "") === String(idVal));
+        const idx = prevList.findIndex(
+          (r) => String(r.id || r._id || r.ID || "") === String(idVal)
+        );
         const sanitized = sanitizeRow(fresh || {});
         if (idx >= 0) prevList[idx] = sanitized;
         else prevList.unshift(sanitized);
@@ -382,27 +445,41 @@ export default function DashboardContent() {
       setActionMsg("Cannot resend: unknown table endpoint");
       return;
     }
-    const url = buildApiUrl(`${basePath}/${encodeURIComponent(String(idVal))}/resend-email`);
+    const url = buildApiUrl(
+      `${basePath}/${encodeURIComponent(String(idVal))}/resend-email`
+    );
     try {
       setResendLoadingId(idVal);
       setActionMsg(`Resending email for ${table} ${idVal}...`);
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
       });
       const js = await res.json().catch(() => null);
       if (res.ok) {
         if (js && js.mail && (js.mail.ok || js.mail.success)) {
-          setActionMsg(`Email resent to ${row.email || "recipient"} successfully`);
+          setActionMsg(
+            `Email resent to ${row.email || "recipient"} successfully`
+          );
         } else if (js && js.mail && js.mail.ok === false) {
-          setActionMsg(`Resend attempted but failed: ${js.mail.error || JSON.stringify(js.mail)}`);
+          setActionMsg(
+            `Resend attempted but failed: ${
+              js.mail.error || JSON.stringify(js.mail)
+            }`
+          );
         } else {
           setActionMsg(`Resend finished: ${JSON.stringify(js)}`);
         }
         // refresh that row in table to reflect mail/log state
         handleRefreshRow(table, row);
       } else {
-        const body = js && (js.error || js.message) ? (js.error || js.message) : (await res.text().catch(() => null));
+        const body =
+          js && (js.error || js.message)
+            ? js.error || js.message
+            : await res.text().catch(() => null);
         setActionMsg(`Resend failed: ${body || res.status}`);
       }
     } catch (e) {
@@ -431,7 +508,9 @@ export default function DashboardContent() {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
               <h1 className="text-2xl font-bold">Admin Dashboard</h1>
-              <div className="text-sm text-gray-600">Live registration report</div>
+              <div className="text-sm text-gray-600">
+                Live registration report
+              </div>
             </div>
             <div className="flex items-center gap-3 justify-start md:justify-end">
               <button
@@ -449,7 +528,12 @@ export default function DashboardContent() {
               </button>
 
               <div className="text-sm text-gray-500">
-                Showing {Object.keys(report).reduce((s, k) => s + (report[k] || []).length, 0)} records
+                Showing{" "}
+                {Object.keys(report).reduce(
+                  (s, k) => s + (report[k] || []).length,
+                  0
+                )}{" "}
+                records
               </div>
             </div>
           </div>
@@ -467,7 +551,9 @@ export default function DashboardContent() {
               configs={configs}
               onEdit={handleEdit}
               // Provide onResend so DataTable / section can call it when the Resend button is clicked
-              onResend={(row) => handleResend(key, row)}
+              onResend={handleResend}
+              // Pass current resend loading id so child can disable the button
+              resendLoadingId={resendLoadingId}
               // Remove per-section "Add New" capability. Central AddRegistrantModal used instead.
               onAddNew={null}
               onDelete={handleDelete}
@@ -504,9 +590,11 @@ export default function DashboardContent() {
             await fetchAll();
             let msg = `Created in ${collection}`;
             if (createdDoc) {
-              if (createdDoc.ticket_code) msg += ` • Ticket: ${createdDoc.ticket_code}`;
+              if (createdDoc.ticket_code)
+                msg += ` • Ticket: ${createdDoc.ticket_code}`;
               if (createdDoc.mail && createdDoc.mail.ok) msg += ` • Email sent`;
-              if (createdDoc.mailError) msg += ` • Email error: ${createdDoc.mailError}`;
+              if (createdDoc.mailError)
+                msg += ` • Email error: ${createdDoc.mailError}`;
             }
             setActionMsg(msg);
           }}
@@ -526,30 +614,56 @@ export default function DashboardContent() {
 
         {showExhibitorManager && (
           <div className="fixed inset-0 z-50 flex items-start justify-center p-6">
-            <div className="absolute inset-0 bg-black opacity-40" onClick={() => setShowExhibitorManager(false)} />
-            <div className="relative z-60 w-full max-w-5xl bg-white rounded shadow-lg overflow-auto" style={{ maxHeight: "90vh" }}>
+            <div
+              className="absolute inset-0 bg-black opacity-40"
+              onClick={() => setShowExhibitorManager(false)}
+            />
+            <div
+              className="relative z-60 w-full max-w-5xl bg-white rounded shadow-lg overflow-auto"
+              style={{ maxHeight: "90vh" }}
+            >
               <div className="flex items-center justify-between p-3 border-b">
                 <h3 className="text-lg font-semibold">Manage Exhibitors</h3>
                 <div>
-                  <button className="px-3 py-1 mr-2 border rounded" onClick={() => setShowExhibitorManager(false)}>Close</button>
+                  <button
+                    className="px-3 py-1 mr-2 border rounded"
+                    onClick={() => setShowExhibitorManager(false)}
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
-              <div className="p-4"><AdminExhibitor /></div>
+              <div className="p-4">
+                <AdminExhibitor />
+              </div>
             </div>
           </div>
         )}
 
         {showPartnerManager && (
           <div className="fixed inset-0 z-50 flex items-start justify-center p-6">
-            <div className="absolute inset-0 bg-black opacity-40" onClick={() => setShowPartnerManager(false)} />
-            <div className="relative z-60 w-full max-w-5xl bg-white rounded shadow-lg overflow-auto" style={{ maxHeight: "90vh" }}>
+            <div
+              className="absolute inset-0 bg-black opacity-40"
+              onClick={() => setShowPartnerManager(false)}
+            />
+            <div
+              className="relative z-60 w-full max-w-5xl bg-white rounded shadow-lg overflow-auto"
+              style={{ maxHeight: "90vh" }}
+            >
               <div className="flex items-center justify-between p-3 border-b">
                 <h3 className="text-lg font-semibold">Manage Partners</h3>
                 <div>
-                  <button className="px-3 py-1 mr-2 border rounded" onClick={() => setShowPartnerManager(false)}>Close</button>
+                  <button
+                    className="px-3 py-1 mr-2 border rounded"
+                    onClick={() => setShowPartnerManager(false)}
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
-              <div className="p-4"><AdminPartner /></div>
+              <div className="p-4">
+                <AdminPartner />
+              </div>
             </div>
           </div>
         )}
