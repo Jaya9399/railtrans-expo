@@ -8,6 +8,10 @@ import React, { useEffect, useRef } from "react";
  *
  * New: supports premium/generate flow by relying on backend create endpoints
  *      which generate ticket and send email for visitors/speakers/awardees.
+ *
+ * Notes:
+ * - This modal intentionally does NOT render `id`/_id as an editable field.
+ * - It preserves identifiers from `row` into the payload automatically and coerces them to strings.
  */
 
 const normalize = (cols = []) =>
@@ -21,7 +25,7 @@ const normalize = (cols = []) =>
       name,
       label: c.label || c.name || c.key || name,
       type: c.type || "text",
-      options: c.options || [],
+      options: c.options || c.choices || c.values || [],
       required: !!c.required,
       showIf: c.showIf || null,
     };
@@ -100,6 +104,7 @@ export default function EditModal({
   setPendingPremium = () => {},
   setNewIsPremium = () => {},
 }) {
+  // Normalize incoming columns to our internal shape
   const metaBase = normalize(columns);
 
   // ------ Ensure Exhibitors always have a Company Name field (but dedupe) ------
@@ -172,6 +177,9 @@ export default function EditModal({
         // ignore if DOM not ready
       }
     });
+
+    // Debug: helpful when fields not showing as expected
+    // console.debug('[EditModal] opened meta:', meta, 'row:', row);
   }, [open, meta, row]);
 
   const isVisible = (f) => {
@@ -215,20 +223,47 @@ export default function EditModal({
     return expanded;
   }
 
+  // Ensure identifiers are preserved and coerced to simple strings
+  function preserveIdentifiers(payload) {
+    if (!payload || typeof payload !== "object") return;
+    if (!row || typeof row !== "object") return;
+
+    const coerce = (v) => {
+      if (v === undefined || v === null) return "";
+      if (typeof v === "string") return v;
+      if (typeof v === "number" || typeof v === "boolean") return String(v);
+      try {
+        if (v && typeof v === "object") {
+          if (v.$oid) return String(v.$oid);
+          if (v.toString && typeof v.toString === "function") {
+            const s = v.toString();
+            const m = s.match(/([a-f0-9]{24})/i);
+            if (m && m[1]) return m[1];
+            return String(s);
+          }
+        }
+      } catch (e) {}
+      return String(v);
+    };
+
+    if (row._id !== undefined && (payload._id === undefined || payload._id === "")) payload._id = coerce(row._id);
+    if (row.id !== undefined && (payload.id === undefined || payload.id === "")) payload.id = coerce(row.id);
+    if (row.ID !== undefined && (payload.ID === undefined || payload.ID === "")) payload.ID = coerce(row.ID);
+
+    // keep both forms present
+    if (!payload._id && payload.id) payload._id = payload.id;
+    if (!payload.id && payload._id) payload.id = payload._id;
+  }
+
   const handleSubmit = async (e) => {
     e && e.preventDefault();
     const payload = collectPayload();
 
-    // CRITICAL FIX: preserve identifiers from the original row so backend updates work
+    // preserve identifiers (coerced)
     try {
-      if (row) {
-        if (row.id !== undefined && (payload.id === undefined || payload.id === "")) payload.id = row.id;
-        if (row._id !== undefined && (payload._id === undefined || payload._id === "")) payload._id = row._id;
-        if (row.ID !== undefined && (payload.ID === undefined || payload.ID === "")) payload.ID = row.ID;
-      }
+      preserveIdentifiers(payload);
     } catch (err) {
-      // defensive - do not block save if something odd happens
-      console.warn("[EditModal] id-preserve warning:", err && (err.message || err));
+      console.warn("[EditModal] preserveIdentifiers warning:", err && (err.message || err));
     }
 
     try {
@@ -239,24 +274,14 @@ export default function EditModal({
   };
 
   const handleCreateAndGenerate = async () => {
-    // Previously we called onSave with opts to trigger client-side generation.
-    // Now backend handles generation/email for visitors/speakers/awardees;
-    // so simply call onSave and show pending UI momentarily.
     try {
       setPendingPremium(true);
       const payload = collectPayload();
-
-      // If creating but we have an id present in row (unlikely), preserve it too.
       try {
-        if (row) {
-          if (row.id !== undefined && (payload.id === undefined || payload.id === "")) payload.id = row.id;
-          if (row._id !== undefined && (payload._id === undefined || payload._id === "")) payload._id = row._id;
-          if (row.ID !== undefined && (payload.ID === undefined || payload.ID === "")) payload.ID = row.ID;
-        }
+        preserveIdentifiers(payload);
       } catch (err) {
-        console.warn("[EditModal] id-preserve on create warning:", err && (err.message || err));
+        console.warn("[EditModal] preserveIdentifiers on create warning:", err && (err.message || err));
       }
-
       await Promise.resolve(onSave(payload));
     } catch (err) {
       console.error("[EditModal] create+generate error:", err);
@@ -283,21 +308,18 @@ export default function EditModal({
 
             const initial = row?.[f.name] ?? (f.type === "checkbox" ? false : "");
             if (!refs.current[f.name]) {
-              // ensure ref exists during render as a fallback
               if (f.type === "radio") refs.current[f.name] = { current: { value: initial } };
               else refs.current[f.name] = React.createRef();
             }
 
-            // compute disable state for ticket fields
             const isTicketField = DISABLE_TICKET_KEYS.has(f.name);
 
-            // text area
+            // textarea
             if (f.type === "textarea")
               return (
                 <div key={f.name} className="mb-3">
                   <label className="block mb-1">
-                    {f.label}
-                    {f.required && " *"}
+                    {f.label}{f.required && " *"}
                   </label>
                   <textarea
                     ref={refs.current[f.name]}
@@ -315,8 +337,7 @@ export default function EditModal({
               return (
                 <div key={f.name} className="mb-3">
                   <label className="block mb-1">
-                    {f.label}
-                    {f.required && " *"}
+                    {f.label}{f.required && " *"}
                   </label>
                   <select
                     ref={refs.current[f.name]}
@@ -351,19 +372,17 @@ export default function EditModal({
                     title={isTicketField ? "Ticket code cannot be edited" : undefined}
                   />
                   <span>
-                    {f.label}
-                    {f.required && " *"}
+                    {f.label}{f.required && " *"}
                   </span>
                 </label>
               );
 
-            // radio group (store selection in holder ref)
+            // radio
             if (f.type === "radio")
               return (
                 <div key={f.name} className="mb-3">
                   <label className="block mb-1">
-                    {f.label}
-                    {f.required && " *"}
+                    {f.label}{f.required && " *"}
                   </label>
                   <div className="flex gap-4">
                     {Array.isArray(f.options) && f.options.map((o, i) => {
@@ -378,7 +397,6 @@ export default function EditModal({
                             defaultChecked={checked}
                             value={val}
                             onChange={(e) => {
-                              // update holder value
                               refs.current[f.name] = refs.current[f.name] || { current: {} };
                               refs.current[f.name].current.value = e.target.value;
                             }}
@@ -392,12 +410,11 @@ export default function EditModal({
                 </div>
               );
 
-            // default single-line input
+            // default input
             return (
               <div key={f.name} className="mb-3">
                 <label className="block mb-1">
-                  {f.label}
-                  {f.required && " *"}
+                  {f.label}{f.required && " *"}
                 </label>
                 <input
                   ref={refs.current[f.name]}
@@ -415,7 +432,6 @@ export default function EditModal({
           <div className="flex justify-end gap-3 mt-4">
             <button type="button" className="px-4 py-2 border" onClick={onClose}>Cancel</button>
 
-            {/* Create & Generate: now just triggers onSave; server handles creation + email for certain collections */}
             {isNew && newIsPremium && (
               <button
                 type="button"
