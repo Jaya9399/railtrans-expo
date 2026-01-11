@@ -215,67 +215,23 @@ export default function EditModal({
     return expanded;
   }
 
-  const preserveIdentifiersToPayload = (payload, originalRow) => {
-    // Ensure payload is an object
-    if (!payload || typeof payload !== "object") return;
-    if (!originalRow || typeof originalRow !== "object") return;
-
-    try {
-      // Prefer plain string forms for identifiers. Coerce object ids to hex string if possible.
-      const coerce = (v) => {
-        try {
-          if (v === undefined || v === null) return v;
-          // If it's an object with toString returning hex (like Mongo ObjectId), use that
-          if (typeof v === "object" && typeof v.toString === "function") {
-            const s = v.toString();
-            // strip "ObjectId(" wrapper if any (some drivers produce "ObjectId('...')")
-            const m = s.match(/([a-f0-9]{24})/i);
-            if (m && m[1]) return m[1];
-            return String(s);
-          }
-          return String(v);
-        } catch (e) {
-          return String(v);
-        }
-      };
-
-      if (originalRow.id !== undefined && (payload.id === undefined || payload.id === "")) {
-        payload.id = coerce(originalRow.id);
-      }
-      if (originalRow._id !== undefined && (payload._id === undefined || payload._id === "")) {
-        payload._id = coerce(originalRow._id);
-      }
-      if (originalRow.ID !== undefined && (payload.ID === undefined || payload.ID === "")) {
-        payload.ID = coerce(originalRow.ID);
-      }
-
-      // Also ensure there's a plain `id` string and `_id` string both present (helps downstream)
-      if (!payload.id && payload._id) {
-        payload.id = String(payload._id);
-      }
-      if (!payload._id && payload.id) {
-        payload._id = String(payload.id);
-      }
-    } catch (err) {
-      console.warn("[EditModal] preserveIdentifiersToPayload warning:", err && (err.message || err));
-    }
-  };
-
   const handleSubmit = async (e) => {
     e && e.preventDefault();
     const payload = collectPayload();
 
-    // CRITICAL FIX: preserve identifiers from the original row so backend updates work (coerce to string)
+    // CRITICAL FIX: preserve identifiers from the original row so backend updates work
     try {
-      preserveIdentifiersToPayload(payload, row);
+      if (row) {
+        if (row.id !== undefined && (payload.id === undefined || payload.id === "")) payload.id = row.id;
+        if (row._id !== undefined && (payload._id === undefined || payload._id === "")) payload._id = row._id;
+        if (row.ID !== undefined && (payload.ID === undefined || payload.ID === "")) payload.ID = row.ID;
+      }
     } catch (err) {
       // defensive - do not block save if something odd happens
       console.warn("[EditModal] id-preserve warning:", err && (err.message || err));
     }
 
     try {
-      // debug: optional
-      // console.debug('[EditModal] saving payload', payload);
       await Promise.resolve(onSave(payload));
     } catch (err) {
       console.error("[EditModal] onSave error:", err);
@@ -292,7 +248,11 @@ export default function EditModal({
 
       // If creating but we have an id present in row (unlikely), preserve it too.
       try {
-        preserveIdentifiersToPayload(payload, row);
+        if (row) {
+          if (row.id !== undefined && (payload.id === undefined || payload.id === "")) payload.id = row.id;
+          if (row._id !== undefined && (payload._id === undefined || payload._id === "")) payload._id = row._id;
+          if (row.ID !== undefined && (payload.ID === undefined || payload.ID === "")) payload.ID = row.ID;
+        }
       } catch (err) {
         console.warn("[EditModal] id-preserve on create warning:", err && (err.message || err));
       }
