@@ -1,4 +1,6 @@
+// (full file, updated handleResend implementation)
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import * as XLSX from "xlsx";
 import EditModal from "../components/EditModal";
 import DeleteModal from "../components/DeleteModal";
 import AdminExhibitor from "../pages/AdminExhibitor";
@@ -29,41 +31,29 @@ function sanitizeRow(row) {
   if (!row || typeof row !== "object") return {};
   const out = {};
 
-  // Preserve id/_id as string if present on raw doc (helps Edit/Refresh)
   if (row._id !== undefined && row._id !== null) {
     try {
       out._id = typeof row._id === "string" ? row._id : (row._id.$oid ? String(row._id.$oid) : String(row._id));
     } catch {
       out._id = String(row._id);
     }
-    // also provide id for convenience
     out.id = out._id;
   } else if (row.id !== undefined && row.id !== null) {
-    // if backend already provided id string
     out.id = String(row.id);
     out._id = out.id;
   }
 
   for (const k of Object.keys(row)) {
-    // skip internal mongo _id because we've already exposed it above
     if (k === "_id") continue;
-
     const v = row[k];
     if (v === null || typeof v === "undefined") {
       out[k] = "";
       continue;
     }
-
-    if (typeof v === "boolean") {
+    if (typeof v === "boolean" || typeof v === "number") {
       out[k] = v;
       continue;
     }
-
-    if (typeof v === "number") {
-      out[k] = v;
-      continue;
-    }
-
     if (typeof v === "object") {
       if (v.name || v.full_name || v.email || v.company) {
         const parts = [];
@@ -81,7 +71,6 @@ function sanitizeRow(row) {
       }
       continue;
     }
-
     out[k] = String(v);
   }
   return out;
@@ -120,6 +109,75 @@ function shouldHideOnCreate(name = "") {
   if (!name) return false;
   return HIDE_ON_CREATE_RE.test(String(name));
 }
+
+/**
+ * CLEAN_EXPORT_FIELDS
+ * Explicit whitelist of human-relevant fields per collection.
+ * Only these fields will appear in the Excel export (in this order).
+ */
+const CLEAN_EXPORT_FIELDS = {
+  visitors: [
+    "name",
+    "email",
+    "mobile",
+    "company",
+    "designation",
+    "role",
+    "ticket_category",
+    "ticket_code",
+    "status",
+    "purpose",
+    "other_details",
+  ],
+  exhibitors: [
+    "name",
+    "email",
+    "mobile",
+    "company",
+    "designation",
+    "company_type",
+    "role",
+    "ticket_category",
+    "ticket_code",
+    "status",
+    "productDetails",
+    "notes",
+  ],
+  partners: [
+    "name",
+    "email",
+    "mobile",
+    "company",
+    "designation",
+    "role",
+    "ticket_code",
+    "status",
+    "partnership",
+  ],
+  speakers: [
+    "name",
+    "email",
+    "mobile",
+    "company",
+    "designation",
+    "topic",
+    "role",
+    "ticket_code",
+    "status",
+  ],
+  awardees: [
+    "name",
+    "email",
+    "mobile",
+    "company",
+    "designation",
+    "award_category",
+    "role",
+    "ticket_code",
+    "status",
+    "bio",
+  ],
+};
 
 export default function DashboardContent() {
   const [report, setReport] = useState({});
@@ -231,7 +289,91 @@ export default function DashboardContent() {
     };
   }, [fetchAll]);
 
-  // === Handlers ===
+  // ---------- Export to multi-sheet XLSX (clean, whitelist-driven) ----------
+  // This uses SheetJS (xlsx). Install with: npm install xlsx
+
+  function flattenForSheet(doc = {}, tableKey) {
+    const allowed = CLEAN_EXPORT_FIELDS[tableKey] || [];
+    const out = {};
+
+    // Build merged view giving precedence: top-level overrides data/form
+    const merged = {
+      ...(doc.data || {}),
+      ...(doc.form || {}),
+      ...doc,
+    };
+
+    for (const field of allowed) {
+      let value = merged[field];
+      if (value === undefined || value === null) {
+        out[field] = "";
+      } else if (typeof value === "object") {
+        try {
+          out[field] = JSON.stringify(value);
+        } catch {
+          out[field] = String(value);
+        }
+      } else {
+        out[field] = value;
+      }
+    }
+
+    return out;
+  }
+
+  function exportAllWorkbook() {
+    try {
+      const wb = XLSX.utils.book_new();
+
+      for (const key of TABLE_KEYS) {
+        const arr = rawReport[key] || [];
+
+        const allowed = CLEAN_EXPORT_FIELDS[key] || [];
+
+        if (!arr || arr.length === 0) {
+          const ws = XLSX.utils.aoa_to_sheet([["No records"]]);
+          XLSX.utils.book_append_sheet(wb, ws, key.substring(0, 31));
+          continue;
+        }
+
+        // Build sheet rows using whitelist order
+        const headers = allowed.slice(); // copy
+        // Convert to human-friendly header labels
+        const headerLabels = headers.map((h) => prettifyKey(h));
+
+        const sheetData = [headerLabels];
+
+        for (const doc of arr) {
+          const flat = flattenForSheet(doc, key);
+          const row = headers.map((h) => {
+            const v = flat[h];
+            if (v === null || typeof v === "undefined") return "";
+            return v;
+          });
+          sheetData.push(row);
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet(sheetData);
+
+        // set column widths heuristically
+        const colWidths = headers.map((h) => ({ wch: Math.max(8, Math.min(40, (prettifyKey(h) || "").length + 6)) }));
+        ws["!cols"] = colWidths;
+
+        XLSX.utils.book_append_sheet(wb, ws, key.substring(0, 31));
+      }
+
+      const now = new Date();
+      const ts = now.toISOString().replace(/[:.]/g, "-");
+      const filename = `railtransexpo_clean_export_${ts}.xlsx`;
+      XLSX.writeFile(wb, filename);
+      setActionMsg("Export started (clean Excel)");
+    } catch (e) {
+      console.error("Export workbook error:", e);
+      setActionMsg("Export failed");
+    }
+  }
+
+  // === Handlers (unchanged behavior) ===
 
   function handleEdit(table, displayRow) {
     setEditTable(table);
@@ -241,7 +383,6 @@ export default function DashboardContent() {
     const idKeys = ["id", "_id", "ID", "Id"];
     let raw = null;
 
-    // try direct id match using sanitized displayRow.id/_id (we populate id in sanitizeRow)
     for (const r of raws) {
       for (const k of idKeys) {
         if (r && r[k] !== undefined && String(r[k]) === String(displayRow[k])) {
@@ -252,7 +393,6 @@ export default function DashboardContent() {
       if (raw) break;
     }
 
-    // fallback match by email
     if (!raw && displayRow && displayRow.email) {
       raw = raws.find(
         (r) =>
@@ -264,7 +404,6 @@ export default function DashboardContent() {
 
     if (!raw) raw = displayRow || null;
 
-    // Build modal columns robustly (promote raw.data or raw.form, infer types)
     function inferFieldFromSample(name, sample, cfgEntry = null) {
       const out = { name, label: prettifyKey(name), type: "text", options: [], required: false, showIf: null };
 
@@ -282,15 +421,12 @@ export default function DashboardContent() {
       else if (Array.isArray(sample)) {
         out.type = "select";
         out.options = sample.map((v) => (typeof v === "object" ? (v.value ?? v.label ?? String(v)) : v));
-      } else if (typeof sample === "string") {
-        out.type = sample.length > 200 ? "textarea" : "text";
-      } else if (sample && typeof sample === "object") {
+      } else if (typeof sample === "string") out.type = sample.length > 200 ? "textarea" : "text";
+      else if (sample && typeof sample === "object") {
         const keys = Object.keys(sample || {});
         const hasPrimitives = keys.some((k) => ["string", "number", "boolean"].includes(typeof sample[k]));
         out.type = hasPrimitives ? "text" : "textarea";
-      } else {
-        out.type = "text";
-      }
+      } else out.type = "text";
       return out;
     }
 
@@ -358,12 +494,6 @@ export default function DashboardContent() {
     } else {
       finalCols = [];
     }
-
-    // debug to verify
-    // eslint-disable-next-line no-console
-    console.debug("[EditModal debug] modalColumns:", finalCols);
-    // eslint-disable-next-line no-console
-    console.debug("[EditModal debug] editRow (raw):", raw);
 
     setModalColumns(finalCols);
     setEditRow(raw);
@@ -513,6 +643,7 @@ export default function DashboardContent() {
     }
   }
 
+  // UPDATED: try ticket endpoint first (/send-ticket), fall back to /resend-email if not available
   async function handleResend(table, row) {
     if (!table || !row) return;
     const idVal = row.id || row._id || row.ID || "";
@@ -525,17 +656,32 @@ export default function DashboardContent() {
       setActionMsg("Cannot resend: unknown table endpoint");
       return;
     }
-    const url = buildApiUrl(`${basePath}/${encodeURIComponent(String(idVal))}/resend-email`);
+
+    const sendTicketUrl = buildApiUrl(`${basePath}/${encodeURIComponent(String(idVal))}/send-ticket`);
+    const resendUrl = buildApiUrl(`${basePath}/${encodeURIComponent(String(idVal))}/resend-email`);
+
+    setResendLoadingId(idVal);
+    setActionMsg(`Resending email for ${table} ${idVal}...`);
+
     try {
-      setResendLoadingId(idVal);
-      setActionMsg(`Resending email for ${table} ${idVal}...`);
-      const res = await fetch(url, {
+      // Try the ticket-specific endpoint first
+      let res = await fetch(sendTicketUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
       });
+
+      // If send-ticket is not found (404), fallback to legacy /resend-email
+      if (res.status === 404 || res.status === 405) {
+        res = await fetch(resendUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        });
+      }
+
       const js = await res.json().catch(() => null);
       if (res.ok) {
         setActionMsg(`Email resent to ${row.email || "recipient"} successfully`);
+        // Refresh the row to pick up email flags/timestamps
         handleRefreshRow(table, row);
       } else {
         const body =
@@ -571,6 +717,7 @@ export default function DashboardContent() {
             </div>
             <div className="flex items-center gap-3 justify-start md:justify-end">
               <button onClick={() => fetchAll()} className="px-3 py-2 border rounded text-sm bg-white hover:bg-gray-50">Refresh All</button>
+              <button onClick={() => exportAllWorkbook()} className="px-3 py-2 border rounded text-sm bg-yellow-50 hover:bg-yellow-100">Download Excel (All Sheets)</button>
               <button onClick={() => setAddRegistrantOpen(true)} className="px-3 py-2 border rounded text-sm bg-green-50 hover:bg-green-100">Add Registrant</button>
               <div className="text-sm text-gray-500">Showing {Object.keys(report).reduce((s, k) => s + (report[k] || []).length, 0)} records</div>
             </div>
