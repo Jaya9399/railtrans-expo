@@ -77,7 +77,7 @@ export default function EmailOtpVerifier({
     if (inferredFromUrl) {
       console.warn(`[EmailOtpVerifier] registrationType prop not provided — inferred role="${role}" from URL. Prefer passing registrationType prop to this component for accuracy.`);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, []); // run once
 
   // Resolve backend base (prop -> window -> env -> "")
