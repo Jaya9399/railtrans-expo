@@ -129,7 +129,7 @@ export default function DynamicRegistrationForm({
     } catch (e) {
       setEmailVerified(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [form && JSON.stringify(form), localConfig, inferredRegistrationType]);
 
   function handleChange(e) {
@@ -192,7 +192,7 @@ export default function DynamicRegistrationForm({
     if (Object.keys(updates).length) {
       setForm(f => ({ ...f, ...updates }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [localConfig, JSON.stringify(form)]);
 
   function handleTermsChange(e) {
@@ -300,7 +300,7 @@ export default function DynamicRegistrationForm({
         }
       })();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [emailVerified, pendingSubmitAfterOtp]);
 
   return (

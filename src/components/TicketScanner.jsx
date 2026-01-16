@@ -122,7 +122,7 @@ export default function TicketScanner({ apiPath = null, autoPrintOnValidate = fa
       try { if (rafRef.current) cancelAnimationFrame(rafRef.current); } catch {}
       try { if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop()); } catch {}
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   async function handleRawScan(data) {

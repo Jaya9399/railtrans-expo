@@ -471,7 +471,7 @@ export default function Exhibitors() {
       window.removeEventListener("config-updated", onConfigUpdated);
       window.removeEventListener("event-details-updated", fetchCanonicalEvent);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, []);
 
   async function handleFormSubmit(formData) {

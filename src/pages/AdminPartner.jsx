@@ -51,7 +51,7 @@ export default function AdminPartners() {
       mountedRef.current = false;
       if (socket && socket.disconnect) socket.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, []);
 
   async function load() {

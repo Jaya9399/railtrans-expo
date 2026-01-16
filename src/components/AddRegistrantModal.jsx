@@ -205,7 +205,7 @@ export default function AddRegistrantModal({
     return () => {
       if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [values.email, values.emailAddress, role, step]);
 
   /* ---------------- submit ---------------- */
