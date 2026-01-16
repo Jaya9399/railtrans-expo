@@ -4,7 +4,6 @@ import DynamicRegistrationForm from "./DynamicRegistrationForm";
 import TicketCategorySelector from "../components/TicketCategoryGenerator";
 import ManualPaymentStep from "../components/ManualPayemntStep";
 import ThankYouMessage from "../components/ThankYouMessage";
-import { buildTicketEmail } from "../utils/emailTemplate";
 import ProcessingCard from "../components/ProcessingCard";
 
 const API_BASE = (
@@ -14,129 +13,24 @@ const API_BASE = (
   ""
 ).replace(/\/$/, "");
 
-// IMPORTANT: FRONTEND_BASE must point to the public frontend origin (used for download/upgrade links & resolving relative urls)
 const FRONTEND_BASE = (
-  process.env.REACT_APP_FRONTEND_BASE ||
-  process.env.FRONTEND_BASE ||
+  process.env. REACT_APP_FRONTEND_BASE ||
+  process.env. FRONTEND_BASE ||
   window.__FRONTEND_BASE__ ||
-  (typeof window !== "undefined" && window.location
+  (typeof window !== "undefined" && window. location
     ? window.location.origin
     : "")
 ).replace(/\/$/, "");
 
 /* ---------- small helpers ---------- */
-const isEmailLike = (v) => typeof v === "string" && /\S+@\S+\.\S+/.test(v);
 
-function findEmailDeep(obj, seen = new Set()) {
-  if (!obj || typeof obj !== "object") return "";
-  if (seen.has(obj)) return "";
-  seen.add(obj);
-  for (const [, v] of Object.entries(obj)) {
-    if (typeof v === "string" && isEmailLike(v)) return v.trim();
-    if (v && typeof v === "object") {
-      const nested = findEmailDeep(v, seen);
-      if (nested) return nested;
-    }
-  }
-  return "";
-}
-
-function extractEmailFromForm(form) {
-  if (!form || typeof form !== "object") return "";
-  const keys = [
-    "email",
-    "mail",
-    "emailId",
-    "email_id",
-    "contactEmail",
-    "contact_email",
-    "visitorEmail",
-    "user_email",
-    "primaryEmail",
-    "primary_email",
-  ];
-  for (const k of keys) {
-    const v = form[k];
-    if (isEmailLike(v)) return v.trim();
-  }
-  const containers = ["contact", "personal", "user", "profile"];
-  for (const c of containers) {
-    const v = form[c];
-    if (v && typeof v === "object") {
-      const f = extractEmailFromForm(v);
-      if (f) return f;
-    }
-  }
-  return findEmailDeep(form);
-}
-
-function getEmailFromAnyStorage() {
-  try {
-    const stores = [window.localStorage, window.sessionStorage];
-    for (const store of stores) {
-      const known = [
-        "verifiedEmail",
-        "otpEmail",
-        "visitorEmail",
-        "email",
-        "user_email",
-      ];
-      for (const k of known) {
-        try {
-          const v = store.getItem(k);
-          if (isEmailLike(v)) return v.trim();
-        } catch {}
-      }
-      for (let i = 0; i < store.length; i++) {
-        try {
-          const raw = store.getItem(store.key(i));
-          if (isEmailLike(raw)) return raw.trim();
-          const parsed = JSON.parse(raw);
-          const found = findEmailDeep(parsed);
-          if (found) return found;
-        } catch {}
-      }
-    }
-  } catch {}
-  if (
-    typeof window !== "undefined" &&
-    window.__lastOtpEmail &&
-    isEmailLike(window.__lastOtpEmail)
-  )
-    return window.__lastOtpEmail;
-  return "";
-}
-
-function getEmailFromQuery() {
-  try {
-    const u = new URL(window.location.href);
-    const e = u.searchParams.get("email");
-    if (isEmailLike(e)) return e.trim();
-  } catch {}
-  return "";
-}
-
-function getBestEmail(form) {
-  return (
-    extractEmailFromForm(form) ||
-    getEmailFromAnyStorage() ||
-    getEmailFromQuery() ||
-    ""
-  );
-}
-
-/**
- * Resolve admin/frontend URLs to absolute public frontend URLs.
- * Use FRONTEND_BASE so email links/images point to the frontend origin (not API backend).
- */
 function normalizeAdminUrl(url) {
   if (!url) return "";
   const t = String(url).trim();
   if (!t) return "";
   if (/^https?:\/\//i.test(t)) {
-    // if HTTP on localhost and page served over HTTPS, convert to origin HTTPS
     if (
-      /^http:\/\//i.test(t) &&
+      /^http: \/\//i.test(t) &&
       typeof window !== "undefined" &&
       window.location &&
       window.location.protocol === "https:"
@@ -148,215 +42,43 @@ function normalizeAdminUrl(url) {
           parsed.hostname === "127.0.0.1"
         ) {
           return (
-            FRONTEND_BASE.replace(/\/$/, "") +
+            FRONTEND_BASE. replace(/\/$/, "") +
             parsed.pathname +
             (parsed.search || "")
           );
         }
       } catch {}
-      return t.replace(/^http:/i, "https:");
+      return t. replace(/^http:/i, "https:");
     }
     return t;
   }
-  // relative path -> resolve against FRONTEND_BASE (public frontend)
-  if (t.startsWith("/")) return FRONTEND_BASE.replace(/\/$/, "") + t;
-  return FRONTEND_BASE.replace(/\/$/, "") + "/" + t.replace(/^\//, "");
+  if (t.startsWith("/")) return FRONTEND_BASE. replace(/\/$/, "") + t;
+  return FRONTEND_BASE. replace(/\/$/, "") + "/" + t. replace(/^\//, "");
 }
 
-/* ---------- mailer POST helper (tries /api/mailer then /api/email) ---------- */
-async function postMailer(payload) {
-  const endpoints = [
-    `${API_BASE}/api/mailer`,
-    `${API_BASE}/api/email`,
-    `/api/mailer`,
-    `/api/email`,
-  ].filter(Boolean);
-
-  let lastErr = null;
-  for (const url of endpoints) {
-    try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "69420",
-        },
-        body: JSON.stringify(payload),
-      });
-      const body = await r.json().catch(() => null);
-      if (r.ok) {
-        return { ok: true, body, url, status: r.status };
-      }
-      // try next endpoint only if 404 (route missing) — treat other errors as final
-      if (r.status === 404) {
-        lastErr = { status: r.status, body, url };
-        continue;
-      }
-      // non-404 error -> return failed
-      return { ok: false, status: r.status, body, url };
-    } catch (err) {
-      lastErr = err;
-      continue;
-    }
-  }
-  return { ok: false, error: lastErr || "all endpoints failed" };
-}
-
-/* ---------- email/send helper (client-side) ----------
-   We pass FRONTEND_BASE to buildTicketEmail so template resolves frontend links correctly.
-*/
-async function sendTicketEmailUsingTemplate({
-  visitor,
-  badgePreviewUrl,
-  bannerUrl,
-  badgeTemplateUrl,
-  config,
-}) {
-  const frontendBase = FRONTEND_BASE || window.location.origin || "";
-
-  const visitorId =
-    visitor?.id || visitor?.visitorId || visitor?.insertedId || "";
-  const ticketCode = visitor?.ticket_code || visitor?.ticketCode || "";
-
-  const downloadUrl = `${frontendBase.replace(
-    /\/$/,
-    ""
-  )}/ticket-download?entity=visitors&${
-    visitorId
-      ? `id=${encodeURIComponent(String(visitorId))}`
-      : `ticket_code=${encodeURIComponent(String(ticketCode || ""))}`
-  }`;
-
-  // Resolve logo: prefer config values (normalized to frontend), fallback to localStorage admin:topbar
-  let logoUrl = "";
-  if (
-    config &&
-    (config.logoUrl ||
-      config.topbarLogo ||
-      (config.adminTopbar && config.adminTopbar.logoUrl))
-  ) {
-    logoUrl =
-      normalizeAdminUrl(
-        config.logoUrl ||
-          config.topbarLogo ||
-          (config.adminTopbar && config.adminTopbar.logoUrl)
-      ) || "";
-  } else {
-    try {
-      const res = await fetch(
-        `${API_BASE.replace(/\/$/, "")}/api/admin-config`
-      );
-      if (res.ok) {
-        const js = await res.json().catch(() => null);
-        if (js) {
-          logoUrl =
-            normalizeAdminUrl(js.logoUrl || js.logo_url || js.url || "") || "";
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  if (!logoUrl) {
-    try {
-      const raw = localStorage.getItem("admin:topbar");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && parsed.logoUrl) {
-          logoUrl =
-            normalizeAdminUrl(parsed.logoUrl) || String(parsed.logoUrl).trim();
-        }
-      }
-    } catch {}
-  }
-
-  logoUrl = logoUrl || "";
-
-  try {
-    console.debug("[sendTicketEmailUsingTemplate] resolved logoUrl:", logoUrl);
-  } catch {}
-
-  const emailModel = {
-    frontendBase,
-    entity: "visitors",
-    id: visitorId,
-    name: visitor?.name || "",
-    company: visitor?.company || "",
-    ticket_code: ticketCode,
-    ticket_category: visitor?.ticket_category || visitor?.ticketCategory || "",
-    badgePreviewUrl: badgePreviewUrl ? normalizeAdminUrl(badgePreviewUrl) : "",
-    downloadUrl,
-    form: visitor || null,
-    logoUrl,
-    event: config && config.eventDetails ? config.eventDetails : null,
-  };
-
-  const tpl = await buildTicketEmail(emailModel);
-  const subject = tpl.subject;
-  const text = tpl.text;
-  const html = tpl.html;
-  const templateAttachments = tpl.attachments || [];
-
-  const attachments = Array.isArray(templateAttachments)
-    ? templateAttachments.filter((a) => {
-        const ct = String(a.contentType || a.content_type || "").toLowerCase();
-        if (ct && ct.startsWith("image/")) return false;
-        const name = (a.filename || a.name || "").toLowerCase();
-        if (
-          name.endsWith(".png") ||
-          name.endsWith(".jpg") ||
-          name.endsWith(".jpeg") ||
-          name.endsWith(".gif") ||
-          name.endsWith(".svg") ||
-          name.endsWith(".webp")
-        )
-          return false;
-        return true;
-      })
-    : [];
-
-  const mailPayload = {
-    to: visitor?.email,
-    subject,
-    text,
-    html,
-    logoUrl,
-    attachments,
-  };
-
-  const result = await postMailer(mailPayload);
-  if (!result.ok) {
-    const errMsg =
-      result.body?.error ||
-      result.error ||
-      `Mailer failed (${result.status || "unknown"})`;
-    throw new Error(errMsg);
-  }
-  return result.body;
-}
-
-/* ---------- reminder helper (client-side) ----------
-   Call server's /api/reminders/scheduled with entityId to let server schedule/send reminders.
-   This is a best-effort call; server will use API_BASE to fetch the record and compute daysUntilEvent.
-*/
+/* ---------- reminder helper ---------- */
 async function scheduleReminderClient(entityId) {
   if (!entityId) return { ok: false, error: "missing entityId" };
   try {
     const payload = {
-      entity: "visitors",
-      entityId: String(entityId),
+      entity:  "visitors",
+      entityId:  String(entityId),
       scheduleDays: [7, 3, 1, 0],
     };
     const res = await fetch(`${API_BASE}/api/reminders/scheduled`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
-      body: JSON.stringify(payload),
+      headers: {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "69420",
+      },
+      body:  JSON.stringify(payload),
     });
     const txt = await res.text().catch(() => null);
     let js = null;
-    try { js = txt ? JSON.parse(txt) : null; } catch {}
-    if (!res.ok) {
+    try {
+      js = txt ? JSON.parse(txt) : null;
+    } catch {}
+    if (! res.ok) {
       return { ok: false, status: res.status, body: js || txt };
     }
     return { ok: true, status: res.status, body: js || txt };
@@ -381,13 +103,10 @@ export default function Visitors() {
   const [txId, setTxId] = useState("");
   const [proofFile, setProofFile] = useState(null);
   const [visitor, setVisitor] = useState(null);
-  const [savedVisitorId, setSavedVisitorId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [badgeTemplateUrl, setBadgeTemplateUrl] = useState("");
   const [error, setError] = useState("");
-  const finalizeCalledRef = useRef(false);
-  const savedAttemptedRef = useRef(false);
+  const submittingRef = useRef(false);
 
   const [reminderScheduled, setReminderScheduled] = useState(false);
   const [reminderError, setReminderError] = useState("");
@@ -395,12 +114,11 @@ export default function Visitors() {
   const videoRef = useRef(null);
   const [bgVideoReady, setBgVideoReady] = useState(false);
   const [bgVideoErrorMsg, setBgVideoErrorMsg] = useState("");
-  const [emailSent, setEmailSent] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!!mq.matches);
+    const onChange = () => setIsMobile(!! mq.matches);
     onChange();
     mq.addEventListener
       ? mq.addEventListener("change", onChange)
@@ -414,9 +132,9 @@ export default function Visitors() {
 
   const normalizeEvent = (raw = {}) => ({
     name: raw.name || raw.eventName || raw.title || "",
-    date: raw.date || raw.dates || "",
+    date: raw. date || raw.dates || "",
     venue: raw.venue || raw.location || "",
-    time: raw.time || raw.startTime || "",
+    time: raw. time || raw.startTime || "",
     tagline: raw.tagline || raw.subtitle || "",
   });
 
@@ -463,7 +181,7 @@ export default function Visitors() {
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API_BASE}/api/visitor-config?cb=${Date.now()}`, {
+      const r = await fetch(`${API_BASE}/api/visitor-config? cb=${Date.now()}`, {
         cache: "no-store",
         headers: {
           Accept: "application/json",
@@ -483,17 +201,17 @@ export default function Visitors() {
           url: "",
         };
       if (Array.isArray(normalized.images))
-        normalized.images = normalized.images.map((u) => normalizeAdminUrl(u));
+        normalized.images = normalized. images.map((u) => normalizeAdminUrl(u));
       else normalized.images = [];
       if (normalized.termsUrl)
-        normalized.termsUrl = normalizeAdminUrl(normalized.termsUrl);
+        normalized.termsUrl = normalizeAdminUrl(normalized. termsUrl);
       normalized.fields = Array.isArray(normalized.fields)
         ? normalized.fields.map((f) => {
-            if (!f || !f.name) return f;
+            if (! f || ! f.name) return f;
             const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
             const isEmailField = f.type === "email" || /email/.test(nameLabel);
             if (isEmailField) {
-              const fm = Object.assign({}, f.meta || {});
+              const fm = Object.assign({}, f. meta || {});
               if (fm.useOtp === undefined) fm.useOtp = true;
               return { ...f, meta: fm };
             }
@@ -501,7 +219,6 @@ export default function Visitors() {
           })
         : [];
       setConfig(normalized);
-      setBadgeTemplateUrl(cfg?.badgeTemplateUrl || "");
     } catch (e) {
       console.error("[Visitors] Failed to load visitor config:", e);
       setConfig({
@@ -524,8 +241,8 @@ export default function Visitors() {
     };
     window.addEventListener("visitor-config-updated", onCfg);
     window.addEventListener("config-updated", (e) => {
-      const key = e && e.detail && e.detail.key ? e.detail.key : null;
-      if (!key || key === "event-details")
+      const key = e && e.detail && e.detail.key ?  e.detail.key : null;
+      if (! key || key === "event-details")
         fetchCanonicalEvent().catch(() => {});
     });
     window.addEventListener("event-details-updated", fetchCanonicalEvent);
@@ -550,13 +267,10 @@ export default function Visitors() {
     }
   }, []);
 
-  /**
-   * saveVisitor
-   */
   const saveVisitor = useCallback(
     async (nextForm) => {
       const payload = {
-        name:
+        name: 
           nextForm.name ||
           `${nextForm.firstName || ""} ${nextForm.lastName || ""}`.trim() ||
           "",
@@ -564,7 +278,7 @@ export default function Visitors() {
         mobile: nextForm.mobile || nextForm.phone || nextForm.contact || "",
         designation: nextForm.designation || "",
         company_type: nextForm.company_type || nextForm.companyType || null,
-        company: nextForm.company || nextForm.organization || null,
+        company:  nextForm.company || nextForm.organization || null,
         other_details: nextForm.other_details || nextForm.otherDetails || "",
         purpose: nextForm.purpose || "",
         ticket_category: ticketCategory || null,
@@ -574,7 +288,7 @@ export default function Visitors() {
         ticket_total: ticketMeta.total || 0,
         category: ticketCategory || null,
         slots: Array.isArray(nextForm.slots) ? nextForm.slots : [],
-        txId: txId || null,
+        ...(ticketMeta.total > 0 && txId ? { txId } : {}),
         termsAccepted: !!nextForm.termsAccepted,
       };
 
@@ -585,37 +299,33 @@ export default function Visitors() {
             "Content-Type": "application/json",
             "ngrok-skip-browser-warning": "69420",
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ form: payload }),
         });
 
         const json = await res.json().catch(() => null);
 
         if (res.ok || (json && json.success)) {
+          // Backend should return { success: true, id: insertedId }
+          // Prioritize json.id, fallback to legacy fields for compatibility
           const id =
-            (json && (json.insertedId || json.inserted_id)) ||
             (json && json.id) ||
+            (json && json.insertedId) ||
+            (json && json.inserted_id) ||
             null;
-          const ticket =
-            (json && (json.ticket_code || json.ticketCode)) ||
-            (payload && payload.ticket_code) ||
-            null;
-          const existed = !!(json && (json.existed || json.existing));
+          const existed = ! !(json && (json.existed || json.existing));
           return {
             ok: true,
-            id: id ? String(id) : null,
-            ticket_code: ticket || null,
-            raw: json || null,
+            id:  id ?  String(id) : null,
+            raw:  json || null,
             existed,
           };
         }
 
         if (res.status === 409 && json && json.existing) {
-          const id = json.existing.id || null;
-          const ticket = json.existing.ticket_code || null;
+          const id = (json.existing && json.existing.id) || null;
           return {
             ok: true,
             id: id ? String(id) : null,
-            ticket_code: ticket || null,
             raw: json,
             existed: true,
           };
@@ -637,10 +347,10 @@ export default function Visitors() {
     async (value, meta = {}) => {
       setError("");
       setTicketCategory(value);
-      setTicketMeta(meta || { price: 0, gstAmount: 0, total: 0, label: "" });
+      setTicketMeta(meta || { price: 0, gstAmount:  0, total: 0, label: "" });
       setStep(3);
     },
-    [form]
+    []
   );
 
   async function handleFormSubmit(formData) {
@@ -657,204 +367,87 @@ export default function Visitors() {
   }
 
   const completeRegistrationAndEmail = useCallback(async () => {
-    if (finalizeCalledRef.current) return;
-    finalizeCalledRef.current = true;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     try {
       setProcessing(true);
-      if (config?.termsRequired && !form?.termsAccepted) {
+      if (config?. termsRequired && !form?. termsAccepted) {
         setError(
-          config?.termsRequiredMessage ||
+          config?. termsRequiredMessage ||
             "You must accept the terms and conditions to complete registration."
         );
         setProcessing(false);
-        finalizeCalledRef.current = false;
+        submittingRef.current = false;
         return;
       }
-      const bestEmail = getBestEmail(form);
-      if (!bestEmail && !form?.email) {
+      
+      const finalEmail = (form?.email || "").trim();
+      if (!finalEmail) {
         setError("Email is required");
         setProcessing(false);
-        finalizeCalledRef.current = false;
+        submittingRef.current = false;
         return;
       }
-      const finalEmail = form && form.email ? form.email : bestEmail;
-      let ticket_code =
-        form.ticket_code || (visitor && visitor.ticket_code) || null;
-
-      if (!savedAttemptedRef.current) {
-        try {
-          const saveResult = await saveVisitor({ ...form, email: finalEmail });
-          if (saveResult.ok) {
-            if (saveResult.id) {
-              setSavedVisitorId(saveResult.id);
-            }
-            if (saveResult.ticket_code) {
-              ticket_code = saveResult.ticket_code;
-              setForm((prev) => ({ ...prev, ticket_code }));
-            }
-            savedAttemptedRef.current = true;
-          } else {
-            if (saveResult.id) {
-              setSavedVisitorId(saveResult.id);
-              savedAttemptedRef.current = true;
-            } else {
-              throw new Error(saveResult.error || "Failed to save visitor");
-            }
-          }
-        } catch (e) {
-          console.warn("Initial save during finalization failed:", e);
-          setError("Failed to save registration. Please try again.");
-          setProcessing(false);
-          finalizeCalledRef.current = false;
-          return;
-        }
+      
+      // Basic email format validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(finalEmail)) {
+        setError("Please enter a valid email address");
+        setProcessing(false);
+        submittingRef.current = false;
+        return;
       }
 
-      if (!ticket_code && savedVisitorId) {
-        try {
-          const r = await fetch(
-            `${API_BASE}/api/visitors/${encodeURIComponent(
-              String(savedVisitorId)
-            )}`,
-            {
-              headers: {
-                Accept: "application/json",
-                "ngrok-skip-browser-warning": "69440",
-              },
-            }
-          );
-          if (r.ok) {
-            const row = await r.json().catch(() => null);
-            ticket_code =
-              row?.ticket_code || row?.ticketCode || row?.code || null;
-            if (ticket_code) setForm((prev) => ({ ...prev, ticket_code }));
-          }
-        } catch (e) {
-          console.warn("fetch saved visitor failed", e);
-        }
+      const saveResult = await saveVisitor({ ...form, email: finalEmail });
+
+      if (!saveResult.ok) {
+        throw new Error(saveResult.error || "Registration failed");
       }
 
-      if (!ticket_code) {
-        const gen = String(Math.floor(100000 + Math.random() * 900000));
-        ticket_code = gen;
-
-        if (!savedAttemptedRef.current) {
-          try {
-            const saved = await saveVisitor({
-              ...form,
-              ticket_code: gen,
-              email: finalEmail,
-            });
-            if (saved.ok && saved.id) {
-              setSavedVisitorId(saved.id);
-            }
-            if (saved.ticket_code) ticket_code = saved.ticket_code;
-            savedAttemptedRef.current = true;
-          } catch (saveErr) {
-            console.warn("Saving visitor with ticket_code failed:", saveErr);
-          }
-        } else if (savedVisitorId) {
-          try {
-            await fetch(
-              `${API_BASE}/api/visitors/${encodeURIComponent(
-                String(savedVisitorId)
-              )}/confirm`,
-              {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "ngrok-skip-browser-warning": "69440",
-                },
-                body: JSON.stringify({ ticket_code: gen, force: true }),
-              }
-            );
-          } catch (e) {
-            console.warn("confirm ticket_code failed", e);
-          }
-        }
-        setForm((prev) => ({ ...prev, ticket_code }));
-      }
-
-      const fullVisitor = {
+      setVisitor({
         ...form,
         email: finalEmail,
-        ticket_code,
         ticket_category: ticketCategory,
         ticket_price: ticketMeta.price,
         ticket_gst: ticketMeta.gstAmount,
         ticket_total: ticketMeta.total,
-      };
-      setVisitor(fullVisitor);
+      });
 
-      if (!emailSent) {
-        setEmailSent(true);
+      // Schedule reminder (best-effort)
+      if (saveResult.id) {
         try {
-          const bannerUrl =
-            config?.images && config.images.length
-              ? normalizeAdminUrl(config.images[0])
-              : "";
-          await sendTicketEmailUsingTemplate({
-            visitor: fullVisitor,
-            badgePreviewUrl: "",
-            bannerUrl,
-            badgeTemplateUrl,
-            config,
-          });
-        } catch (mailErr) {
-          console.error("Email failed:", mailErr);
-          setError("Saved but email failed");
-        }
-      }
-
-      // --- SCHEDULE REMINDER (best-effort) ---
-      try {
-        // Determine event date (prefer config -> canonicalEvent -> form fields)
-        const evDateRaw =
-          (config && config.eventDetails && (config.eventDetails.date || config.eventDetails.dates)) ||
-          (canonicalEvent && (canonicalEvent.date || canonicalEvent.dates)) ||
-          (form && (form.eventDates || form.date)) ||
-          null;
-
-        if ((savedVisitorId || (fullVisitor && fullVisitor.id) || savedAttemptedRef.current) && (savedVisitorId || fullVisitor.id || savedAttemptedRef.current)) {
-          const idToUse = savedVisitorId || (fullVisitor && fullVisitor.id) || null;
-          if (idToUse) {
-            const schedRes = await scheduleReminderClient(idToUse);
-            if (schedRes && schedRes.ok) {
-              setReminderScheduled(true);
-              setReminderError("");
-            } else {
-              setReminderScheduled(false);
-              const errMsg =
-                (schedRes && (schedRes.error || schedRes.body || schedRes.status)) ||
-                "Schedule failed";
-              setReminderError(String(errMsg).slice(0, 500));
-              console.warn("[Visitors] scheduleReminderClient response:", schedRes);
-            }
+          const schedRes = await scheduleReminderClient(saveResult.id);
+          if (schedRes && schedRes.ok) {
+            setReminderScheduled(true);
+            setReminderError("");
+          } else {
+            setReminderScheduled(false);
+            const errMsg =
+              (schedRes &&
+                (schedRes.error || schedRes.body || schedRes.status)) ||
+              "Schedule failed";
+            setReminderError(String(errMsg).slice(0, 500));
+            console.warn("[Visitors] scheduleReminderClient response:", schedRes);
           }
+        } catch (e) {
+          console.warn("[Visitors] schedule reminder step failed", e);
         }
-      } catch (e) {
-        console.warn("[Visitors] schedule reminder step failed", e);
       }
 
       setStep(4);
     } catch (err) {
       console.error("completeRegistrationAndEmail error:", err);
-      setError("Finalization failed");
+      setError(err?.message || "Finalization failed");
     } finally {
       setProcessing(false);
-      finalizeCalledRef.current = false;
+      submittingRef.current = false;
     }
   }, [
     config,
     form,
-    savedVisitorId,
-    visitor,
     ticketCategory,
     ticketMeta,
-    emailSent,
-    badgeTemplateUrl,
     saveVisitor,
-    API_BASE,
   ]);
 
   useEffect(() => {
@@ -872,13 +465,13 @@ export default function Visitors() {
     }
   }, [step]);
 
-  /* ---------- render (uses canonical event details for UI; emails use FRONTEND_BASE) ---------- */
+  /* ---------- render ---------- */
   if (isMobile) {
     return (
       <div className="min-h-screen w-full bg-white flex items-start justify-center p-4">
         <div className="w-full max-w-md">
           <Topbar />
-          {!loading && Array.isArray(config?.fields) ? (
+          {! loading && Array.isArray(config?.fields) ? (
             <>
               <div className="mt-4">
                 <DynamicRegistrationForm
@@ -900,7 +493,7 @@ export default function Visitors() {
           ) : (
             <div className="text-center py-8">Loading...</div>
           )}
-          {!loading && step === 2 && (
+          {! loading && step === 2 && (
             <TicketCategorySelector
               role="visitors"
               value={ticketCategory}
@@ -939,8 +532,16 @@ export default function Visitors() {
                 email={visitor?.email}
                 messageOverride="Thank you for registering — check your email for the ticket."
               />
-              {reminderScheduled && <div className="text-green-700 mt-3 text-center">Reminder scheduled for event date.</div>}
-              {reminderError && <div className="text-red-600 mt-3 text-center">Reminder error: {reminderError}</div>}
+              {reminderScheduled && (
+                <div className="text-green-700 mt-3 text-center">
+                  Reminder scheduled for event date. 
+                </div>
+              )}
+              {reminderError && (
+                <div className="text-red-600 mt-3 text-center">
+                  Reminder error: {reminderError}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -950,7 +551,7 @@ export default function Visitors() {
 
   const bgImageUrl =
     config?.backgroundMedia?.type !== "video" && config?.backgroundMedia?.url
-      ? normalizeAdminUrl(config.backgroundMedia.url)
+      ?  normalizeAdminUrl(config. backgroundMedia.url)
       : null;
   const videoUrl =
     config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url
@@ -962,7 +563,7 @@ export default function Visitors() {
       className="min-h-screen w-full relative"
       style={{ backgroundSize: "cover", backgroundPosition: "center" }}
     >
-      {!isMobile && videoUrl && (
+      {! isMobile && videoUrl && (
         <video
           key={videoUrl}
           autoPlay
@@ -975,7 +576,7 @@ export default function Visitors() {
           <source src={videoUrl} type="video/mp4" />
         </video>
       )}
-      {!isMobile && (!videoUrl || !bgVideoReady) && bgImageUrl && (
+      {!isMobile && (! videoUrl || !bgVideoReady) && bgImageUrl && (
         <div
           className="fixed inset-0 -z-10"
           style={{
@@ -1007,13 +608,13 @@ export default function Visitors() {
             style={{ minHeight: 370 }}
           >
             <div className="sm:w-[60%] w-full flex items-center justify-center">
-              {loading ? (
+              {loading ?  (
                 <div className="text-[#21809b] text-2xl font-bold">
                   Loading...
                 </div>
               ) : (
                 <div className="rounded-3xl overflow-hidden shadow-2xl h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] bg-white/75 flex items-center justify-center">
-                  {config?.images?.length ? (
+                  {config?.images?.length ?  (
                     <img
                       src={normalizeAdminUrl(config.images[0])}
                       alt="banner"
@@ -1028,7 +629,7 @@ export default function Visitors() {
                 <div
                   className="font-extrabold text-3xl sm:text-5xl mb-3 text-center"
                   style={{
-                    background:
+                    background: 
                       "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)",
                     WebkitBackgroundClip: "text",
                     WebkitTextFillColor: "transparent",
@@ -1042,7 +643,7 @@ export default function Visitors() {
                 <div className="text-xl sm:text-2xl font-bold mb-1 text-center text-[#21809b]">
                   {(canonicalEvent &&
                     (canonicalEvent.date || canonicalEvent.dates)) ||
-                    config?.eventDetails?.date ||
+                    config?.eventDetails?. date ||
                     "Event Date"}
                 </div>
                 <div className="text-base sm:text-xl font-semibold text-center text-[#196e87]">
@@ -1050,7 +651,7 @@ export default function Visitors() {
                     config?.eventDetails?.venue ||
                     "Event Venue"}
                 </div>
-                {(canonicalEvent && canonicalEvent.time) ||
+                {(canonicalEvent && canonicalEvent. time) ||
                 (config?.eventDetails && config.eventDetails.time) ? (
                   <div className="text-sm mt-2 text-center text-gray-700">
                     {(canonicalEvent && canonicalEvent.time) ||
@@ -1124,15 +725,23 @@ export default function Visitors() {
                 messageOverride="Thank you for registering — check your email for the ticket."
               />
               <div className="mt-4 text-center">
-                {reminderScheduled && <div className="text-green-700">Reminder scheduled for event date.</div>}
-                {reminderError && <div className="text-red-600">Reminder error: {reminderError}</div>}
+                {reminderScheduled && (
+                  <div className="text-green-700">
+                    Reminder scheduled for event date.
+                  </div>
+                )}
+                {reminderError && (
+                  <div className="text-red-600">
+                    Reminder error: {reminderError}
+                  </div>
+                )}
               </div>
             </>
           )}
 
-          {!isMobile && bgVideoErrorMsg && (
+          {! isMobile && bgVideoErrorMsg && (
             <div className="mt-4 p-3 bg-yellow-50 text-yellow-800 rounded text-sm max-w-3xl mx-auto">
-              Background video not playing: {String(bgVideoErrorMsg)}. Check
+              Background video not playing:  {String(bgVideoErrorMsg)}. Check
               console for details.
             </div>
           )}
