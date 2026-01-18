@@ -3,18 +3,8 @@ import React, { useEffect, useRef, useState } from "react";
 /**
  * ManualPaymentStep (finalized coupon flow)
  *
- * - Coupons are single-use and final: applying a coupon calls POST /api/coupons/validate
- *   with markUsed: true and the backend atomically validates + consumes the coupon.
- * - There is NO reservation / unreserve logic on the frontend.
- * - Payment uses the effective total after coupon has been consumed.
- * - If effective total is 0, payment is treated as completed immediately (no checkout).
- *
- * Required backend endpoints:
- * - POST /api/coupons/validate { code, price, markUsed? }  -> { valid, discount, reducedPrice, coupon: { id, code, used } }
- * - POST /api/payment/create-order
- * - GET  /api/payment/status?reference_id=...
- *
- * Configure backend base via prop apiBase or REACT_APP_API_BASE / window.__API_BASE__.
+ * - Coupons are single-use and final:  applying a coupon calls POST /api/coupons/validate
+ *   with markUsed:  true and the backend atomically validates + consumes the coupon. 
  */
 
 export default function ManualPaymentStep({
@@ -33,9 +23,9 @@ export default function ManualPaymentStep({
   const [paymentStatus, setPaymentStatus] = useState("created");
   const pollRef = useRef(null);
 
-  // coupon states (single-use apply)
+  // coupon states
   const [couponCode, setCouponCode] = useState("");
-  const [couponResult, setCouponResult] = useState(null); // { valid, discount, reducedPrice, coupon:{id,code,used} }
+  const [couponResult, setCouponResult] = useState(null);
   const [couponBusy, setCouponBusy] = useState(false);
   const [couponError, setCouponError] = useState("");
 
@@ -56,17 +46,18 @@ export default function ManualPaymentStep({
     };
   }, []);
 
+  // Determine backend base
   const backendBaseCandidate =
     (apiBase && String(apiBase).trim()) ||
-    (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE) ||
+    (typeof process !== "undefined" && process. env && process.env.REACT_APP_API_BASE) ||
     (typeof window !== "undefined" && window.__API_BASE__) ||
     "";
 
   function likelyProviderHost(h) {
-    if (!h) return false;
+    if (! h) return false;
     const lc = String(h).toLowerCase();
     return (
-      lc.includes("instamojo") ||
+      lc. includes("instamojo") ||
       lc.includes("razorpay") ||
       lc.includes("paytm") ||
       lc.includes("stripe") ||
@@ -76,35 +67,72 @@ export default function ManualPaymentStep({
 
   const backendBase = likelyProviderHost(backendBaseCandidate) ? "" : backendBaseCandidate;
 
+  console.log("[ManualPaymentStep] Backend base:", backendBase || "(relative URLs)");
+
   function makeUrl(path) {
-    if (!backendBase) return path.startsWith("/") ? path : `/${path}`;
-    return `${String(backendBase).replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+    // Clean backend base
+    const base = backendBase ?  String(backendBase).replace(/\/$/, "") : "";
+
+    // Clean path
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+
+    // If no backend base, return path as-is (relative)
+    if (!base) {
+      return cleanPath;
+    }
+
+    // Construct full URL
+    const fullUrl = `${base}${cleanPath}`;
+    console.log("[ManualPaymentStep] makeUrl:", { path, base, fullUrl });
+    return fullUrl;
   }
 
-  /* ---------- Coupon: apply (final, atomic) ---------- */
+  /* ---------- Coupon:  apply (final, atomic) ---------- */
   async function applyCoupon() {
     setCouponBusy(true);
     setCouponError("");
     setCouponResult(null);
     setError("");
+
     try {
       const code = (couponCode || "").trim().toUpperCase();
+
+      console.log("[ManualPaymentStep] Applying coupon:", {
+        code,
+        originalTotal,
+        backendBase
+      });
+
       if (!code) {
         setCouponError("Enter a coupon code");
         setCouponBusy(false);
         return;
       }
 
-      // Ask backend to validate and consume the coupon atomically.
-      const payload = { code, price: originalTotal, markUsed: true };
-      const res = await fetch(makeUrl("/api/coupons/validate"), {
+      const payload = {
+        code,
+        price: originalTotal,
+        markUsed: true
+      };
+
+      const url = makeUrl("/api/coupons/validate");
+      console.log("[ManualPaymentStep] Fetching:", url, "Payload:", payload);
+
+      const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning":  "69420"
+        },
         body: JSON.stringify(payload),
         credentials: "include",
       });
 
+      console.log("[ManualPaymentStep] Response status:", res.status);
+
       const js = await res.json().catch(() => null);
+      console.log("[ManualPaymentStep] Response data:", js);
+
       if (!res.ok || !js) {
         const msg = (js && (js.error || js.message)) || `Validate failed (${res.status})`;
         setCouponError(msg);
@@ -112,34 +140,23 @@ export default function ManualPaymentStep({
         return;
       }
 
-      if (!js.valid) {
+      if (! js.valid) {
         setCouponError(js.error || "Invalid or already used coupon");
         setCouponResult(js);
         setCouponBusy(false);
         return;
       }
 
-      // Coupon consumed successfully by backend.
+      // Success! 
+      console.log("[ManualPaymentStep] ✅ Coupon applied:", js);
       setCouponResult(js);
       setCouponError("");
     } catch (e) {
-      console.error("applyCoupon error", e);
+      console.error("[ManualPaymentStep] applyCoupon error:", e);
       setCouponError(String(e && (e.message || e)) || "Failed to apply coupon");
     } finally {
       setCouponBusy(false);
     }
-  }
-
-  // Local remove: just clear local state (note: coupon is already consumed on backend and cannot be restored here)
-  function removeCouponLocal() {
-    // Inform user that coupon was consumed and cannot be restored
-    if (couponResult && couponResult.valid) {
-      setCouponError("Coupon applied successfully. Coupons are single-use and cannot be removed.");
-      return;
-    }
-    setCouponCode("");
-    setCouponResult(null);
-    setCouponError("");
   }
 
   /* ---------- Payment: create order & poll ---------- */
@@ -149,11 +166,13 @@ export default function ManualPaymentStep({
     setPayLoading(true);
 
     try {
-      // amount to pay (after coupon)
       const amountToPay = Number(effectiveTotal || 0);
 
+      console.log("[ManualPaymentStep] Creating order:", { amountToPay, effectiveTotal, originalTotal });
+
       // handle zero-amount (free)
-      if (!amountToPay || amountToPay <= 0) {
+      if (! amountToPay || amountToPay <= 0) {
+        console.log("[ManualPaymentStep] Zero amount - marking as paid");
         setPaymentStatus("paid");
         try {
           onTxIdChange && onTxIdChange(`free-${Date.now()}`);
@@ -179,7 +198,7 @@ export default function ManualPaymentStep({
         metadata: {
           ticketType,
           referenceId,
-          couponCode: couponResult && couponResult.coupon ? couponResult.coupon.code : couponCode.trim().toUpperCase(),
+          couponCode: couponResult && couponResult.coupon ?  couponResult.coupon.code : couponCode. trim().toUpperCase(),
           buyer_name: (typeof window !== "undefined" && localStorage.getItem("visitorName")) || "",
           email: (verifiedEmail && verifiedEmail.trim()) || "",
         },
@@ -219,21 +238,21 @@ export default function ManualPaymentStep({
           (data && (data.error || data.provider_error || data.details || JSON.stringify(data))) ||
           (rawText && rawText.slice(0, 200)) ||
           `Failed to create payment order (status ${res.status})` +
-            (providerHint ? " - " + providerHint : "");
+            (providerHint ? " - " + providerHint :  "");
         setError(errMsg);
         setPayLoading(false);
         return;
       }
 
       const checkoutUrl =
-        data.checkoutUrl || data.longurl || data.raw?.payment_request?.longurl || data.raw?.longurl;
+        data.checkoutUrl || data.longurl || data.raw?. payment_request?.longurl || data.raw?.longurl;
       if (!checkoutUrl) {
         setError("Payment provider did not return a checkout URL.");
         setPayLoading(false);
         return;
       }
 
-      const w = window.open(checkoutUrl, "_blank", "noopener,noreferrer");
+      const w = window. open(checkoutUrl, "_blank", "noopener,noreferrer");
       if (!w) {
         setError("Could not open payment window. Please allow popups.");
         setPayLoading(false);
@@ -248,7 +267,7 @@ export default function ManualPaymentStep({
       pollRef.current = setInterval(async () => {
         attempts += 1;
         try {
-          const statusUrl = makeUrl(`/api/payment/status?reference_id=${encodeURIComponent(reference_id)}`);
+          const statusUrl = makeUrl(`/api/payment/status? reference_id=${encodeURIComponent(reference_id)}`);
           const st = await fetch(statusUrl, { method: "GET", credentials: "include", headers: { "ngrok-skip-browser-warning": "69420" } });
           if (!st.ok) {
             console.warn("[ManualPaymentStep] status fetch not ok:", st.status);
@@ -257,25 +276,27 @@ export default function ManualPaymentStep({
           const js = await st.json().catch(() => null);
           if (!js) return;
           const status = (js.status || "").toString().toLowerCase();
+          console.log("[ManualPaymentStep] Payment status:", status);
+          
           if (["paid", "captured", "completed", "success"].includes(status)) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             setPaymentStatus("paid");
             const rec = js.record || js.data || js.payment || js;
-            const providerPaymentId = rec?.provider_payment_id || rec?.payment_id || rec?.id || null;
+            const providerPaymentId = rec?. provider_payment_id || rec?.payment_id || rec?.id || null;
             const finalTx = providerPaymentId || `provider-${Date.now()}`;
             try {
               onTxIdChange && onTxIdChange(finalTx);
             } catch (_) {}
             try {
-              if (w && !w.closed) w.close();
+              if (w && ! w.closed) w.close();
             } catch (_) {}
             onProofUpload && onProofUpload();
-          } else if (["failed", "cancelled", "void"].includes(status)) {
+          } else if (["failed", "cancelled", "void"]. includes(status)) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             setPaymentStatus("failed");
-            setError("Payment failed or cancelled. You may retry.");
+            setError("Payment failed or cancelled.  You may retry.");
             try {
               if (w && !w.closed) w.close();
             } catch (_) {}
@@ -288,12 +309,12 @@ export default function ManualPaymentStep({
             }
           }
         } catch (e) {
-          console.warn("[ManualPaymentStep] polling error:", e && e.message);
+          console. warn("[ManualPaymentStep] polling error:", e && e.message);
         }
       }, 3000);
     } catch (err) {
       console.error("[ManualPaymentStep] createOrder error:", err && (err.stack || err));
-      setError(err.message || "Payment initiation failed");
+      setError(err. message || "Payment initiation failed");
     } finally {
       setPayLoading(false);
     }
@@ -302,7 +323,7 @@ export default function ManualPaymentStep({
   return (
     <div className="bg-white rounded-xl shadow-xl p-8 max-w-lg mx-auto mt-8">
       <div className="text-xl font-bold mb-2">
-        Payment — {ticketType ? `${ticketType.charAt(0).toUpperCase() + ticketType.slice(1)} Ticket` : "Ticket"}
+        Payment — {ticketType ?  `${ticketType.charAt(0).toUpperCase() + ticketType.slice(1)} Ticket` : "Ticket"}
       </div>
 
       <div className="mb-4">
@@ -323,18 +344,18 @@ export default function ManualPaymentStep({
               onChange={(e) => setCouponCode(e.target.value)}
               placeholder="Enter coupon code"
               className="w-full border rounded px-2 py-1"
-              disabled={!!(couponResult && couponResult.valid)} // prevent changing after apply
+              disabled={! !(couponResult && couponResult.valid)}
             />
           </div>
 
           <div className="flex flex-col gap-2">
             <button
-              className="px-3 py-1 bg-blue-600 text-white rounded"
+              className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
               onClick={() => applyCoupon()}
-              disabled={couponBusy || !!(couponResult && couponResult.valid)}
+              disabled={couponBusy || !!(couponResult && couponResult. valid)}
               type="button"
             >
-              {couponBusy ? "Applying..." : (couponResult && couponResult.valid ? "Applied" : "Apply")}
+              {couponBusy ? "Applying..." : (couponResult && couponResult. valid ? "Applied" : "Apply")}
             </button>
           </div>
         </div>
@@ -345,25 +366,16 @@ export default function ManualPaymentStep({
           <div className="mt-3 text-sm text-gray-700 p-2 bg-white border rounded">
             {couponResult.valid ? (
               <>
-                <div className="font-medium text-green-700">Coupon applied: {couponResult.coupon?.code || couponCode}</div>
+                <div className="font-medium text-green-700">✅ Coupon applied:  {couponResult.coupon?. code || couponCode}</div>
                 <div>Discount: {couponResult.discount}%</div>
                 <div>
                   Reduced total: <span className="font-semibold">₹{Number(couponResult.reducedPrice).toFixed(2)}</span>
                 </div>
-                <div className="mt-2">
-                  <button
-                    className="px-3 py-1 border rounded opacity-50 cursor-not-allowed"
-                    title="Coupons are single-use and consumed on apply; cannot undo from the frontend"
-                    disabled
-                  >
-                    Remove (not available)
-                  </button>
-                </div>
-                <div className="mt-2 text-sm text-red-600">Note: coupon was consumed and cannot be undone from the client.</div>
+                <div className="mt-2 text-xs text-gray-600">Coupon has been consumed and cannot be removed.</div>
               </>
             ) : (
               <>
-                <div className="font-medium text-red-600">Coupon invalid or not applicable</div>
+                <div className="font-medium text-red-600">❌ Coupon invalid</div>
                 {couponResult.error && <div className="text-xs text-gray-600 mt-1">{couponResult.error}</div>}
               </>
             )}
@@ -373,7 +385,7 @@ export default function ManualPaymentStep({
 
       <div className="mb-6">
         <div className="font-semibold mb-2">Pay Online</div>
-        <div className="text-sm text-gray-700 mb-3">Secure checkout via your payment provider.</div>
+        <div className="text-sm text-gray-700 mb-3">Secure checkout via your payment provider. </div>
 
         <div className="mb-3">
           <div className="text-sm text-gray-600">Amount to pay</div>
@@ -396,14 +408,14 @@ export default function ManualPaymentStep({
         </div>
 
         {paymentStatus === "pending" && <div className="mt-2 text-sm text-yellow-600">Waiting for provider confirmation...</div>}
-        {paymentStatus === "paid" && <div className="mt-2 text-sm text-green-600">Payment confirmed.</div>}
+        {paymentStatus === "paid" && <div className="mt-2 text-sm text-green-600">✅ Payment confirmed. </div>}
       </div>
 
       <hr className="my-4" />
 
       {error && <div className="mt-4 text-red-600 font-medium whitespace-pre-wrap">{error}</div>}
       <div className="mt-4 text-xs text-gray-500">
-        If you pay online, the checkout will open in a new tab. After successful payment we will automatically continue the registration.
+        If you pay online, the checkout will open in a new tab. After successful payment we will automatically continue the registration. 
       </div>
     </div>
   );
