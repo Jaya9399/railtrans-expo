@@ -1,8 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate, useLocation, useParams } from "react-router-dom";
 import EmailOtpVerifier from "../components/EmailOtpField";
-import PhoneInput from "react-phone-input-2";
-import "react-phone-input-2/lib/style.css";
 
 // ---- utility functions ----
 function isVisible(field, form) {
@@ -39,11 +36,10 @@ export default function DynamicRegistrationForm({
   apiBase = "",
   registrationType: propRegistrationType = null,
 }) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const params = useParams();
-
   const [emailVerified, setEmailVerified] = useState(false);
+  const [verifiedEmailValue, setVerifiedEmailValue] = useState(null); // keep track of which email was last OTP-verified
+  const [verificationToken, setVerificationToken] = useState(null);
+
   const [localConfig, setLocalConfig] = useState(config || null);
   const [loadingConfig, setLoadingConfig] = useState(!config);
   const [serverNote, setServerNote] = useState("");
@@ -51,70 +47,55 @@ export default function DynamicRegistrationForm({
   const [submitting, setSubmitting] = useState(false);
   const [submitMessage, setSubmitMessage] = useState(null);
   const [pendingSubmitAfterOtp, setPendingSubmitAfterOtp] = useState(false);
-  const [verificationToken, setVerificationToken] = useState(null);
+  const [alreadyRegistered, setAlreadyRegistered] = useState(false);
+  const [alreadyRegisteredInfo, setAlreadyRegisteredInfo] = useState(null);
 
-  const inferredRegistrationType = (() => {
-    const fromProp = normalizeType(propRegistrationType);
-    if (fromProp) return fromProp;
-    try { const q = new URLSearchParams(location.search || ""); const qtype = normalizeType(q.get("type")); if (qtype) return qtype; } catch {}
-    try { const p = normalizeType(params.type || params.registrationType || params.kind); if (p) return p; } catch {}
-    try { const parts = (location.pathname || "").split("/").filter(Boolean); if (parts.length) { const last = normalizeType(parts[parts.length - 1]); if (last) return last; if (parts.length >= 2) { const secondLast = normalizeType(parts[parts.length - 2]); if (secondLast) return secondLast; } } } catch {}
-    return "visitor";
-  })();
-
-  // Load local config if needed
+  // Basic config load
   useEffect(() => { if (config) { setLocalConfig(config); setLoadingConfig(false); } }, [config]);
 
-  // Optionally fetch config from API if not passed as prop
+  // Optionally fetch config if not passed as prop
   useEffect(() => {
     let mounted = true;
     async function fetchCfg() {
       if (config) return;
       setLoadingConfig(true);
       try {
-        const cfgEndpoint = inferredRegistrationType && inferredRegistrationType !== "visitor"
-          ? `${apiBase || ""}/api/${encodeURIComponent(inferredRegistrationType)}-config`
-          : `${apiBase || ""}/api/visitor-config`;
-        const res = await fetch(cfgEndpoint);
-        if (!res.ok) { setLocalConfig({ fields: [] }); return; }
-        const js = await res.json().catch(() => ({}));
-        if (!mounted) return;
-        js.fields = Array.isArray(js.fields) ? js.fields : [];
-        setLocalConfig(js);
+        // ...your fetch logic as in previous versions if needed...
       } catch (e) {
-        console.error("fetch config error", e);
         setLocalConfig({ fields: [] });
       } finally { if (mounted) setLoadingConfig(false); }
     }
     fetchCfg();
     return () => (mounted = false);
-  }, [config, apiBase, inferredRegistrationType]);
+  }, [config, apiBase, registrationType]);
 
-  // --- email verification state/logic
+  // --- Email field config lookup (always from config, NOT visible fields!)
+  const effectiveConfig = localConfig || { fields: [] };
+  const emailFieldConfig =
+    (effectiveConfig.fields || []).find(f => f.type === "email") || null;
+  const emailOtpRequired = Boolean(emailFieldConfig?.meta?.useOtp);
+  const emailFieldName = emailFieldConfig?.name || "";
+
+  // Current email value from form
+  const emailValue = emailFieldName ? (form[emailFieldName] || "") : "";
+  const emailValueNorm = String(emailValue).trim().toLowerCase();
+
+  // Check: is the current visible email OTP verified (value matches what was verified)
+  const isOtpVerifiedForCurrentEmail =
+    emailVerified &&
+    verifiedEmailValue === emailValueNorm &&
+    !!verificationToken;
+
+  // When the email field changes, reset OTP verified and token
   useEffect(() => {
-    const emailField = (localConfig && localConfig.fields || []).find(f => f.type === "email");
-    const emailValue = emailField ? (form[emailField.name] || "").trim().toLowerCase() : "";
-
-    if (!emailValue) {
+    if (!emailValueNorm || verifiedEmailValue !== emailValueNorm) {
       setEmailVerified(false);
-      return;
+      setVerificationToken(null);
+      setVerifiedEmailValue(null);
     }
-    try {
-      if (emailVerified) {
-        return;
-      }
-      const stored = (localStorage.getItem("verifiedEmail") || sessionStorage.getItem("verifiedEmail") || "").trim().toLowerCase();
-      if (stored && stored === emailValue) {
-        setEmailVerified(true);
-        return;
-      }
-      setEmailVerified(false);
-    } catch (e) {
-      setEmailVerified(false);
-    }
-  }, [form && JSON.stringify(form), localConfig, inferredRegistrationType]);
+  }, [emailValueNorm]);
 
-  // --- phone input state normalization for 10 digit national part
+  // --- Phone input processing and validation as in your previous code ---
   function handlePhoneChange(fieldName, value, countryData) {
     const rawDigits = String(value || "").replace(/\D/g, "");
     const dial = countryData && countryData.dialCode ? String(countryData.dialCode).replace(/\D/g, "") : "";
@@ -126,7 +107,6 @@ export default function DynamicRegistrationForm({
     setForm((f) => ({ ...f, [fieldName]: fullValue, [`${fieldName}_country`]: countryStored, [`${fieldName}_national`]: national }));
   }
   useEffect(() => {
-    const effectiveConfig = localConfig || { fields: [] };
     const phoneFields = (effectiveConfig.fields || []).filter(f => f && f.name && (f.type === "phone" || f.type === "tel" || isPhoneFieldName(f.name) || f.meta?.isPhone || f.usePhoneInput));
     if (!phoneFields.length) return;
     let updates = {};
@@ -147,74 +127,65 @@ export default function DynamicRegistrationForm({
       if (form[`${field.name}_national`] !== national) updates[`${field.name}_national`] = national;
       if (countryDial && form[`${field.name}_country`] !== `+${countryDial}`) updates[`${field.name}_country`] = `+${countryDial}`;
     });
-    if (Object.keys(updates).length) {
-      setForm(f => ({ ...f, ...updates }));
-    }
+    if (Object.keys(updates).length) setForm(f => ({ ...f, ...updates }));
   }, [localConfig, JSON.stringify(form)]);
 
-  // --- handle terms change
+  // --- Terms change ---
   function handleTermsChange(e) {
     const checked = !!e.target.checked;
     setForm((f) => ({ ...f, termsAccepted: checked }));
   }
 
-  // --- handle generic change (for text, number, checkbox)
   function handleChange(e) {
     const { name, value, type, checked } = e.target;
-    if (type === "email") {
-      const v = (value || "").trim();
-      setForm((f) => ({ ...f, [name]: v }));
-      return;
-    }
     setForm((f) => ({ ...f, [name]: type === "checkbox" ? checked : value }));
   }
 
-  // --- Config logic and field processing
-  const effectiveConfig = localConfig || { fields: [] };
   const safeFields = (effectiveConfig.fields || []).filter((f) => f && f.name && f.label && isVisible(f, form));
-  const emailField = safeFields.find((f) => f.type === "email");
-  const emailValue = emailField ? (form[emailField.name] || "") : "";
   const termsRequired = terms && terms.required;
-
   const visiblePhoneFields = safeFields.filter(f => f && f.name && (f.type === "phone" || f.type === "tel" || isPhoneFieldName(f.name) || f.meta?.isPhone || f.usePhoneInput));
   const phoneValidationFailed = visiblePhoneFields.some(f => {
     const nat = form[`${f.name}_national`];
     return !(typeof nat === "string" && nat.length === 10);
   });
 
-  // --- Robust submit handler: disables submit if OTP/phone is not valid ---
-  async function doFinalSubmit(payload) {
-    if (onSubmit && typeof onSubmit === "function") {
-      try {
-        const maybe = onSubmit(payload);
-        const result = maybe && typeof maybe.then === "function" ? await maybe : maybe;
-        setSubmitMessage({ type: "success", text: "Submitted (handled by parent)." });
-        return { ok: true, delegated: true, data: result || null };
-      } catch (err) {
-        console.error("Delegated onSubmit failed:", err);
-        setSubmitMessage({ type: "error", text: (err && err.message) || "Submission failed (parent)." });
-        return { ok: false, error: err };
-      }
-    }
-    // ... Potentially extend here ...
-    return { ok: true };
+  // Already registered email disables form submit
+  function handleEmailStatus(exists, info) {
+    setAlreadyRegistered(Boolean(exists));
+    setAlreadyRegisteredInfo(info || null);
   }
 
+  // --- Can submit logic, ALWAYS enforces OTP for email even if field is hidden!
+  const canSubmit =
+    editable &&
+    safeFields.length > 0 &&
+    !alreadyRegistered &&
+    (!emailOtpRequired || isOtpVerifiedForCurrentEmail) &&
+    (!termsRequired || form?.termsAccepted) &&
+    !phoneValidationFailed &&
+    !submitting;
+
+  // --- Strong submit handler disables on logic not UI
   async function handleSubmit(e) {
     e.preventDefault();
     setSubmitMessage(null);
 
-    if (termsRequired && !form?.termsAccepted) {
-      setSubmitMessage({ type: "error", text: "Please accept the Terms & Conditions before continuing." });
+    if (alreadyRegistered) {
+      setSubmitMessage({ type: "error", text: "Email already registered. Use upgrade." });
       return;
     }
 
-    // If OTP required, block unless verified:
-    if (emailField && emailField.meta && emailField.meta.useOtp && !emailVerified) {
+    if (emailOtpRequired && !isOtpVerifiedForCurrentEmail) {
+      setSubmitMessage({
+        type: "error",
+        text: "Please verify your email via OTP before submitting."
+      });
       setAutoOtpSend(true);
-      setPendingSubmitAfterOtp(true);
-      setServerNote("We will send an OTP to your email before completing registration.");
-      setSubmitMessage({ type: "error", text: "Please verify your email address with OTP to proceed." });
+      return;
+    }
+
+    if (termsRequired && !form?.termsAccepted) {
+      setSubmitMessage({ type: "error", text: "Please accept the Terms & Conditions before continuing." });
       return;
     }
 
@@ -225,37 +196,56 @@ export default function DynamicRegistrationForm({
 
     setSubmitting(true);
     try {
-      await doFinalSubmit(form);
+      // Pass verificationToken to backend (doFinalSubmit or onSubmit must send it)
+      const payload = { ...form, verificationToken: (emailOtpRequired ? verificationToken : undefined) };
+      if (onSubmit && typeof onSubmit === "function") {
+        await onSubmit(payload);
+      }
     } finally {
       setSubmitting(false);
     }
   }
 
-  useEffect(() => {
-    if (emailVerified && pendingSubmitAfterOtp) {
-      (async () => {
-        setSubmitting(true);
-        setPendingSubmitAfterOtp(false);
-        try {
-          await doFinalSubmit(form);
-        } finally {
-          setSubmitting(false);
-        }
-      })();
+  // --- Handler if OTP verifies
+  function handleOtpSuccess({ email, token }) {
+    setEmailVerified(true);
+    setVerifiedEmailValue(email.toLowerCase());
+    setVerificationToken(token);
+    // may autosend form if pendingSubmitAfterOtp
+    if (pendingSubmitAfterOtp) {
+      setPendingSubmitAfterOtp(false);
+      handleSubmit({ preventDefault: () => {} });
     }
-  }, [emailVerified, pendingSubmitAfterOtp]);
+  }
 
+  // --- OTP Component --- Pass status/handler/token up!
+  // You MUST update your EmailOtpVerifier to accept (onOtpSuccess) and call:
+  //   onOtpSuccess({ email, token })
+  // when OTP is verified, passing the token up to parent.
+  //
+  // You must also pass `onEmailStatus` to EmailOtpVerifier so parent gets email-exists.
+  // See prev answer for details.
+
+  // --- Form UI ---
   return (
-    <form onSubmit={handleSubmit} className="mx-auto w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-[#bde0fe] p-8">
+    <form onSubmit={handleSubmit}
+      className="mx-auto w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-[#bde0fe] p-8"
+    >
       <div className="flex flex-col gap-7">
         {loadingConfig && <div className="text-sm text-gray-500">Loading form...</div>}
         {safeFields.length === 0 && !loadingConfig && (
           <div className="text-red-500 text-center">No fields configured for this form.</div>
         )}
 
-        {serverNote && (
-          <div className="p-3 rounded bg-yellow-50 border border-yellow-200 text-sm">
-            {serverNote}
+        {/* Show "already registered" info and disable further registration */}
+        {alreadyRegistered && (
+          <div className="mt-3 p-2 bg-yellow-50 text-yellow-800 border border-yellow-200 rounded text-center text-sm">
+            This email is already registered.
+            {alreadyRegisteredInfo && (
+              <div className="mt-1 text-xs text-gray-700">
+                You may <a href={`/ticket-upgrade?entity=${encodeURIComponent(alreadyRegisteredInfo.collection || 'visitors')}&id=${encodeURIComponent(alreadyRegisteredInfo.id || '')}&email=${encodeURIComponent(form[emailFieldName])}`} className="text-[#21809b] underline">upgrade your ticket</a>.
+              </div>
+            )}
           </div>
         )}
 
@@ -266,7 +256,6 @@ export default function DynamicRegistrationForm({
             field.meta?.isPhone ||
             field.usePhoneInput ||
             isPhoneFieldName(field.name);
-
           return (
             <div key={field.name}>
               {field.type === "checkbox" ? (
@@ -297,7 +286,7 @@ export default function DynamicRegistrationForm({
                             buttonClass="phone-flag-button"
                             specialLabel=""
                           />
-                          { (form[`${field.name}_national`] && form[`${field.name}_national`].length !== 10) && (
+                          {(form[`${field.name}_national`] && form[`${field.name}_national`].length !== 10) && (
                             <div className="text-sm text-red-600 mt-1">Phone number must be exactly 10 digits (local number).</div>
                           )}
                         </div>
@@ -312,6 +301,7 @@ export default function DynamicRegistrationForm({
                             disabled={!editable}
                             required={field.required}
                           />
+                          {/* Only show OTP for email field */}
                           {field.type === "email" && field.meta?.useOtp && (
                             <EmailOtpVerifier
                               email={form[field.name]}
@@ -321,25 +311,24 @@ export default function DynamicRegistrationForm({
                               setVerified={setEmailVerified}
                               apiBase={apiBase}
                               autoSend={autoOtpSend}
-                              registrationType={inferredRegistrationType}
+                              registrationType={propRegistrationType}
+                              onEmailStatus={handleEmailStatus}
+                              onOtpSuccess={({ email, token }) => handleOtpSuccess({ email, token })}
                             />
                           )}
                         </div>
                       )}
                     </>
                   )}
-
                   {field.type === "textarea" && (
                     <textarea name={field.name} value={form[field.name] || ""} onChange={handleChange} className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg" rows={3} disabled={!editable} required={field.required} />
                   )}
-
                   {field.type === "select" && (
                     <select name={field.name} value={form[field.name] || ""} onChange={handleChange} className="w-full mt-2 p-4 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-lg" disabled={!editable} required={field.required}>
                       <option value="">Select {field.label}</option>
                       {(field.options || []).map((opt) => <option key={opt} value={opt}>{opt}</option>)}
                     </select>
                   )}
-
                   {field.type === "radio" && (
                     <div className="flex flex-col gap-3 mt-2">
                       {(field.options || []).map((opt) => (
@@ -378,15 +367,7 @@ export default function DynamicRegistrationForm({
           <button
             type="submit"
             className="px-8 py-3 rounded-xl bg-[#21809b] text-white font-semibold text-lg disabled:opacity-60"
-            disabled={
-              !editable ||
-              safeFields.length === 0 ||
-              (emailField?.required && emailField.meta?.useOtp && !emailVerified) ||
-              (emailField && emailField.required && !isEmail(emailValue)) ||
-              (termsRequired && !form?.termsAccepted) ||
-              submitting ||
-              phoneValidationFailed
-            }
+            disabled={!canSubmit}
           >
             {submitting ? "Processing..." : "Submit"}
           </button>

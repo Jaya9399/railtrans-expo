@@ -37,7 +37,8 @@ export default function EmailOtpVerifier({
   setVerified,
   apiBase = "",
   autoSend = false,
-  registrationType = undefined, // changed: allow undefined so we can infer from URL if missing
+  registrationType = undefined,
+  onOtpSuccess,
 }) {
   const navigate = useNavigate();
   const [otpSent, setOtpSent] = useState(false);
@@ -199,7 +200,7 @@ export default function EmailOtpVerifier({
         return;
       }
 
-      // Persist verified email so parent and other pages can reuse it
+      // Persist verified email so parent and other pages can reuse it (UX only)
       try {
         const verifiedAddr = (data.email || emailNorm).trim().toLowerCase();
         localStorage.setItem("verifiedEmail", verifiedAddr);
@@ -215,6 +216,11 @@ export default function EmailOtpVerifier({
           setForm(prev => ({ ...prev, [fieldName]: verifiedAddr, otpVerified: true }));
         } catch (e) { /* ignore */ }
       }
+
+      // NEW: pass the verificationToken to parent (MANDATORY for backend)
+      if (typeof onOtpSuccess === "function" && data.verificationToken) {
+        onOtpSuccess({ email: emailNorm, token: data.verificationToken });
+      }
     } catch (err) {
       console.error("[EmailOtpVerifier] verify error", err);
       setError("Network/server error while verifying OTP");
@@ -224,46 +230,46 @@ export default function EmailOtpVerifier({
     }
   }
 
-function handleUpgradeNavigate() {
-  if (!existing) return;
+  function handleUpgradeNavigate() {
+    if (!existing) return;
 
-  const collection =
-    existing.collection || ensurePluralRole(existing.registrationType || role);
+    const collection =
+      existing.collection || ensurePluralRole(existing.registrationType || role);
 
-  const id =
-    existing.id ||
-    existing._id ||
-    existing._id_str ||
-    (existing._id && existing._id.$oid) ||
-    null;
+    const id =
+      existing.id ||
+      existing._id ||
+      existing._id_str ||
+      (existing._id && existing._id.$oid) ||
+      null;
 
-  const ticket = existing.ticket_code || existing.ticketCode || null;
+    const ticket = existing.ticket_code || existing.ticketCode || null;
 
-  const emailParam = encodeURIComponent(emailNorm);
+    const emailParam = encodeURIComponent(emailNorm);
 
-  if (id) {
+    if (id) {
+      navigate(
+        `/ticket-upgrade?entity=${encodeURIComponent(
+          collection
+        )}&id=${encodeURIComponent(String(id))}&email=${emailParam}`
+      );
+      return;
+    }
+
+    if (ticket) {
+      navigate(
+        `/ticket-upgrade?entity=${encodeURIComponent(
+          collection
+        )}&ticket_code=${encodeURIComponent(String(ticket))}&email=${emailParam}`
+      );
+      return;
+    }
+
+    // last resort (rare)
     navigate(
-      `/ticket-upgrade?entity=${encodeURIComponent(
-        collection
-      )}&id=${encodeURIComponent(String(id))}&email=${emailParam}`
+      `/ticket-upgrade?entity=visitors&email=${emailParam}`
     );
-    return;
   }
-
-  if (ticket) {
-    navigate(
-      `/ticket-upgrade?entity=${encodeURIComponent(
-        collection
-      )}&ticket_code=${encodeURIComponent(String(ticket))}&email=${emailParam}`
-    );
-    return;
-  }
-
-  // last resort (rare)
-  navigate(
-    `/ticket-upgrade?entity=visitors&email=${emailParam}`
-  );
-}
 
 
   return (
