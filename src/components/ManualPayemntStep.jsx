@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 
 /**
- * ManualPaymentStep (finalized coupon flow)
+ * ManualPaymentStep (validated coupon flow, backend finalizes coupon)
  *
- * - Coupons are single-use and final:  applying a coupon calls POST /api/coupons/validate
- *   with markUsed:  true and the backend atomically validates + consumes the coupon. 
+ * - Coupons are single-use and final.
+ * - Coupon is validated (markUsed: false) in frontend.
+ * - Coupon is ONLY consumed in backend during ticket upgrade/payment confirmation.
+ * - Coupon/discount state is persisted in sessionStorage for UX.
  */
-
 export default function ManualPaymentStep({
   ticketType,
   ticketPrice = 0,
@@ -29,6 +30,26 @@ export default function ManualPaymentStep({
   const [couponBusy, setCouponBusy] = useState(false);
   const [couponError, setCouponError] = useState("");
 
+  // LOAD persisted coupon state (for UX refresh)
+  useEffect(() => {
+    try {
+      const sCode = sessionStorage.getItem("couponCode");
+      const sResult = sessionStorage.getItem("couponResult");
+      if (sCode) setCouponCode(sCode);
+      if (sResult) setCouponResult(JSON.parse(sResult));
+    } catch {}
+  }, []);
+
+  // PERSIST coupon state after result
+  useEffect(() => {
+    try {
+      if (couponResult) {
+        sessionStorage.setItem("couponCode", couponCode);
+        sessionStorage.setItem("couponResult", JSON.stringify(couponResult));
+      }
+    } catch {}
+  }, [couponCode, couponResult]);
+
   // totals
   const gst = Math.round(ticketPrice * 0.18);
   const originalTotal = Number((ticketPrice + gst).toFixed(2));
@@ -49,15 +70,15 @@ export default function ManualPaymentStep({
   // Determine backend base
   const backendBaseCandidate =
     (apiBase && String(apiBase).trim()) ||
-    (typeof process !== "undefined" && process. env && process.env.REACT_APP_API_BASE) ||
+    (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE) ||
     (typeof window !== "undefined" && window.__API_BASE__) ||
     "";
 
   function likelyProviderHost(h) {
-    if (! h) return false;
+    if (!h) return false;
     const lc = String(h).toLowerCase();
     return (
-      lc. includes("instamojo") ||
+      lc.includes("instamojo") ||
       lc.includes("razorpay") ||
       lc.includes("paytm") ||
       lc.includes("stripe") ||
@@ -67,27 +88,14 @@ export default function ManualPaymentStep({
 
   const backendBase = likelyProviderHost(backendBaseCandidate) ? "" : backendBaseCandidate;
 
-  console.log("[ManualPaymentStep] Backend base:", backendBase || "(relative URLs)");
-
   function makeUrl(path) {
-    // Clean backend base
-    const base = backendBase ?  String(backendBase).replace(/\/$/, "") : "";
-
-    // Clean path
+    const base = backendBase ? String(backendBase).replace(/\/$/, "") : "";
     const cleanPath = path.startsWith("/") ? path : `/${path}`;
-
-    // If no backend base, return path as-is (relative)
-    if (!base) {
-      return cleanPath;
-    }
-
-    // Construct full URL
-    const fullUrl = `${base}${cleanPath}`;
-    console.log("[ManualPaymentStep] makeUrl:", { path, base, fullUrl });
-    return fullUrl;
+    if (!base) return cleanPath;
+    return `${base}${cleanPath}`;
   }
 
-  /* ---------- Coupon:  apply (final, atomic) ---------- */
+  /* ---------- Coupon: validate-only ---------- */
   async function applyCoupon() {
     setCouponBusy(true);
     setCouponError("");
@@ -97,41 +105,32 @@ export default function ManualPaymentStep({
     try {
       const code = (couponCode || "").trim().toUpperCase();
 
-      console.log("[ManualPaymentStep] Applying coupon:", {
-        code,
-        originalTotal,
-        backendBase
-      });
-
       if (!code) {
         setCouponError("Enter a coupon code");
         setCouponBusy(false);
         return;
       }
 
+      // ONLY VALIDATE — DO NOT CONSUME, DO NOT FINALIZE!
       const payload = {
         code,
         price: originalTotal,
-        markUsed: true
+        markUsed: false
       };
 
       const url = makeUrl("/api/coupons/validate");
-      console.log("[ManualPaymentStep] Fetching:", url, "Payload:", payload);
 
       const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "ngrok-skip-browser-warning":  "69420"
+          "ngrok-skip-browser-warning": "69420"
         },
         body: JSON.stringify(payload),
         credentials: "include",
       });
 
-      console.log("[ManualPaymentStep] Response status:", res.status);
-
       const js = await res.json().catch(() => null);
-      console.log("[ManualPaymentStep] Response data:", js);
 
       if (!res.ok || !js) {
         const msg = (js && (js.error || js.message)) || `Validate failed (${res.status})`;
@@ -140,19 +139,17 @@ export default function ManualPaymentStep({
         return;
       }
 
-      if (! js.valid) {
+      if (!js.valid) {
         setCouponError(js.error || "Invalid or already used coupon");
         setCouponResult(js);
         setCouponBusy(false);
         return;
       }
 
-      // Success! 
-      console.log("[ManualPaymentStep] ✅ Coupon applied:", js);
+      // Success!
       setCouponResult(js);
       setCouponError("");
     } catch (e) {
-      console.error("[ManualPaymentStep] applyCoupon error:", e);
       setCouponError(String(e && (e.message || e)) || "Failed to apply coupon");
     } finally {
       setCouponBusy(false);
@@ -160,7 +157,6 @@ export default function ManualPaymentStep({
   }
 
   /* ---------- Payment: create order & poll ---------- */
-
   async function createOrder() {
     setError("");
     setPayLoading(true);
@@ -168,11 +164,7 @@ export default function ManualPaymentStep({
     try {
       const amountToPay = Number(effectiveTotal || 0);
 
-      console.log("[ManualPaymentStep] Creating order:", { amountToPay, effectiveTotal, originalTotal });
-
-      // handle zero-amount (free)
-      if (! amountToPay || amountToPay <= 0) {
-        console.log("[ManualPaymentStep] Zero amount - marking as paid");
+      if (!amountToPay || amountToPay <= 0) {
         setPaymentStatus("paid");
         try {
           onTxIdChange && onTxIdChange(`free-${Date.now()}`);
@@ -198,14 +190,13 @@ export default function ManualPaymentStep({
         metadata: {
           ticketType,
           referenceId,
-          couponCode: couponResult && couponResult.coupon ?  couponResult.coupon.code : couponCode. trim().toUpperCase(),
+          couponCode: couponResult && couponResult.coupon ? couponResult.coupon.code : couponCode.trim().toUpperCase(),
           buyer_name: (typeof window !== "undefined" && localStorage.getItem("visitorName")) || "",
           email: (verifiedEmail && verifiedEmail.trim()) || "",
         },
       };
 
       const endpoint = makeUrl("/api/payment/create-order");
-      console.log("[ManualPaymentStep] createOrder ->", endpoint, "payload:", payload);
 
       const res = await fetch(endpoint, {
         method: "POST",
@@ -227,7 +218,6 @@ export default function ManualPaymentStep({
         rawText = null;
         data = null;
       }
-      console.log("[ManualPaymentStep] create-order response:", res.status, data || rawText);
 
       if (!res.ok || !data || !data.success) {
         const providerHint =
@@ -238,21 +228,21 @@ export default function ManualPaymentStep({
           (data && (data.error || data.provider_error || data.details || JSON.stringify(data))) ||
           (rawText && rawText.slice(0, 200)) ||
           `Failed to create payment order (status ${res.status})` +
-            (providerHint ? " - " + providerHint :  "");
+            (providerHint ? " - " + providerHint : "");
         setError(errMsg);
         setPayLoading(false);
         return;
       }
 
       const checkoutUrl =
-        data.checkoutUrl || data.longurl || data.raw?. payment_request?.longurl || data.raw?.longurl;
+        data.checkoutUrl || data.longurl || data.raw?.payment_request?.longurl || data.raw?.longurl;
       if (!checkoutUrl) {
         setError("Payment provider did not return a checkout URL.");
         setPayLoading(false);
         return;
       }
 
-      const w = window. open(checkoutUrl, "_blank", "noopener,noreferrer");
+      const w = window.open(checkoutUrl, "_blank", "noopener,noreferrer");
       if (!w) {
         setError("Could not open payment window. Please allow popups.");
         setPayLoading(false);
@@ -262,41 +252,40 @@ export default function ManualPaymentStep({
       setCheckoutOpened(true);
       setPaymentStatus("pending");
 
-      const reference_id = payload.reference_id;
       let attempts = 0;
       pollRef.current = setInterval(async () => {
         attempts += 1;
         try {
-          const statusUrl = makeUrl(`/api/payment/status? reference_id=${encodeURIComponent(reference_id)}`);
+          const statusUrl = makeUrl(`/api/payment/status?reference_id=${encodeURIComponent(referenceId)}`);
           const st = await fetch(statusUrl, { method: "GET", credentials: "include", headers: { "ngrok-skip-browser-warning": "69420" } });
-          if (!st.ok) {
-            console.warn("[ManualPaymentStep] status fetch not ok:", st.status);
-            return;
-          }
+          if (!st.ok) return;
+
           const js = await st.json().catch(() => null);
           if (!js) return;
           const status = (js.status || "").toString().toLowerCase();
-          console.log("[ManualPaymentStep] Payment status:", status);
-          
+
           if (["paid", "captured", "completed", "success"].includes(status)) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             setPaymentStatus("paid");
+
+            // 🔥 DO NOT CONSUME COUPON HERE — BACKEND FINALIZES AFTER TICKET UPGRADE
+
             const rec = js.record || js.data || js.payment || js;
-            const providerPaymentId = rec?. provider_payment_id || rec?.payment_id || rec?.id || null;
+            const providerPaymentId = rec?.provider_payment_id || rec?.payment_id || rec?.id || null;
             const finalTx = providerPaymentId || `provider-${Date.now()}`;
             try {
               onTxIdChange && onTxIdChange(finalTx);
             } catch (_) {}
             try {
-              if (w && ! w.closed) w.close();
+              if (w && !w.closed) w.close();
             } catch (_) {}
             onProofUpload && onProofUpload();
-          } else if (["failed", "cancelled", "void"]. includes(status)) {
+          } else if (["failed", "cancelled", "void"].includes(status)) {
             clearInterval(pollRef.current);
             pollRef.current = null;
             setPaymentStatus("failed");
-            setError("Payment failed or cancelled.  You may retry.");
+            setError("Payment failed or cancelled. You may retry.");
             try {
               if (w && !w.closed) w.close();
             } catch (_) {}
@@ -309,21 +298,30 @@ export default function ManualPaymentStep({
             }
           }
         } catch (e) {
-          console. warn("[ManualPaymentStep] polling error:", e && e.message);
+          // silent
         }
       }, 3000);
     } catch (err) {
-      console.error("[ManualPaymentStep] createOrder error:", err && (err.stack || err));
-      setError(err. message || "Payment initiation failed");
+      setError(err.message || "Payment initiation failed");
     } finally {
       setPayLoading(false);
     }
   }
 
+  function handleClearCoupon() {
+    setCouponCode("");
+    setCouponResult(null);
+    setCouponError("");
+    try {
+      sessionStorage.removeItem("couponCode");
+      sessionStorage.removeItem("couponResult");
+    } catch {}
+  }
+
   return (
     <div className="bg-white rounded-xl shadow-xl p-8 max-w-lg mx-auto mt-8">
       <div className="text-xl font-bold mb-2">
-        Payment — {ticketType ?  `${ticketType.charAt(0).toUpperCase() + ticketType.slice(1)} Ticket` : "Ticket"}
+        Payment — {ticketType ? `${ticketType.charAt(0).toUpperCase() + ticketType.slice(1)} Ticket` : "Ticket"}
       </div>
 
       <div className="mb-4">
@@ -335,7 +333,6 @@ export default function ManualPaymentStep({
       {/* Coupon area */}
       <div className="mb-4 p-3 border rounded bg-gray-50">
         <div className="font-semibold mb-2">Have a coupon?</div>
-
         <div className="flex gap-2 items-end">
           <div className="flex-1">
             <label className="block text-xs text-gray-600">Coupon code</label>
@@ -344,34 +341,40 @@ export default function ManualPaymentStep({
               onChange={(e) => setCouponCode(e.target.value)}
               placeholder="Enter coupon code"
               className="w-full border rounded px-2 py-1"
-              disabled={! !(couponResult && couponResult.valid)}
+              disabled={couponResult && couponResult.valid}
             />
           </div>
-
           <div className="flex flex-col gap-2">
             <button
               className="px-3 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
-              onClick={() => applyCoupon()}
-              disabled={couponBusy || !!(couponResult && couponResult. valid)}
+              onClick={applyCoupon}
+              disabled={couponBusy || (couponResult && couponResult.valid)}
               type="button"
             >
-              {couponBusy ? "Applying..." : (couponResult && couponResult. valid ? "Applied" : "Apply")}
+              {couponBusy ? "Applying..." : (couponResult && couponResult.valid ? "Applied" : "Apply")}
             </button>
+            {(couponResult && couponResult.valid) && (
+              <button
+                className="px-2 py-1 text-xs border border-gray-500 rounded bg-white text-gray-700"
+                onClick={handleClearCoupon}
+                type="button"
+              >
+                Clear coupon
+              </button>
+            )}
           </div>
         </div>
-
         {couponError && <div className="mt-2 text-red-600 text-sm">{couponError}</div>}
-
         {couponResult && (
           <div className="mt-3 text-sm text-gray-700 p-2 bg-white border rounded">
             {couponResult.valid ? (
               <>
-                <div className="font-medium text-green-700">✅ Coupon applied:  {couponResult.coupon?. code || couponCode}</div>
+                <div className="font-medium text-green-700">✅ Coupon applied: {couponResult.coupon?.code || couponCode}</div>
                 <div>Discount: {couponResult.discount}%</div>
                 <div>
                   Reduced total: <span className="font-semibold">₹{Number(couponResult.reducedPrice).toFixed(2)}</span>
                 </div>
-                <div className="mt-2 text-xs text-gray-600">Coupon has been consumed and cannot be removed.</div>
+                <div className="mt-2 text-xs text-gray-600">Coupon will be consumed only after your ticket/registration is confirmed.</div>
               </>
             ) : (
               <>
@@ -385,8 +388,7 @@ export default function ManualPaymentStep({
 
       <div className="mb-6">
         <div className="font-semibold mb-2">Pay Online</div>
-        <div className="text-sm text-gray-700 mb-3">Secure checkout via your payment provider. </div>
-
+        <div className="text-sm text-gray-700 mb-3">Secure checkout via your payment provider.</div>
         <div className="mb-3">
           <div className="text-sm text-gray-600">Amount to pay</div>
           <div className="text-2xl font-semibold text-[#196e87]">₹{Number(effectiveTotal).toFixed(2)}</div>
@@ -396,7 +398,6 @@ export default function ManualPaymentStep({
             </div>
           )}
         </div>
-
         <div className="flex gap-3">
           <button
             className="px-4 py-2 bg-green-600 text-white rounded disabled:opacity-60"
@@ -406,16 +407,13 @@ export default function ManualPaymentStep({
             {payLoading ? "Opening checkout..." : checkoutOpened ? "Checkout opened" : "Pay Online"}
           </button>
         </div>
-
         {paymentStatus === "pending" && <div className="mt-2 text-sm text-yellow-600">Waiting for provider confirmation...</div>}
-        {paymentStatus === "paid" && <div className="mt-2 text-sm text-green-600">✅ Payment confirmed. </div>}
+        {paymentStatus === "paid" && <div className="mt-2 text-sm text-green-600">✅ Payment confirmed.</div>}
       </div>
-
       <hr className="my-4" />
-
       {error && <div className="mt-4 text-red-600 font-medium whitespace-pre-wrap">{error}</div>}
       <div className="mt-4 text-xs text-gray-500">
-        If you pay online, the checkout will open in a new tab. After successful payment we will automatically continue the registration. 
+        If you pay online, the checkout will open in a new tab. After successful payment your registration will continue and your coupon will be consumed.
       </div>
     </div>
   );
