@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import TicketCategorySelector from "../components/TicketCategoryGenerator";
-import ManualPaymentStep from "../components/ManualPaymentStep";
 import VisitorTicket from "../components/VisitorTicket";
 import { readRegistrationCache, writeRegistrationCache } from "../utils/registrationCache";
 
