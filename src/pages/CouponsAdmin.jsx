@@ -2,23 +2,16 @@ import React, { useEffect, useState } from 'react';
 
 /**
  * Admin UI for Coupons
- *
- * - Create single coupon (code optional) with discount percent
- * - Bulk generate coupons (count + discount)
- * - List coupons with filters: All / Unused / Used
- * - Actions: Delete, Mark Used, Unmark (admin)
- * - Validate/apply coupon: enter code + price -> show reduced price; optionally mark used
- *
- * Place this page under your admin routes, e.g. /admin/coupons
  */
 
-const API_BASE = (window && (window.__API_BASE__ || '')) || '';
+const API_BASE = (window && (window.__API_BASE__ || '')) || process.env.REACT_APP_API_BASE || '';
 
 function apiUrl(path) {
-  if (!path) return API_BASE;
+  if (! path) return API_BASE;
   if (/^https?:\/\//i.test(path)) return path;
+  const base = API_BASE ?  String(API_BASE).replace(/\/$/, '') : '';
   const p = path.startsWith('/') ? path : `/${path}`;
-  return `${API_BASE.replace(/\/$/, '')}${p}`;
+  return base ?  `${base}${p}` : p;
 }
 
 function shortDate(d) {
@@ -53,16 +46,23 @@ export default function CouponsAdmin() {
   async function loadCoupons() {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl(`/api/coupons?status=${encodeURIComponent(filter)}`));
+      const url = apiUrl(`/api/coupons? status=${encodeURIComponent(filter)}`);
+      console.log('[CouponsAdmin] Loading coupons from:', url);
+      
+      const res = await fetch(url, {
+        headers: { "ngrok-skip-browser-warning": "69420" }
+      });
+      
       if (!res.ok) {
         const txt = await res.text().catch(()=>null);
         throw new Error(txt || `status ${res.status}`);
       }
       const js = await res.json().catch(()=>null);
-      setCoupons(js && js.coupons ? js.coupons : []);
+      setCoupons(js && js.coupons ?  js.coupons : []);
+      console.log('[CouponsAdmin] Loaded', js?. coupons?.length || 0, 'coupons');
     } catch (e) {
-      console.error('loadCoupons error', e);
-      setError('Failed to load coupons');
+      console.error('[CouponsAdmin] loadCoupons error', e);
+      setError('Failed to load coupons:  ' + e.message);
     } finally {
       setLoading(false);
     }
@@ -70,12 +70,15 @@ export default function CouponsAdmin() {
 
   async function loadLogs() {
     try {
-      const res = await fetch(apiUrl('/api/coupons/logs'));
+      const url = apiUrl('/api/coupons/logs');
+      const res = await fetch(url, {
+        headers: { "ngrok-skip-browser-warning": "69420" }
+      });
       if (!res.ok) return;
       const js = await res.json().catch(()=>null);
-      setLogs(js && js.logs ? js.logs : []);
+      setLogs(js && js.logs ? js.logs :  []);
     } catch (e) {
-      console.warn('loadLogs failed', e);
+      console.warn('[CouponsAdmin] loadLogs failed', e);
     }
   }
 
@@ -90,10 +93,13 @@ export default function CouponsAdmin() {
     setError('');
     setBusy(true);
     try {
-      const payload = { code: code ? String(code).trim() : undefined, discount: Number(discount || 0) };
+      const payload = { code:  code ?  String(code).trim() : undefined, discount:  Number(discount || 0) };
       const res = await fetch(apiUrl('/api/coupons'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          "ngrok-skip-browser-warning": "69420"
+        },
         body: JSON.stringify(payload)
       });
       const js = await res.json().catch(()=>null);
@@ -105,8 +111,8 @@ export default function CouponsAdmin() {
       await loadCoupons();
       await loadLogs();
     } catch (e) {
-      console.error('createCoupon', e);
-      setError(e && e.message ? e.message : String(e));
+      console.error('[CouponsAdmin] createCoupon', e);
+      setError(e && e.message ?  e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -120,7 +126,10 @@ export default function CouponsAdmin() {
       const payload = { count: Number(bulkCount || 10), discount: Number(bulkDiscount || 0) };
       const res = await fetch(apiUrl('/api/coupons/generate'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          "ngrok-skip-browser-warning": "69420"
+        },
         body: JSON.stringify(payload)
       });
       const js = await res.json().catch(()=>null);
@@ -128,7 +137,7 @@ export default function CouponsAdmin() {
       await loadCoupons();
       await loadLogs();
     } catch (e) {
-      console.error('generateBulk', e);
+      console.error('[CouponsAdmin] generateBulk', e);
       setError(e && e.message ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -139,13 +148,16 @@ export default function CouponsAdmin() {
     if (!window.confirm('Delete this coupon?')) return;
     setBusy(true);
     try {
-      const res = await fetch(apiUrl(`/api/coupons/${encodeURIComponent(id)}`), { method: 'DELETE' });
+      const res = await fetch(apiUrl(`/api/coupons/${encodeURIComponent(id)}`), { 
+        method: 'DELETE',
+        headers: { "ngrok-skip-browser-warning": "69420" }
+      });
       const js = await res.json().catch(()=>null);
       if (!res.ok) throw new Error((js && js.error) || 'Delete failed');
       await loadCoupons();
       await loadLogs();
     } catch (e) {
-      console.error('deleteCoupon', e);
+      console.error('[CouponsAdmin] deleteCoupon', e);
       setError(e && e.message ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -156,13 +168,20 @@ export default function CouponsAdmin() {
     if (!window.confirm('Mark coupon as used?')) return;
     setBusy(true);
     try {
-      const res = await fetch(apiUrl(`/api/coupons/${encodeURIComponent(id)}/use`), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ used_by: 'admin' }) });
+      const res = await fetch(apiUrl(`/api/coupons/${encodeURIComponent(id)}/use`), { 
+        method: 'POST', 
+        headers: { 
+          'Content-Type': 'application/json',
+          "ngrok-skip-browser-warning": "69420"
+        }, 
+        body: JSON.stringify({ used_by: 'admin' }) 
+      });
       const js = await res.json().catch(()=>null);
       if (!res.ok) throw new Error((js && js.error) || 'Mark used failed');
       await loadCoupons();
       await loadLogs();
     } catch (e) {
-      console.error('markUsed', e);
+      console.error('[CouponsAdmin] markUsed', e);
       setError(e && e.message ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -173,37 +192,57 @@ export default function CouponsAdmin() {
     if (!window.confirm('Unmark coupon as used?')) return;
     setBusy(true);
     try {
-      const res = await fetch(apiUrl(`/api/coupons/${encodeURIComponent(id)}/unuse`), { method: 'POST' });
+      const res = await fetch(apiUrl(`/api/coupons/${encodeURIComponent(id)}/unuse`), { 
+        method: 'POST',
+        headers: { "ngrok-skip-browser-warning": "69420" }
+      });
       const js = await res.json().catch(()=>null);
       if (!res.ok) throw new Error((js && js.error) || 'Unmark failed');
       await loadCoupons();
       await loadLogs();
     } catch (e) {
-      console.error('unmarkUsed', e);
+      console.error('[CouponsAdmin] unmarkUsed', e);
       setError(e && e.message ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   }
 
-  async function applyValidate(markUsed = false) {
+  async function applyValidate(markUsedFlag = false) {
     setError('');
     setValidateResult(null);
     try {
-      const payload = { code: String(validateCode || '').trim().toUpperCase(), price: Number(validatePrice || undefined), markUsed };
-      const res = await fetch(apiUrl('/api/coupons/validate'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const payload = { 
+        code: String(validateCode || '').trim().toUpperCase(), 
+        price: Number(validatePrice || 0), 
+        markUsed: markUsedFlag 
+      };
+      
+      console.log('[CouponsAdmin] Validating:', payload);
+      
+      const res = await fetch(apiUrl('/api/coupons/validate'), { 
+        method: 'POST', 
+        headers: { 
+          'Content-Type': 'application/json',
+          "ngrok-skip-browser-warning":  "69420"
+        }, 
+        body: JSON.stringify(payload) 
+      });
       const js = await res.json().catch(()=>null);
+      
+      console.log('[CouponsAdmin] Validate result:', js);
+      
       if (!res.ok || !js) {
         throw new Error((js && js.error) || `status ${res.status}`);
       }
       setValidateResult(js);
       // refresh lists if marked used
-      if (markUsed) {
+      if (markUsedFlag) {
         await loadCoupons();
         await loadLogs();
       }
     } catch (e) {
-      console.error('applyValidate', e);
+      console.error('[CouponsAdmin] applyValidate', e);
       setError(e && e.message ? e.message : String(e));
     }
   }
@@ -240,7 +279,7 @@ export default function CouponsAdmin() {
             </div>
             <div>
               <label className="block text-sm">Discount %</label>
-              <input type="number" value={bulkDiscount} onChange={e => setBulkDiscount(e.target.value)} className="border rounded px-2 py-1 w-full" min="0" max="100" />
+              <input type="number" value={bulkDiscount} onChange={e => setBulkDiscount(e. target.value)} className="border rounded px-2 py-1 w-full" min="0" max="100" />
             </div>
             <div className="flex gap-2">
               <button className="px-3 py-1 bg-[#196e87] text-white rounded" disabled={busy}>Generate</button>
@@ -250,16 +289,16 @@ export default function CouponsAdmin() {
         </section>
       </div>
 
-      <div className="mb-6">
-        <h2 className="text-lg font-semibold mb-2">Apply / Validate Coupon</h2>
-        <div className="flex gap-2 items-end">
+      <div className="mb-6 p-4 border rounded bg-white shadow">
+        <h2 className="text-lg font-semibold mb-2">Validate Coupon</h2>
+        <div className="flex gap-2 items-end flex-wrap">
           <div>
             <label className="block text-sm">Code</label>
-            <input value={validateCode} onChange={e => setValidateCode(e.target.value)} className="border rounded px-2 py-1" />
+            <input value={validateCode} onChange={e => setValidateCode(e.target.value)} className="border rounded px-2 py-1" placeholder="TEST10" />
           </div>
           <div>
             <label className="block text-sm">Price</label>
-            <input value={validatePrice} onChange={e => setValidatePrice(e.target.value)} type="number" className="border rounded px-2 py-1" />
+            <input value={validatePrice} onChange={e => setValidatePrice(e.target.value)} type="number" className="border rounded px-2 py-1" placeholder="1000" />
           </div>
           <div className="flex gap-2">
             <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={() => applyValidate(false)}>Check</button>
@@ -268,7 +307,7 @@ export default function CouponsAdmin() {
         </div>
         {validateResult && (
           <div className="mt-3 p-3 border rounded bg-gray-50">
-            <pre>{JSON.stringify(validateResult, null, 2)}</pre>
+            <pre className="text-xs overflow-auto">{JSON.stringify(validateResult, null, 2)}</pre>
           </div>
         )}
       </div>
@@ -281,35 +320,35 @@ export default function CouponsAdmin() {
       </div>
 
       <div className="grid gap-2">
-        {error && <div className="text-red-600">{error}</div>}
-        {!loading && coupons.length === 0 && <div className="text-gray-600">No coupons</div>}
+        {error && <div className="text-red-600 p-2 bg-red-50 rounded">{error}</div>}
+        {! loading && coupons.length === 0 && <div className="text-gray-600 p-4 text-center">No coupons</div>}
 
         {coupons.map(c => (
-          <div key={c.id || c.code} className={`p-3 rounded border flex items-center justify-between ${c.used ? 'bg-gray-100 opacity-80' : 'bg-white'}`}>
+          <div key={c.id || c.code} className={`p-3 rounded border flex items-center justify-between ${c.used ?  'bg-gray-100 opacity-80' : 'bg-white'}`}>
             <div>
-              <div className="font-mono text-lg">{c.code}</div>
+              <div className="font-mono text-lg font-bold">{c.code}</div>
               <div className="text-sm text-gray-600">Discount: {c.discount}% — Created: {shortDate(c.created_at)}</div>
-              {c.used && <div className="text-sm text-red-600">Used by: {c.used_by || 'unknown'} at {shortDate(c.used_at)}</div>}
+              {c.used && <div className="text-sm text-red-600">✅ Used by: {c.used_by || 'unknown'} at {shortDate(c.used_at)}</div>}
             </div>
             <div className="flex flex-col items-end gap-2">
-              {!c.used ? (
-                <button className="px-3 py-1 bg-green-600 text-white rounded" onClick={() => markUsed(c.id)}>Mark Used</button>
+              {! c.used ?  (
+                <button className="px-3 py-1 bg-green-600 text-white rounded text-sm" onClick={() => markUsed(c.id)}>Mark Used</button>
               ) : (
-                <button className="px-3 py-1 bg-yellow-500 text-white rounded" onClick={() => unmarkUsed(c.id)}>Unmark</button>
+                <button className="px-3 py-1 bg-yellow-500 text-white rounded text-sm" onClick={() => unmarkUsed(c.id)}>Unmark</button>
               )}
-              <button className="px-3 py-1 border rounded" onClick={() => deleteCoupon(c.id)}>Delete</button>
+              <button className="px-3 py-1 border rounded text-sm hover:bg-red-50" onClick={() => deleteCoupon(c.id)}>Delete</button>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 p-4 border rounded bg-white shadow">
         <h3 className="font-semibold mb-2">Recent Logs</h3>
-        <div className="bg-white p-3 border rounded space-y-2">
-          {logs.length === 0 && <div className="text-gray-600">No logs</div>}
-          {logs.slice(0, 50).map((l, i) => (
-            <div key={i} className="text-sm text-gray-700">
-              <strong>{l.type}</strong> — {l.code || l.couponId || ''} — {shortDate(l.created_at)} {l.used_by ? ` by ${l.used_by}` : ''}
+        <div className="space-y-2 max-h-96 overflow-auto">
+          {logs.length === 0 && <div className="text-gray-600 text-sm">No logs</div>}
+          {logs. slice(0, 100).map((l, i) => (
+            <div key={i} className="text-sm text-gray-700 p-2 bg-gray-50 rounded">
+              <strong className="text-[#196e87]">{l.type}</strong> — {l.code || l.couponId || ''} — {shortDate(l. created_at)} {l.used_by ?  ` by ${l.used_by}` : ''}
             </div>
           ))}
         </div>
