@@ -20,19 +20,19 @@ function getApiBaseFromEnvOrWindow() {
     process.env &&
     process.env.REACT_APP_API_BASE
   )
-    return process.env. REACT_APP_API_BASE. replace(/\/$/, "");
+    return process.env.REACT_APP_API_BASE.replace(/\/$/, "");
   if (typeof window !== "undefined" && window.__API_BASE__)
     return String(window.__API_BASE__).replace(/\/$/, "");
   if (
     typeof window !== "undefined" &&
     window.__CONFIG__ &&
-    window.__CONFIG__. backendUrl
+    window.__CONFIG__.backendUrl
   )
     return String(window.__CONFIG__.backendUrl).replace(/\/$/, "");
   if (
     typeof window !== "undefined" &&
-    window. location &&
-    window.location. origin
+    window.location &&
+    window.location.origin
   )
     return window.location.origin.replace(/\/$/, "");
   return "/api";
@@ -41,12 +41,12 @@ function apiUrl(path) {
   const base = getApiBaseFromEnvOrWindow();
   if (!path) return base;
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  return `${base. replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+  return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }
 function normalizeAdminUrl(url) {
   if (!url) return "";
   const trimmed = String(url).trim();
-  if (! trimmed) return "";
+  if (!trimmed) return "";
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   if (trimmed.startsWith("//")) return window.location.protocol + trimmed;
   if (trimmed.startsWith("/")) return apiUrl(trimmed);
@@ -82,7 +82,7 @@ function findFieldValue(obj = {}, candidates = []) {
       .replace(/[^a-z0-9]/gi, "")
       .toLowerCase();
     for (const cand of normCandidates) {
-      if (kn. includes(cand) || cand.includes(kn)) {
+      if (kn.includes(cand) || cand.includes(kn)) {
         const v = obj[k];
         if (v !== undefined && v !== null && String(v).trim() !== "")
           return String(v).trim();
@@ -94,7 +94,7 @@ function findFieldValue(obj = {}, candidates = []) {
       .replace(/[^a-z0-9]/gi, "")
       .toLowerCase();
     if (
-      kn. includes("company") ||
+      kn.includes("company") ||
       kn.includes("organization") ||
       kn.includes("org")
     ) {
@@ -119,7 +119,7 @@ async function saveAwardeeApi(payload) {
   const txt = await res.text().catch(() => null);
   let json = null;
   try {
-    json = txt ?  JSON.parse(txt) : null;
+    json = txt ? JSON.parse(txt) : null;
   } catch {
     json = { raw: txt };
   }
@@ -135,7 +135,7 @@ async function saveAwardeeApi(payload) {
 async function scheduleReminder(entityId, eventDate) {
   try {
     if (!entityId || !eventDate) return;
-    const payload = { entity:  "awardees", entityId, eventDate };
+    const payload = { entity: "awardees", entityId, eventDate };
     const res = await fetch(apiUrl("/api/reminders/send"), {
       method: "POST",
       headers: {
@@ -169,7 +169,7 @@ function EventDetailsBlock({ event }) {
           WebkitTextFillColor: "transparent",
         }}
       >
-        {event?. name || "Event Name"}
+        {event?.name || "Event Name"}
       </div>
       <div className="text-xl sm:text-2xl font-bold mb-1 text-center text-[#21809b]">
         {event?.date || "Event Date"}
@@ -179,7 +179,7 @@ function EventDetailsBlock({ event }) {
       </div>
       {event?.tagline && (
         <div className="text-base sm:text-xl font-semibold text-center text-[#21809b] mt-2">
-          {event. tagline}
+          {event.tagline}
         </div>
       )}
     </div>
@@ -207,7 +207,7 @@ export default function Awardees() {
   // Mobile detection (updated to 900px to match other pages)
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!! mq.matches);
+    const onChange = () => setIsMobile(!!mq.matches);
     onChange();
     if (mq.addEventListener) mq.addEventListener("change", onChange);
     else mq.addListener(onChange);
@@ -246,7 +246,7 @@ export default function Awardees() {
             typeof candidate === "string" &&
             /\.(mp4|webm|ogg)(\?|$)/i.test(candidate);
           normalized.backgroundMedia = {
-            type: isVideo ? "video" :  "image",
+            type: isVideo ? "video" : "image",
             url: normalizeAdminUrl(candidate),
           };
         } else {
@@ -262,20 +262,20 @@ export default function Awardees() {
       normalized.fields = Array.isArray(normalized.fields)
         ? normalized.fields
         : [];
-      normalized.images = Array.isArray(normalized. images)
-        ? normalized.images. map(normalizeAdminUrl)
+      normalized.images = Array.isArray(normalized.images)
+        ? normalized.images.map(normalizeAdminUrl)
         : [];
       normalized.eventDetails =
         typeof normalized.eventDetails === "object" && normalized.eventDetails
-          ? normalized. eventDetails
+          ? normalized.eventDetails
           : {};
 
       normalized.fields = normalized.fields.map((f) => {
-        if (! f || ! f.name) return f;
+        if (!f || !f.name) return f;
         const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
-        const isEmailField = f.type === "email" || /email/. test(nameLabel);
+        const isEmailField = f.type === "email" || /email/.test(nameLabel);
         if (isEmailField) {
-          const fm = Object.assign({}, f. meta || {});
+          const fm = Object.assign({}, f.meta || {});
           if (fm.useOtp === undefined) fm.useOtp = true;
           return { ...f, meta: fm };
         }
@@ -299,11 +299,11 @@ export default function Awardees() {
   const fetchCanonicalEvent = useCallback(async () => {
     try {
       const url = apiUrl("/api/configs/event-details");
-      const r = await fetch(`${url}?cb=${Date. now()}`, {
+      const r = await fetch(`${url}?cb=${Date.now()}`, {
         cache: "no-store",
         headers: {
           Accept: "application/json",
-          "ngrok-skip-browser-warning":  "69420",
+          "ngrok-skip-browser-warning": "69420",
         },
       });
       if (r.ok) {
@@ -313,7 +313,7 @@ export default function Awardees() {
           setCanonicalEvent({
             name: val.name || "",
             date: val.date || val.dates || "",
-            venue: val. venue || "",
+            venue: val.venue || "",
             time: val.time || "",
             tagline: val.tagline || "",
           });
@@ -353,11 +353,11 @@ export default function Awardees() {
       fetchCanonicalEvent();
     };
     const onCfgUpdated = (e) => {
-      const key = e && e.detail && e.detail.key ?  e.detail.key : null;
-      if (! key || key === "event-details")
-        fetchCanonicalEvent().catch(() => {});
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details")
+        fetchCanonicalEvent().catch(() => { });
     };
-    window. addEventListener("awardee-config-updated", onCfg);
+    window.addEventListener("awardee-config-updated", onCfg);
     window.addEventListener("config-updated", onCfgUpdated);
     window.addEventListener("event-details-updated", fetchCanonicalEvent);
     return () => {
@@ -372,8 +372,8 @@ export default function Awardees() {
     if (isMobile) return;
     const v = videoRef.current;
     if (
-      ! v ||
-      ! config?.backgroundMedia?. url ||
+      !v ||
+      !config?.backgroundMedia?.url ||
       config.backgroundMedia.type !== "video"
     )
       return;
@@ -388,11 +388,11 @@ export default function Awardees() {
         if (prevSrc.src !== currentSrc) {
           try {
             v.load();
-          } catch {}
+          } catch { }
           prevSrc.src = currentSrc;
         }
         await new Promise((resolve, reject) => {
-          if (! mounted) return reject(new Error("unmounted"));
+          if (!mounted) return reject(new Error("unmounted"));
           if (v.readyState >= 3) return resolve();
           const onCan = () => {
             cleanup();
@@ -414,13 +414,13 @@ export default function Awardees() {
           v.addEventListener("canplay", onCan);
           v.addEventListener("error", onErr);
         });
-        if (! mounted || myId !== attemptId) return;
+        if (!mounted || myId !== attemptId) return;
         await v.play();
-      } catch (err) {}
+      } catch (err) { }
     }
 
     const onCan = () => tryPlay();
-    const onErr = () => {};
+    const onErr = () => { };
     v.addEventListener("canplay", onCan);
     v.addEventListener("error", onErr);
     tryPlay();
@@ -431,7 +431,7 @@ export default function Awardees() {
       try {
         v.removeEventListener("canplay", onCan);
         v.removeEventListener("error", onErr);
-      } catch {}
+      } catch { }
     };
   }, [config?.backgroundMedia?.url, isMobile]);
 
@@ -457,11 +457,11 @@ export default function Awardees() {
       setForm(payload || {});
       // build server payload; minimal fields only
       const serverPayload = {
-        name:  payload.name || payload.fullName || "Awardee",
-        email:  payload.email || "",
+        name: payload.name || payload.fullName || "Awardee",
+        email: payload.email || "",
         mobile: payload.mobile || "",
         designation: payload.designation || null,
-        organization: 
+        organization:
           findFieldValue(payload, ["company", "organization"]) || "",
         awardType: payload.awardType || null,
         awardOther: payload.awardOther || null,
@@ -473,19 +473,19 @@ export default function Awardees() {
 
       const res = await saveAwardeeApi(serverPayload);
       setAwardeeId(res.insertedId || null);
-      setAwardeeTicketCode(res. ticket_code || (res.saved && res.saved.ticket_code) || null);
+      setAwardeeTicketCode(res.ticket_code || (res.saved && res.saved.ticket_code) || null);
 
       // optionally schedule reminder if canonical event has date
-      const eventDate = canonicalEvent && canonicalEvent.date ?  canonicalEvent.date : null;
+      const eventDate = canonicalEvent && canonicalEvent.date ? canonicalEvent.date : null;
       if (eventDate && res.insertedId) {
-        scheduleReminder(res.insertedId, eventDate).catch(() => {});
+        scheduleReminder(res.insertedId, eventDate).catch(() => { });
       }
 
       // Show Thank You
       setStep(2);
     } catch (e) {
       console.error("handleFormSubmit error", e);
-      setError(e && e.message ? e.message :  "Failed to submit registration.");
+      setError(e && e.message ? e.message : "Failed to submit registration.");
     } finally {
       setSubmitting(false);
     }
@@ -511,7 +511,7 @@ export default function Awardees() {
     try {
       const res = await fetch(apiUrl("/api/awardees/send-reminders"), {
         method: "POST",
-        headers:  {
+        headers: {
           "Content-Type": "application/json",
           "ngrok-skip-browser-warning": "69420",
         },
@@ -538,7 +538,7 @@ export default function Awardees() {
         <div className="w-full max-w-md">
           <Topbar />
 
-          {! loading && step === 1 && Array.isArray(config?.fields) ?  (
+          {!loading && step === 1 && Array.isArray(config?.fields) ? (
             <>
               <div className="mt-4">
                 <h2 className="text-xl font-bold text-[#21809b] mb-4 text-center">
@@ -546,7 +546,7 @@ export default function Awardees() {
                 </h2>
                 <DynamicRegistrationForm
                   config={{
-                    ... config,
+                    ...config,
                     fields: (config.fields || []).filter((f) => {
                       const name = (f.name || "")
                         .toString()
@@ -562,7 +562,7 @@ export default function Awardees() {
                         return false;
                       if (
                         f.type === "checkbox" &&
-                        (label. includes("i agree") ||
+                        (label.includes("i agree") ||
                           label.includes("accept the terms") ||
                           label.includes("terms & conditions") ||
                           label.includes("terms and conditions"))
@@ -579,11 +579,11 @@ export default function Awardees() {
                   terms={
                     config && (config.termsUrl || config.termsText)
                       ? {
-                          url: config.termsUrl,
-                          text: config.termsText,
-                          label: config.termsLabel || "Terms & Conditions",
-                          required: !!config.termsRequired,
-                        }
+                        url: config.termsUrl,
+                        text: config.termsText,
+                        label: config.termsLabel || "Terms & Conditions",
+                        required: !!config.termsRequired,
+                      }
                       : null
                   }
                 />
@@ -617,20 +617,25 @@ export default function Awardees() {
   /* ---------- DESKTOP RENDER ---------- */
   return (
     <div className="min-h-screen w-full relative">
-      {! isMobile &&
+      {!isMobile &&
         config?.backgroundMedia?.type === "video" &&
-        config?. backgroundMedia?.url && (
+        config?.backgroundMedia?.url && (
           <video
             ref={videoRef}
-            src={config.backgroundMedia.url}
             autoPlay
             muted
             loop
             playsInline
+            webkit-playsinline="true"
+            preload="metadata"
             className="fixed inset-0 w-full h-full object-cover"
             onError={(e) => console.error("Video error", e)}
-          />
+          >
+            <source src={config.backgroundMedia.url} type="video/mp4" />
+            Your browser does not support the video tag.
+          </video>
         )}
+
       {!config?.backgroundColor &&
         config?.backgroundMedia?.type === "image" &&
         config?.backgroundMedia?.url && (
@@ -670,7 +675,7 @@ export default function Awardees() {
                 <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center p-4">
                   <img
                     src={
-                      (config?. images && config.images[0]) || "/images/speaker_placeholder.jpg"
+                      (config?.images && config.images[0]) || "/images/speaker_placeholder.jpg"
                     }
                     alt="hero"
                     className="object-cover w-full h-full"
@@ -705,7 +710,7 @@ export default function Awardees() {
             </div>
           </div>
 
-          {step === 1 && ! loading && Array.isArray(config?.fields) && (
+          {step === 1 && !loading && Array.isArray(config?.fields) && (
             <div className="max-w-3xl mx-auto">
               <DynamicRegistrationForm
                 config={{
@@ -715,7 +720,7 @@ export default function Awardees() {
                       .toString()
                       .toLowerCase()
                       .replace(/\s+/g, "");
-                    const label = (f. label || "").toString().toLowerCase();
+                    const label = (f.label || "").toString().toLowerCase();
                     if (
                       name === "accept_terms" ||
                       name === "acceptterms" ||
@@ -739,14 +744,15 @@ export default function Awardees() {
                 onSubmit={handleFormSubmit}
                 editable={true}
                 submitting={submitting}
+                registrationType="partner"
                 terms={
-                  config && (config.termsUrl || config. termsText)
-                    ?  {
-                        url: config. termsUrl,
-                        text: config.termsText,
-                        label: config.termsLabel || "Terms & Conditions",
-                        required: !!config.termsRequired,
-                      }
+                  config && (config.termsUrl || config.termsText)
+                    ? {
+                      url: config.termsUrl,
+                      text: config.termsText,
+                      label: config.termsLabel || "Terms & Conditions",
+                      required: !!config.termsRequired,
+                    }
                     : null
                 }
               />
@@ -802,7 +808,7 @@ export default function Awardees() {
           <footer className="mt-12 text-center text-[#21809b] font-semibold py-6">
             © {new Date().getFullYear()}{" "}
             {config?.eventDetails?.name || "RailTrans Expo"} | All rights
-            reserved. 
+            reserved.
           </footer>
         </div>
       </div>

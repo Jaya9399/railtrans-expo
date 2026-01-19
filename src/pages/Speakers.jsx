@@ -419,6 +419,7 @@ export default function Speakers() {
                   setForm={setForm}
                   onSubmit={handleFormSubmit}
                   editable={true}
+                  registrationType="speaker"
                   submitting={submitting || processing}
                   terms={(config && (config.termsUrl || config.termsText)) ? {
                     url: config.termsUrl,
@@ -457,16 +458,19 @@ export default function Speakers() {
   return (
     <div className="min-h-screen w-full relative">
       {! isMobile && config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url && (
-        <video
-          ref={videoRef}
-          src={config.backgroundMedia.url}
-          autoPlay
-          muted
-          loop
-          playsInline
-          className="fixed inset-0 w-full h-full object-cover"
-          onError={(e) => console.error("Video error", e)}
-        />
+       <video
+       ref={videoRef}
+       autoPlay
+       muted
+       loop
+       playsInline
+       preload="metadata"
+       className="fixed inset-0 w-full h-full object-cover"
+       onError={(e) => console.error("Video error", e)}
+     >
+       <source src={config.backgroundMedia.url} type="video/mp4" />
+     </video>
+     
       )}
       {(! config?.backgroundColor) && config?.backgroundMedia?.type === "image" && config?.backgroundMedia?.url && (
         <div style={{ position: "fixed", inset: 0, zIndex: -999, backgroundImage: `url(${config.backgroundMedia.url})`, backgroundSize: "cover", backgroundPosition: "center" }} />

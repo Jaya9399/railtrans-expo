@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import EmailOtpVerifier from "../components/EmailOtpField";
+import PhoneInput from "react-phone-input-2";
+import "react-phone-input-2/lib/style.css";
 
 // ---- utility functions ----
 function isVisible(field, form) {
@@ -67,7 +69,7 @@ export default function DynamicRegistrationForm({
     }
     fetchCfg();
     return () => (mounted = false);
-  }, [config, apiBase, registrationType]);
+  }, [config, apiBase, propRegistrationType]);
 
   // --- Email field config lookup (always from config, NOT visible fields!)
   const effectiveConfig = localConfig || { fields: [] };

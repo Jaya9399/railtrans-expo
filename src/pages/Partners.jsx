@@ -17,7 +17,7 @@ function getApiBaseFromEnvOrWindow() {
     process.env &&
     process.env.REACT_APP_API_BASE
   )
-    return process.env. REACT_APP_API_BASE. replace(/\/$/, "");
+    return process.env.REACT_APP_API_BASE.replace(/\/$/, "");
   if (
     typeof process !== "undefined" &&
     process.env &&
@@ -46,7 +46,7 @@ function apiUrl(path) {
   if (! path) return API_BASE;
   if (/^https?:\/\//i.test(path)) return path;
   const p = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE. replace(/\/$/, "")}${p}`;
+  return `${API_BASE.replace(/\/$/,"")}${p}`;
 }
 
 function normalizeAdminUrl(url) {
@@ -490,6 +490,7 @@ export default function Partners() {
                   setForm={setForm}
                   onSubmit={handleFormSubmit}
                   editable={true}
+                  registrationType="partner"
                   saving={saving}
                   terms={
                     config && (config.termsUrl || config.termsText)
@@ -535,14 +536,18 @@ export default function Partners() {
       config?.backgroundMedia?.type === "video" &&
       config?.backgroundMedia?.url ? (
         <video
-          src={config.backgroundMedia.url}
-          autoPlay
-          muted
-          loop
-          playsInline
-          className="fixed inset-0 w-full h-full object-cover"
-          onError={(e) => console.error("Video error", e)}
-        />
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        className="fixed inset-0 w-full h-full object-cover"
+        onError={(e) => console.error("Video error", e)}
+      >
+        <source src={config.backgroundMedia.url} type="video/mp4" />
+        Your browser does not support the video tag.
+      </video>
+      
       ) : config?.backgroundMedia?.type === "image" &&
         config?.backgroundMedia?.url ? (
         <div

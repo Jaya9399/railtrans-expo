@@ -47,7 +47,7 @@ function normalizeAdminUrl(url) {
             (parsed.search || "")
           );
         }
-      } catch {}
+      } catch { }
       return t.replace(/^http:/i, "https:");
     }
     return t;
@@ -61,8 +61,8 @@ async function scheduleReminderClient(entityId) {
   if (!entityId) return { ok: false, error: "missing entityId" };
   try {
     const payload = {
-      entity:  "visitors",
-      entityId:  String(entityId),
+      entity: "visitors",
+      entityId: String(entityId),
       scheduleDays: [7, 3, 1, 0],
     };
     const res = await fetch(`${API_BASE}/api/reminders/scheduled`, {
@@ -71,13 +71,13 @@ async function scheduleReminderClient(entityId) {
         "Content-Type": "application/json",
         "ngrok-skip-browser-warning": "69420",
       },
-      body:  JSON.stringify(payload),
+      body: JSON.stringify(payload),
     });
     const txt = await res.text().catch(() => null);
     let js = null;
     try {
       js = txt ? JSON.parse(txt) : null;
-    } catch {}
+    } catch { }
     if (!res.ok) {
       return { ok: false, status: res.status, body: js || txt };
     }
@@ -118,7 +118,7 @@ export default function Visitors() {
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!! mq.matches);
+    const onChange = () => setIsMobile(!!mq.matches);
     onChange();
     mq.addEventListener
       ? mq.addEventListener("change", onChange)
@@ -170,7 +170,7 @@ export default function Visitors() {
           setCanonicalEvent(normalizeEvent(js2 || {}));
           return;
         }
-      } catch {}
+      } catch { }
       setCanonicalEvent(null);
     } catch (e) {
       console.warn("[Visitors] fetchCanonicalEvent failed", e);
@@ -207,16 +207,16 @@ export default function Visitors() {
         normalized.termsUrl = normalizeAdminUrl(normalized.termsUrl);
       normalized.fields = Array.isArray(normalized.fields)
         ? normalized.fields.map((f) => {
-            if (!f || !f.name) return f;
-            const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
-            const isEmailField = f.type === "email" || /email/.test(nameLabel);
-            if (isEmailField) {
-              const fm = Object.assign({}, f.meta || {});
-              if (fm.useOtp === undefined) fm.useOtp = true;
-              return { ...f, meta: fm };
-            }
-            return f;
-          })
+          if (!f || !f.name) return f;
+          const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
+          const isEmailField = f.type === "email" || /email/.test(nameLabel);
+          if (isEmailField) {
+            const fm = Object.assign({}, f.meta || {});
+            if (fm.useOtp === undefined) fm.useOtp = true;
+            return { ...f, meta: fm };
+          }
+          return f;
+        })
         : [];
       setConfig(normalized);
     } catch (e) {
@@ -241,9 +241,9 @@ export default function Visitors() {
     };
     window.addEventListener("visitor-config-updated", onCfg);
     window.addEventListener("config-updated", (e) => {
-      const key = e && e.detail && e.detail.key ?  e.detail.key : null;
-      if (! key || key === "event-details")
-        fetchCanonicalEvent().catch(() => {});
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details")
+        fetchCanonicalEvent().catch(() => { });
     });
     window.addEventListener("event-details-updated", fetchCanonicalEvent);
 
@@ -270,7 +270,7 @@ export default function Visitors() {
   const saveVisitor = useCallback(
     async (nextForm) => {
       const payload = {
-        name: 
+        name:
           nextForm.name ||
           `${nextForm.firstName || ""} ${nextForm.lastName || ""}`.trim() ||
           "",
@@ -278,7 +278,7 @@ export default function Visitors() {
         mobile: nextForm.mobile || nextForm.phone || nextForm.contact || "",
         designation: nextForm.designation || "",
         company_type: nextForm.company_type || nextForm.companyType || null,
-        company:  nextForm.company || nextForm.organization || null,
+        company: nextForm.company || nextForm.organization || null,
         other_details: nextForm.other_details || nextForm.otherDetails || "",
         purpose: nextForm.purpose || "",
         ticket_category: ticketCategory || null,
@@ -315,8 +315,8 @@ export default function Visitors() {
           const existed = ! !(json && (json.existed || json.existing));
           return {
             ok: true,
-            id:  id ?  String(id) : null,
-            raw:  json || null,
+            id: id ? String(id) : null,
+            raw: json || null,
             existed,
           };
         }
@@ -347,7 +347,7 @@ export default function Visitors() {
     async (value, meta = {}) => {
       setError("");
       setTicketCategory(value);
-      setTicketMeta(meta || { price: 0, gstAmount:  0, total: 0, label: "" });
+      setTicketMeta(meta || { price: 0, gstAmount: 0, total: 0, label: "" });
       setStep(3);
     },
     []
@@ -374,13 +374,13 @@ export default function Visitors() {
       if (config?.termsRequired && !form?.termsAccepted) {
         setError(
           config?.termsRequiredMessage ||
-            "You must accept the terms and conditions to complete registration."
+          "You must accept the terms and conditions to complete registration."
         );
         setProcessing(false);
         submittingRef.current = false;
         return;
       }
-      
+
       const finalEmail = (form?.email || "").trim();
       if (!finalEmail) {
         setError("Email is required");
@@ -388,7 +388,7 @@ export default function Visitors() {
         submittingRef.current = false;
         return;
       }
-      
+
       // Basic email format validation
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(finalEmail)) {
@@ -471,7 +471,7 @@ export default function Visitors() {
       <div className="min-h-screen w-full bg-white flex items-start justify-center p-4">
         <div className="w-full max-w-md">
           <Topbar />
-          
+
           {/* Step 1: Registration Form */}
           {!loading && step === 1 && Array.isArray(config?.fields) ? (
             <>
@@ -481,6 +481,7 @@ export default function Visitors() {
                   form={form}
                   setForm={setForm}
                   onSubmit={handleFormSubmit}
+                  registrationType="visitor"
                   editable
                   terms={{
                     url: config?.termsUrl,
@@ -495,7 +496,7 @@ export default function Visitors() {
           ) : loading ? (
             <div className="text-center py-8">Loading...</div>
           ) : null}
-          
+
           {/* Step 2: Ticket Category Selection */}
           {!loading && step === 2 && (
             <TicketCategorySelector
@@ -510,7 +511,7 @@ export default function Visitors() {
               }}
             />
           )}
-          
+
           {/* Step 3: Payment (if paid ticket) */}
           {step === 3 &&
             !/free|general|0/i.test(String(ticketCategory || "")) &&
@@ -525,7 +526,7 @@ export default function Visitors() {
                 setProofFile={setProofFile}
               />
             )}
-          
+
           {/* Step 3: Processing */}
           {step === 3 && processing && (
             <ProcessingCard
@@ -534,7 +535,7 @@ export default function Visitors() {
               note="If you paid in another tab, we will detect and continue automatically."
             />
           )}
-          
+
           {/* Step 4: Thank You */}
           {step === 4 && (
             <div className="mt-4">
@@ -573,20 +574,30 @@ export default function Visitors() {
       className="min-h-screen w-full relative"
       style={{ backgroundSize: "cover", backgroundPosition: "center" }}
     >
-      {! isMobile && videoUrl && (
+      {!isMobile && videoUrl && (
         <video
           key={videoUrl}
+          ref={videoRef}
           autoPlay
           muted
           loop
           playsInline
-          preload="auto"
+          preload="metadata"
+          onCanPlay={() => {
+            setBgVideoReady(true);
+            setBgVideoErrorMsg("");
+          }}
+          onError={(e) => {
+            console.error("Background video failed to load", e);
+            setBgVideoErrorMsg("Background video failed to load");
+          }}
           className="fixed inset-0 w-full h-full object-cover -z-10"
         >
           <source src={videoUrl} type="video/mp4" />
         </video>
+
       )}
-      {!isMobile && (! videoUrl || !bgVideoReady) && bgImageUrl && (
+      {!isMobile && (!videoUrl || !bgVideoReady) && bgImageUrl && (
         <div
           className="fixed inset-0 -z-10"
           style={{
@@ -618,13 +629,13 @@ export default function Visitors() {
             style={{ minHeight: 370 }}
           >
             <div className="sm:w-[60%] w-full flex items-center justify-center">
-              {loading ?  (
+              {loading ? (
                 <div className="text-[#21809b] text-2xl font-bold">
                   Loading...
                 </div>
               ) : (
                 <div className="rounded-3xl overflow-hidden shadow-2xl h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] bg-white/75 flex items-center justify-center">
-                  {config?.images?.length ?  (
+                  {config?.images?.length ? (
                     <img
                       src={normalizeAdminUrl(config.images[0])}
                       alt="banner"
@@ -639,7 +650,7 @@ export default function Visitors() {
                 <div
                   className="font-extrabold text-3xl sm:text-5xl mb-3 text-center"
                   style={{
-                    background: 
+                    background:
                       "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)",
                     WebkitBackgroundClip: "text",
                     WebkitTextFillColor: "transparent",
@@ -662,7 +673,7 @@ export default function Visitors() {
                     "Event Venue"}
                 </div>
                 {(canonicalEvent && canonicalEvent.time) ||
-                (config?.eventDetails && config.eventDetails.time) ? (
+                  (config?.eventDetails && config.eventDetails.time) ? (
                   <div className="text-sm mt-2 text-center text-gray-700">
                     {(canonicalEvent && canonicalEvent.time) ||
                       (config?.eventDetails && config.eventDetails.time)}
@@ -749,7 +760,7 @@ export default function Visitors() {
             </>
           )}
 
-          {! isMobile && bgVideoErrorMsg && (
+          {!isMobile && bgVideoErrorMsg && (
             <div className="mt-4 p-3 bg-yellow-50 text-yellow-800 rounded text-sm max-w-3xl mx-auto">
               Background video not playing:  {String(bgVideoErrorMsg)}. Check
               console for details.

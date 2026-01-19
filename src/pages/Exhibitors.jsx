@@ -21,7 +21,7 @@ function getApiBaseFromEnvOrWindow() {
     process.env &&
     process.env.REACT_APP_API_BASE
   ) {
-    return process. env.REACT_APP_API_BASE. replace(/\/$/, "");
+    return process.env.REACT_APP_API_BASE.replace(/\/$/, "");
   }
   if (typeof window !== "undefined" && window.__API_BASE__) {
     return String(window.__API_BASE__).replace(/\/$/, "");
@@ -35,8 +35,8 @@ function getApiBaseFromEnvOrWindow() {
   }
   if (
     typeof window !== "undefined" &&
-    window. location &&
-    window.location. origin
+    window.location &&
+    window.location.origin
   ) {
     return window.location.origin.replace(/\/$/, "");
   }
@@ -44,14 +44,14 @@ function getApiBaseFromEnvOrWindow() {
 }
 function apiUrl(path) {
   const base = getApiBaseFromEnvOrWindow();
-  if (! path) return base;
+  if (!path) return base;
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  return `${base. replace(/\/$/, "")}/${path. replace(/^\//, "")}`;
+  return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }
 function normalizeAdminUrl(url) {
   if (!url) return "";
   const trimmed = String(url).trim();
-  if (! trimmed) return "";
+  if (!trimmed) return "";
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   if (trimmed.startsWith("//")) return window.location.protocol + trimmed;
   if (trimmed.startsWith("/")) return apiUrl(trimmed);
@@ -62,14 +62,14 @@ function normalizeAdminUrl(url) {
 function ImageSlider({ images = [] }) {
   const [active, setActive] = useState(0);
   useEffect(() => {
-    if (! images || images.length === 0) return;
+    if (!images || images.length === 0) return;
     const t = setInterval(
       () => setActive((p) => (p + 1) % images.length),
       3500
     );
     return () => clearInterval(t);
   }, [images]);
-  if (! images || images.length === 0) return null;
+  if (!images || images.length === 0) return null;
   return (
     <div className="flex flex-col items-center justify-center w-full h-full">
       <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center mt-6 sm:mt-10">
@@ -108,10 +108,10 @@ function EventDetailsBlock({ event }) {
         style={{
           background: logoGradient,
           WebkitBackgroundClip: "text",
-          WebkitTextFillColor:  "transparent",
+          WebkitTextFillColor: "transparent",
         }}
       >
-        {event?. name || "Event Name"}
+        {event?.name || "Event Name"}
       </div>
       <div
         className="text-xl sm:text-2xl font-bold mb-1 text-center"
@@ -127,7 +127,7 @@ function EventDetailsBlock({ event }) {
       </div>
       {event?.tagline && (
         <div className="text-base sm:text-xl font-semibold text-center text-[#21809b] mt-2">
-          {event. tagline}
+          {event.tagline}
         </div>
       )}
     </div>
@@ -158,7 +158,7 @@ function findFieldValue(obj = {}, candidates = []) {
       .replace(/[^a-z0-9]/gi, "")
       .toLowerCase();
     for (const cand of normCandidates) {
-      if (kn. includes(cand) || cand.includes(kn)) {
+      if (kn.includes(cand) || cand.includes(kn)) {
         const v = obj[k];
         if (v !== undefined && v !== null && String(v).trim() !== "")
           return String(v).trim();
@@ -170,7 +170,7 @@ function findFieldValue(obj = {}, candidates = []) {
       .replace(/[^a-z0-9]/gi, "")
       .toLowerCase();
     if (
-      kn. includes("company") ||
+      kn.includes("company") ||
       kn.includes("organization") ||
       kn.includes("org")
     ) {
@@ -199,7 +199,7 @@ async function saveExhibitorApi(payload) {
   } catch {
     json = { raw: txt };
   }
-  if (! res.ok) {
+  if (!res.ok) {
     const errMsg =
       (json && (json.message || json.error)) || `Save failed (${res.status})`;
     throw new Error(errMsg);
@@ -273,12 +273,12 @@ const DEFAULT_EXHIBITOR_FIELDS = [
     label: "Company / Organization",
     type: "text",
     required: false,
-    visible:  true,
+    visible: true,
   },
   {
     name: "stall_size",
     label: "Stall / Booth Size",
-    type:  "select",
+    type: "select",
     options: ["3x3", "3x6", "6x6", "Custom"],
     required: false,
     visible: true,
@@ -308,7 +308,7 @@ export default function Exhibitors() {
   // Mobile detection
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!! mq.matches);
+    const onChange = () => setIsMobile(!!mq.matches);
     onChange();
     mq.addEventListener
       ? mq.addEventListener("change", onChange)
@@ -332,22 +332,22 @@ export default function Exhibitors() {
         },
       });
       const raw = r.ok ? await r.json().catch(() => ({})) : {};
-      const cfg = raw && raw.config ?  raw.config : raw;
+      const cfg = raw && raw.config ? raw.config : raw;
 
-      const normalized = {...(cfg || {}) };
+      const normalized = { ...(cfg || {}) };
 
-      normalized.fields = Array.isArray(normalized. fields)
+      normalized.fields = Array.isArray(normalized.fields)
         ? normalized.fields
         : [];
 
       try {
         const existing = new Set(
-          normalized.fields.map((f) => (f && f.name ? f.name :  ""))
+          normalized.fields.map((f) => (f && f.name ? f.name : ""))
         );
-        DEFAULT_EXHIBITOR_FIELDS. forEach((def) => {
-          if (! existing.has(def.name)) normalized.fields.push(clone(def));
+        DEFAULT_EXHIBITOR_FIELDS.forEach((def) => {
+          if (!existing.has(def.name)) normalized.fields.push(clone(def));
         });
-      } catch (e) {}
+      } catch (e) { }
 
       if (normalized.backgroundMedia && normalized.backgroundMedia.url) {
         normalized.backgroundMedia = {
@@ -365,7 +365,7 @@ export default function Exhibitors() {
             typeof candidate === "string" &&
             /\.(mp4|webm|ogg)(\?|$)/i.test(candidate);
           normalized.backgroundMedia = {
-            type: isVideo ? "video" :  "image",
+            type: isVideo ? "video" : "image",
             url: normalizeAdminUrl(candidate),
           };
         } else {
@@ -374,21 +374,21 @@ export default function Exhibitors() {
       }
 
       if (normalized.termsUrl)
-        normalized.termsUrl = normalizeAdminUrl(normalized. termsUrl);
-      normalized.images = Array.isArray(normalized. images)
-        ? normalized.images. map(normalizeAdminUrl)
+        normalized.termsUrl = normalizeAdminUrl(normalized.termsUrl);
+      normalized.images = Array.isArray(normalized.images)
+        ? normalized.images.map(normalizeAdminUrl)
         : [];
       normalized.eventDetails =
         typeof normalized.eventDetails === "object" && normalized.eventDetails
-          ? normalized. eventDetails
+          ? normalized.eventDetails
           : {};
 
       normalized.fields = normalized.fields.map((f) => {
-        if (! f || !f.name) return f;
+        if (!f || !f.name) return f;
         const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
-        const isEmailField = f.type === "email" || /email/. test(nameLabel);
+        const isEmailField = f.type === "email" || /email/.test(nameLabel);
         if (isEmailField) {
-          const fm = Object.assign({}, f. meta || {});
+          const fm = Object.assign({}, f.meta || {});
           if (fm.useOtp === undefined) fm.useOtp = true;
           return { ...f, meta: fm };
         }
@@ -399,7 +399,7 @@ export default function Exhibitors() {
     } catch (e) {
       console.error("[Exhibitors] fetchConfig error:", e);
       setConfig({
-        fields: DEFAULT_EXHIBITOR_FIELDS. slice(),
+        fields: DEFAULT_EXHIBITOR_FIELDS.slice(),
         images: [],
         backgroundMedia: { type: "image", url: "" },
         eventDetails: {},
@@ -413,7 +413,7 @@ export default function Exhibitors() {
   const fetchCanonicalEvent = async () => {
     try {
       const url = apiUrl("/api/configs/event-details");
-      const r = await fetch(`${url}?cb=${Date. now()}`, {
+      const r = await fetch(`${url}?cb=${Date.now()}`, {
         cache: "no-store",
         headers: {
           Accept: "application/json",
@@ -467,11 +467,11 @@ export default function Exhibitors() {
       fetchCanonicalEvent();
     };
     const onConfigUpdated = (e) => {
-      const key = e && e.detail && e.detail.key ?  e.detail.key : null;
-      if (! key || key === "event-details")
-        fetchCanonicalEvent().catch(() => {});
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details")
+        fetchCanonicalEvent().catch(() => { });
     };
-    window. addEventListener("exhibitor-config-updated", onCfg);
+    window.addEventListener("exhibitor-config-updated", onCfg);
     window.addEventListener("config-updated", onConfigUpdated);
     window.addEventListener("event-details-updated", fetchCanonicalEvent);
     return () => {
@@ -484,7 +484,7 @@ export default function Exhibitors() {
   async function handleFormSubmit(formData) {
     setError("");
     setForm(formData || {});
-    await saveStep("registration_attempt", { form: formData }).catch(() => {});
+    await saveStep("registration_attempt", { form: formData }).catch(() => { });
     await finalizeSave();
   }
 
@@ -524,8 +524,8 @@ export default function Exhibitors() {
       const json = await saveExhibitorApi(payload);
       if (json?.insertedId) {
         setSavedId(json.insertedId);
-        scheduleReminder(json.insertedId, config?. eventDetails?.date).catch(
-          () => {}
+        scheduleReminder(json.insertedId, config?.eventDetails?.date).catch(
+          () => { }
         );
       }
 
@@ -533,7 +533,7 @@ export default function Exhibitors() {
         "registration",
         { form },
         { insertedId: json?.insertedId || null }
-      ).catch(() => {});
+      ).catch(() => { });
       setStep(4);
     } catch (err) {
       console.error("[Exhibitors] finalize save error:", err);
@@ -563,8 +563,8 @@ export default function Exhibitors() {
       <div className="min-h-screen w-full bg-white flex items-start justify-center p-4">
         <div className="w-full max-w-md">
           <Topbar />
-          
-          {! loading && step === 1 && Array.isArray(config?.fields) ?  (
+
+          {!loading && step === 1 && Array.isArray(config?.fields) ? (
             <>
               <div className="mt-4">
                 <h2 className="text-xl font-bold text-[#21809b] mb-4 text-center">
@@ -577,8 +577,9 @@ export default function Exhibitors() {
                   onSubmit={handleFormSubmit}
                   editable
                   apiBase={apiBase}
+                  registrationType="exhibitor"
                   terms={{
-                    url: config?. termsUrl,
+                    url: config?.termsUrl,
                     label: config?.termsLabel || "Terms & Conditions",
                     required: !!config?.termsRequired,
                   }}
@@ -612,17 +613,21 @@ export default function Exhibitors() {
   /* ---------- DESKTOP RENDER ---------- */
   return (
     <div className="min-h-screen w-full relative">
-      {config?. backgroundMedia?. type === "video" &&
-      config?.backgroundMedia?.url ? (
+      {config?.backgroundMedia?.type === "video" &&
+        config?.backgroundMedia?.url ? (
         <video
-          src={config.backgroundMedia.url}
           autoPlay
           muted
           loop
           playsInline
+          webkit-playsinline="true"
+          preload="metadata"
           className="fixed inset-0 w-full h-full object-cover"
           onError={(e) => console.error("Video error", e)}
-        />
+        >
+          <source src={config.backgroundMedia.url} type="video/mp4" />
+          Your browser does not support the video tag.
+        </video>
       ) : config?.backgroundMedia?.type === "image" &&
         config?.backgroundMedia?.url ? (
         <div
@@ -634,6 +639,7 @@ export default function Exhibitors() {
           }}
         />
       ) : null}
+
 
       <div
         className="absolute inset-0 bg-white/50 pointer-events-none"
@@ -648,12 +654,12 @@ export default function Exhibitors() {
             style={{ minHeight: 370 }}
           >
             <div className="sm:w-[60%] w-full flex items-center justify-center">
-              {loading ?  (
+              {loading ? (
                 <div className="text-[#21809b] text-2xl font-bold">
                   Loading...
                 </div>
               ) : (
-                <ImageSlider images={config?. images || []} />
+                <ImageSlider images={config?.images || []} />
               )}
             </div>
             <div className="sm:w-[40%] w-full flex items-center justify-center">
@@ -671,7 +677,7 @@ export default function Exhibitors() {
 
           <SectionTitle />
 
-          {! loading && step === 1 && (
+          {!loading && step === 1 && (
             <div className="mx-auto w-full max-w-2xl">
               <DynamicRegistrationForm
                 config={config}
