@@ -13,14 +13,6 @@ const API_BASE = (
   ""
 ).replace(/\/$/, "");
 
-const FRONTEND_BASE = (
-  process.env.REACT_APP_FRONTEND_BASE ||
-  process.env.FRONTEND_BASE ||
-  window.__FRONTEND_BASE__ ||
-  (typeof window !== "undefined" && window.location
-    ? window.location.origin
-    : "")
-).replace(/\/$/, "");
 
 /* ---------- small helpers ---------- */
 
@@ -28,33 +20,16 @@ function normalizeAdminUrl(url) {
   if (!url) return "";
   const t = String(url).trim();
   if (!t) return "";
-  if (/^https?:\/\//i.test(t)) {
-    if (
-      /^http: \/\//i.test(t) &&
-      typeof window !== "undefined" &&
-      window.location &&
-      window.location.protocol === "https:"
-    ) {
-      try {
-        const parsed = new URL(t);
-        if (
-          parsed.hostname === "localhost" ||
-          parsed.hostname === "127.0.0.1"
-        ) {
-          return (
-            FRONTEND_BASE.replace(/\/$/, "") +
-            parsed.pathname +
-            (parsed.search || "")
-          );
-        }
-      } catch { }
-      return t.replace(/^http:/i, "https:");
-    }
-    return t;
-  }
-  if (t.startsWith("/")) return FRONTEND_BASE.replace(/\/$/, "") + t;
-  return FRONTEND_BASE.replace(/\/$/, "") + "/" + t.replace(/^\//, "");
+
+  // absolute URLs → trust
+  if (/^https?:\/\//i.test(t)) return t;
+
+  // relative paths MUST point to BACKEND
+  const base = API_BASE.replace(/\/$/, "");
+  if (t.startsWith("/")) return `${base}${t}`;
+  return `${base}/${t}`;
 }
+
 
 /* ---------- reminder helper ---------- */
 async function scheduleReminderClient(entityId) {
@@ -129,6 +104,8 @@ export default function Visitors() {
         : mq.removeListener(onChange);
     };
   }, []);
+
+
 
   const normalizeEvent = (raw = {}) => ({
     name: raw.name || raw.eventName || raw.title || "",
@@ -560,14 +537,24 @@ export default function Visitors() {
     );
   }
 
-  const bgImageUrl =
-    config?.backgroundMedia?.type !== "video" && config?.backgroundMedia?.url
-      ? normalizeAdminUrl(config.backgroundMedia.url)
-      : null;
   const videoUrl =
-    config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url
-      ? normalizeAdminUrl(config.backgroundMedia.url)
+    config?.backgroundMedia?.type === "video"
+      ? config.backgroundMedia.url
       : null;
+
+  const bgImageUrl =
+    config?.backgroundMedia?.type !== "video"
+      ? config?.backgroundMedia?.url
+      : null;
+
+  useEffect(() => {
+    setBgVideoReady(false);
+    setBgVideoErrorMsg("");
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.load();
+    }
+  }, [videoUrl]);
 
   return (
     <div
@@ -576,7 +563,6 @@ export default function Visitors() {
     >
       {!isMobile && videoUrl && (
         <video
-          key={videoUrl}
           ref={videoRef}
           autoPlay
           muted
@@ -591,10 +577,10 @@ export default function Visitors() {
             console.error("Background video failed to load", e);
             setBgVideoErrorMsg("Background video failed to load");
           }}
-          className="fixed inset-0 w-full h-full object-cover -z-10"
         >
-          <source src={videoUrl} type="video/mp4" />
+          <source src={videoUrl} />
         </video>
+
 
       )}
       {!isMobile && (!videoUrl || !bgVideoReady) && bgImageUrl && (

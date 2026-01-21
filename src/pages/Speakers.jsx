@@ -10,32 +10,43 @@ import ThankYouMessage from "../components/ThankYouMessage";
 */
 
 function getApiBaseFromEnvOrWindow() {
-  if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE)
-    return process.env. REACT_APP_API_BASE. replace(/\/$/, "");
-  if (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE_URL)
-    return process.env. REACT_APP_API_BASE_URL. replace(/\/$/, "");
-  if (typeof window !== "undefined" && window.__API_BASE__) return String(window.__API_BASE__).replace(/\/$/, "");
-  if (typeof window !== "undefined" && window.__FRONTEND_BASE__) return String(window.__FRONTEND_BASE__).replace(/\/$/, "");
-  if (typeof window !== "undefined" && window. location && window.location.origin) return window.location.origin. replace(/\/$/, "");
+  if (typeof process !== "undefined" && process.env?.REACT_APP_API_BASE)
+    return String(process.env.REACT_APP_API_BASE).replace(/\/$/, "");
+
+  if (typeof process !== "undefined" && process.env?.REACT_APP_API_BASE_URL)
+    return String(process.env.REACT_APP_API_BASE_URL).replace(/\/$/, "");
+
+  if (typeof window !== "undefined" && window.__API_BASE__)
+    return String(window.__API_BASE__).replace(/\/$/, "");
+
+  if (typeof window !== "undefined" && window.location?.origin)
+    return window.location.origin.replace(/\/$/, "");
+
   return "";
 }
+
 
 function apiUrl(path) {
   const base = getApiBaseFromEnvOrWindow();
   if (!path) return base;
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
-  return `${base.replace(/\/$/, "")}/${path. replace(/^\//, "")}`;
+  return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }
 
 function normalizeAdminUrl(url) {
-  if (! url) return "";
-  const trimmed = String(url).trim();
-  if (! trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (trimmed.startsWith("//")) return (typeof window !== "undefined" && window. location ?  window.location.protocol : "https:") + trimmed;
-  if (trimmed.startsWith("/")) return apiUrl(trimmed);
-  return apiUrl(trimmed);
+  if (!url) return "";
+  const t = String(url).trim();
+  if (!t) return "";
+
+  // absolute URLs → trust them
+  if (/^https?:\/\//i.test(t)) return t;
+
+  // relative → API base (NOT frontend base)
+  const base = getApiBaseFromEnvOrWindow();
+  if (t.startsWith("/")) return `${base}${t}`;
+  return `${base}/${t}`;
 }
+
 
 function isEmailLike(v) {
   return typeof v === "string" && /\S+@\S+\.\S+/.test(v);
@@ -48,14 +59,14 @@ async function scheduleReminder(entityId, eventDate) {
   try {
     const payload = {
       entity: "speakers",
-      entityId:  String(entityId),
+      entityId: String(entityId),
       scheduleDays: [7, 3, 1, 0],
     };
     const res = await fetch(apiUrl("/api/reminders/scheduled"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "ngrok-skip-browser-warning":  "69420",
+        "ngrok-skip-browser-warning": "69420",
       },
       body: JSON.stringify(payload),
     });
@@ -63,7 +74,7 @@ async function scheduleReminder(entityId, eventDate) {
     let js = null;
     try {
       js = txt ? JSON.parse(txt) : null;
-    } catch {}
+    } catch { }
     if (!res.ok) {
       return { ok: false, status: res.status, body: js || txt };
     }
@@ -81,12 +92,12 @@ function EventDetailsBlock({ event }) {
   const logoDark = "#196e87";
   return (
     <div className="flex flex-col items-center justify-center h-full w-full mt-6">
-      <div className="font-extrabold text-3xl sm:text-5xl mb-3 text-center" style={{ background: logoGradient, WebkitBackgroundClip:  "text", WebkitTextFillColor: "transparent" }}>
-        {event?. name || "Event Name"}
+      <div className="font-extrabold text-3xl sm:text-5xl mb-3 text-center" style={{ background: logoGradient, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+        {event?.name || "Event Name"}
       </div>
-      <div className="text-xl sm:text-2xl font-bold mb-1 text-center" style={{ color: logoBlue }}>{event?. date || "Event Date"}</div>
+      <div className="text-xl sm:text-2xl font-bold mb-1 text-center" style={{ color: logoBlue }}>{event?.date || "Event Date"}</div>
       <div className="text-base sm:text-xl font-semibold text-center" style={{ color: logoDark }}>{event?.venue || "Event Venue"}</div>
-      {event?.tagline && <div className="text-base sm:text-xl font-semibold text-center text-[#21809b] mt-2">{event. tagline}</div>}
+      {event?.tagline && <div className="text-base sm:text-xl font-semibold text-center text-[#21809b] mt-2">{event.tagline}</div>}
     </div>
   );
 }
@@ -94,14 +105,14 @@ function EventDetailsBlock({ event }) {
 function ImageSlider({ images = [], intervalMs = 3500 }) {
   const [active, setActive] = useState(0);
   useEffect(() => {
-    if (! images || images.length === 0) return;
+    if (!images || images.length === 0) return;
     const t = setInterval(() => setActive((p) => (p + 1) % images.length), intervalMs);
     return () => clearInterval(t);
   }, [images, intervalMs]);
-  if (! images || images.length === 0) return null;
+  if (!images || images.length === 0) return null;
   return (
     <div className="flex flex-col items-center justify-center w-full h-full">
-      <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm: h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center mt-6 sm:mt-10">
+      <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center mt-6 sm:mt-10">
         <img src={images[active]} alt={`Slide ${active + 1}`} className="object-cover w-full h-full" loading="lazy" />
       </div>
     </div>
@@ -162,7 +173,7 @@ export default function Speakers() {
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/speaker-config? cb=" + Date.now()), { cache: "no-store", headers:  { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+      const res = await fetch(apiUrl("/api/speaker-config? cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
       const cfg = res.ok ? await res.json().catch(() => ({})) : {};
       const normalized = { ...(cfg || {}) };
 
@@ -178,7 +189,7 @@ export default function Speakers() {
         }
       }
 
-      normalized.termsUrl = normalized.termsUrl ?  normalizeAdminUrl(normalized. termsUrl) : (normalized.terms || "");
+      normalized.termsUrl = normalized.termsUrl ? normalizeAdminUrl(normalized.termsUrl) : (normalized.terms || "");
       normalized.termsText = normalized.termsText || "";
       normalized.termsLabel = normalized.termsLabel || "Terms & Conditions";
       normalized.termsRequired = !!normalized.termsRequired;
@@ -186,28 +197,28 @@ export default function Speakers() {
 
       // remove auto-accept fields
       normalized.fields = normalized.fields.filter((f) => {
-        if (! f || typeof f !== "object") return false;
+        if (!f || typeof f !== "object") return false;
         const name = (f.name || "").toString().toLowerCase().replace(/\s+/g, "");
         const label = (f.label || "").toString().toLowerCase();
-        if (["accept_terms", "acceptterms", "i_agree", "agree"]. includes(name)) return false;
-        if (f.type === "checkbox" && (label. includes("i agree") || label.includes("accept the terms") || label.includes("terms & conditions") || label.includes("terms and conditions"))) return false;
+        if (["accept_terms", "acceptterms", "i_agree", "agree"].includes(name)) return false;
+        if (f.type === "checkbox" && (label.includes("i agree") || label.includes("accept the terms") || label.includes("terms & conditions") || label.includes("terms and conditions"))) return false;
         return true;
       });
 
-      normalized.fields = normalized.fields. map((f) => {
-        if (! f || ! f.name) return f;
+      normalized.fields = normalized.fields.map((f) => {
+        if (!f || !f.name) return f;
         const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
         const isEmailField = f.type === "email" || /email/.test(nameLabel);
         if (isEmailField) {
-          const fm = Object.assign({}, f. meta || {});
+          const fm = Object.assign({}, f.meta || {});
           if (fm.useOtp === undefined) fm.useOtp = true;
           return { ...f, meta: fm };
         }
         return f;
       });
 
-      normalized.images = Array.isArray(normalized. images) ? normalized.images. map(normalizeAdminUrl) : [];
-      normalized.eventDetails = typeof normalized.eventDetails === "object" && normalized.eventDetails ?  normalized.eventDetails : {};
+      normalized.images = Array.isArray(normalized.images) ? normalized.images.map(normalizeAdminUrl) : [];
+      normalized.eventDetails = typeof normalized.eventDetails === "object" && normalized.eventDetails ? normalized.eventDetails : {};
 
       setConfig(normalized);
     } catch (e) {
@@ -227,12 +238,11 @@ export default function Speakers() {
       fetchCanonicalEvent();
     };
     const onConfigUpdated = (e) => {
-      const key = e && e.detail && e.detail.key ?  e.detail.key : null;
-      if (! key || key === "event-details") fetchCanonicalEvent().catch(() => {});
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details") fetchCanonicalEvent().catch(() => { });
     };
 
     window.addEventListener("speaker-config-updated", onCfg);
-    window.addEventListener("visitor-config-updated", onCfg);
     window.addEventListener("config-updated", onConfigUpdated);
     window.addEventListener("event-details-updated", fetchCanonicalEvent);
 
@@ -247,7 +257,7 @@ export default function Speakers() {
   // Mobile detection
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!! mq.matches);
+    const onChange = () => setIsMobile(!!mq.matches);
     onChange();
     if (mq.addEventListener) mq.addEventListener("change", onChange);
     else mq.addListener(onChange);
@@ -256,66 +266,7 @@ export default function Speakers() {
       else mq.removeListener(onChange);
     };
   }, []);
-
-  // background video autoplay best-effort
-  useEffect(() => {
-    if (isMobile) return;
-    const v = videoRef.current;
-    if (!v || !config?.backgroundMedia?. url || config.backgroundMedia.type !== "video") return;
-    let mounted = true;
-    let attemptId = 0;
-    const prevSrc = { src: v.src || "" };
-    async function tryPlay() {
-      const myId = ++attemptId;
-      try {
-        const currentSrc = v.currentSrc || v.src || "";
-        if (prevSrc.src !== currentSrc) {
-          try {
-            v.load();
-          } catch {}
-          prevSrc.src = currentSrc;
-        }
-        await new Promise((resolve, reject) => {
-          if (! mounted) return reject(new Error("unmounted"));
-          if (v.readyState >= 3) return resolve();
-          const onCan = () => {
-            cleanup();
-            resolve();
-          };
-          const onErr = () => {
-            cleanup();
-            reject(new Error("media error"));
-          };
-          const timer = setTimeout(() => {
-            cleanup();
-            resolve();
-          }, 3000);
-          function cleanup() {
-            clearTimeout(timer);
-            v.removeEventListener("canplay", onCan);
-            v.removeEventListener("error", onErr);
-          }
-          v.addEventListener("canplay", onCan);
-          v.addEventListener("error", onErr);
-        });
-        if (! mounted || myId !== attemptId) return;
-        await v.play();
-      } catch (err) {}
-    }
-    const onCan = () => tryPlay();
-    const onErr = () => {};
-    v.addEventListener("canplay", onCan);
-    v.addEventListener("error", onErr);
-    tryPlay();
-    return () => {
-      mounted = false;
-      attemptId++;
-      try {
-        v.removeEventListener("canplay", onCan);
-        v.removeEventListener("error", onErr);
-      } catch {}
-    };
-  }, [config?. backgroundMedia?.url, isMobile]);
+  
 
   /* Handle form submit:  validate and save immediately.  Backend sends confirmation email.  */
   async function handleFormSubmit(payload) {
@@ -346,7 +297,7 @@ export default function Speakers() {
       const name = formData.name || `${formData.firstName || ""} ${formData.lastName || ""}`.trim() || "Speaker";
 
       const payload = {
-        ... formData,
+        ...formData,
         name,
         termsAccepted: !!formData.termsAccepted,
         _rawForm: formData,
@@ -365,7 +316,7 @@ export default function Speakers() {
         setProcessing(false);
         return;
       }
-      const insertedId = js. insertedId || js.insertId || js.id || null;
+      const insertedId = js.insertedId || js.insertId || js.id || null;
       if (insertedId) setSpeakerId(insertedId);
 
       const savedSpeaker = { ...payload, id: insertedId };
@@ -407,14 +358,14 @@ export default function Speakers() {
         <div className="w-full max-w-md">
           <Topbar />
 
-          {! loading && !submissionComplete && Array.isArray(config?.fields) ?  (
+          {!loading && !submissionComplete && Array.isArray(config?.fields) ? (
             <>
               <div className="mt-4">
                 <h2 className="text-xl font-bold text-[#21809b] mb-4 text-center">
                   Speaker Registration
                 </h2>
                 <DynamicRegistrationForm
-                  config={{ ... config, fields: config.fields || [] }}
+                  config={{ ...config, fields: config.fields || [] }}
                   form={form}
                   setForm={setForm}
                   onSubmit={handleFormSubmit}
@@ -438,7 +389,7 @@ export default function Speakers() {
           {submissionComplete && (
             <div className="mt-4">
               <ThankYouMessage
-                email={speaker?.email || form. email}
+                email={speaker?.email || form.email}
                 messageOverride="Thank you for registering as a speaker. We have received your details and our team will contact you shortly."
               />
             </div>
@@ -457,22 +408,23 @@ export default function Speakers() {
   /* ---------- DESKTOP RENDER ---------- */
   return (
     <div className="min-h-screen w-full relative">
-      {! isMobile && config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url && (
-       <video
-       ref={videoRef}
-       autoPlay
-       muted
-       loop
-       playsInline
-       preload="metadata"
-       className="fixed inset-0 w-full h-full object-cover"
-       onError={(e) => console.error("Video error", e)}
-     >
-       <source src={config.backgroundMedia.url} type="video/mp4" />
-     </video>
-     
+      {!isMobile && config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url && (
+        <video
+        ref={videoRef}
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        className="fixed inset-0 w-full h-full object-cover"
+        onError={(e) => console.error("Video error", e)}
+      >
+        <source src={config.backgroundMedia.url} type="video/mp4" />
+      </video>
+      
+
       )}
-      {(! config?.backgroundColor) && config?.backgroundMedia?.type === "image" && config?.backgroundMedia?.url && (
+      {(!config?.backgroundColor) && config?.backgroundMedia?.type === "image" && config?.backgroundMedia?.url && (
         <div style={{ position: "fixed", inset: 0, zIndex: -999, backgroundImage: `url(${config.backgroundMedia.url})`, backgroundSize: "cover", backgroundPosition: "center" }} />
       )}
       <div style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.55)", zIndex: -900 }} />
@@ -484,11 +436,11 @@ export default function Speakers() {
             <div className="sm:w-[60%] w-full flex items-center justify-center">
               {loading ? (
                 <span className="text-[#21809b] text-2xl font-bold">Loading images...</span>
-              ) : config?.images && config.images.length ?  (
+              ) : config?.images && config.images.length ? (
                 <ImageSlider images={config.images} intervalMs={4000} />
               ) : (
                 <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex flex-col items-center justify-center mt-6 sm:mt-10 p-4">
-                  <img src={(config?. images && config.images[0]) || "/images/speaker_placeholder.jpg"} alt="hero" className="object-cover w-full h-full" style={{ maxHeight: 220 }} />
+                  <img src={(config?.images && config.images[0]) || "/images/speaker_placeholder.jpg"} alt="hero" className="object-cover w-full h-full" style={{ maxHeight: 220 }} />
                 </div>
               )}
             </div>
@@ -498,7 +450,7 @@ export default function Speakers() {
                 <span className="text-[#21809b] text-xl font-semibold">Loading event details...</span>
               ) : (
                 <div className="w-full px-4">
-                  <EventDetailsBlock event={canonicalEvent || config?. eventDetails || null} />
+                  <EventDetailsBlock event={canonicalEvent || config?.eventDetails || null} />
                 </div>
               )}
             </div>
@@ -513,7 +465,7 @@ export default function Speakers() {
           </div>
 
           {/* Registration Form */}
-          {!submissionComplete && ! loading && Array.isArray(config?.fields) && (
+          {!submissionComplete && !loading && Array.isArray(config?.fields) && (
             <div className="max-w-3xl mx-auto">
               <DynamicRegistrationForm
                 config={{ ...config, fields: config.fields || [] }}
@@ -526,7 +478,7 @@ export default function Speakers() {
                   url: config.termsUrl,
                   text: config.termsText,
                   label: config.termsLabel || "Terms & Conditions",
-                  required: !! config.termsRequired
+                  required: !!config.termsRequired
                 } : null}
               />
             </div>
@@ -539,7 +491,7 @@ export default function Speakers() {
             </div>
           )}
 
-          {! isMobile && config?.backgroundMedia?.type === "video" && ! loading && (
+          {!isMobile && config?.backgroundMedia?.type === "video" && !loading && (
             <div className="mt-4 p-3 text-sm text-gray-600">Background video active</div>
           )}
           {error && (
@@ -547,7 +499,7 @@ export default function Speakers() {
           )}
 
           <footer className="mt-12 text-center text-[#21809b] font-semibold py-6">
-            © {new Date().getFullYear()} {(canonicalEvent && canonicalEvent.name) || config?.eventDetails?.name || "RailTrans Expo"} | All rights reserved. 
+            © {new Date().getFullYear()} {(canonicalEvent && canonicalEvent.name) || config?.eventDetails?.name || "RailTrans Expo"} | All rights reserved.
           </footer>
         </div>
       </div>

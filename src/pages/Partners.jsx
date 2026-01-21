@@ -12,116 +12,44 @@ import ThankYouMessage from "../components/ThankYouMessage";
 */
 
 function getApiBaseFromEnvOrWindow() {
-  if (
-    typeof process !== "undefined" &&
-    process.env &&
-    process.env.REACT_APP_API_BASE
-  )
-    return process.env.REACT_APP_API_BASE.replace(/\/$/, "");
-  if (
-    typeof process !== "undefined" &&
-    process.env &&
-    process.env.REACT_APP_API_BASE_URL
-  )
-    return process. env.REACT_APP_API_BASE_URL.replace(/\/$/, "");
+  if (typeof process !== "undefined" && process.env?.REACT_APP_API_BASE)
+    return String(process.env.REACT_APP_API_BASE).replace(/\/$/, "");
+
+  if (typeof process !== "undefined" && process.env?.REACT_APP_API_BASE_URL)
+    return String(process.env.REACT_APP_API_BASE_URL).replace(/\/$/, "");
+
   if (typeof window !== "undefined" && window.__API_BASE__)
     return String(window.__API_BASE__).replace(/\/$/, "");
-  if (
-    typeof window !== "undefined" &&
-    window.__CONFIG__ &&
-    window.__CONFIG__. backendUrl
-  )
-    return String(window.__CONFIG__.backendUrl).replace(/\/$/, "");
-  if (
-    typeof window !== "undefined" &&
-    window. location &&
-    window.location. origin
-  )
+
+  if (typeof window !== "undefined" && window.location?.origin)
     return window.location.origin.replace(/\/$/, "");
-  return "/api";
-}
-const API_BASE = getApiBaseFromEnvOrWindow();
 
-function apiUrl(path) {
-  if (! path) return API_BASE;
-  if (/^https?:\/\//i.test(path)) return path;
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE.replace(/\/$/,"")}${p}`;
-}
-
-function normalizeAdminUrl(url) {
-  if (! url) return "";
-  const t = String(url).trim();
-  if (!t) return "";
-  if (/^https?:\/\//i.test(t)) return t;
-  if (t.startsWith("//"))
-    return (
-      (typeof window !== "undefined" ?  window.location.protocol : "https:") + t
-    );
-  if (t.startsWith("/")) return apiUrl(t);
-  return apiUrl(`/${t}`);
-}
-
-function clone(obj) {
-  return JSON.parse(JSON.stringify(obj));
-}
-
-function pickFirstString(obj, candidates = []) {
-  if (!obj || typeof obj !== "object") return "";
-  for (const cand of candidates) {
-    if (Object.prototype.hasOwnProperty. call(obj, cand)) {
-      const v = obj[cand];
-      if (typeof v === "string" && v.trim()) return v.trim();
-      if ((typeof v === "number" || typeof v === "boolean") && String(v).trim())
-        return String(v).trim();
-    }
-    for (const k of Object.keys(obj)) {
-      if (k. toLowerCase() === String(cand).toLowerCase()) {
-        const v = obj[k];
-        if (typeof v === "string" && v.trim()) return v.trim();
-        if (
-          (typeof v === "number" || typeof v === "boolean") &&
-          String(v).trim()
-        )
-          return String(v).trim();
-      }
-    }
-  }
-  for (const v of Object.values(obj)) {
-    if (! v) continue;
-    if (typeof v === "string" && v.trim()) return v.trim();
-    if (v && typeof v === "object") {
-      if (typeof v.mobile === "string" && v.mobile.trim())
-        return v.mobile.trim();
-      if (typeof v.phone === "string" && v.phone.trim()) return v.phone.trim();
-      if (typeof v.email === "string" && v.email. trim()) return v.email.trim();
-      if (typeof v. name === "string" && v.name.trim()) return v.name.trim();
-      if (typeof v.company === "string" && v.company.trim())
-        return v.company.trim();
-    }
-  }
   return "";
 }
 
-async function postJSON(url, body) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "ngrok-skip-browser-warning":  "69420",
-    },
-    body: JSON.stringify(body),
-  });
-  let text = null;
-  let json = null;
-  try {
-    text = await res. text();
-  } catch {}
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {}
-  return { ok: res.ok, status: res.status, body: json || text || null };
+const API_BASE = getApiBaseFromEnvOrWindow();
+
+function apiUrl(path) {
+  if (!path) return API_BASE;
+  if (/^https?:\/\//i.test(path)) return path;
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE.replace(/\/$/, "")}${p}`;
 }
+
+function normalizeAdminUrl(url) {
+  if (!url) return "";
+  const t = String(url).trim();
+  if (!t) return "";
+
+  // Absolute URLs → trust
+  if (/^https?:\/\//i.test(t)) return t;
+
+  // Relative → BACKEND (API base)
+  const base = API_BASE.replace(/\/$/, "");
+  if (t.startsWith("/")) return `${base}${t}`;
+  return `${base}/${t}`;
+}
+
 
 async function savePartnerApi(payload) {
   const res = await fetch(apiUrl("/api/partners"), {
@@ -135,7 +63,7 @@ async function savePartnerApi(payload) {
   const txt = await res.text().catch(() => null);
   let json = null;
   try {
-    json = txt ? JSON. parse(txt) : null;
+    json = txt ? JSON.parse(txt) : null;
   } catch {
     json = { raw: txt };
   }
@@ -203,14 +131,14 @@ const DEFAULT_PARTNER_FIELDS = [
 function ImageSlider({ images = [], intervalMs = 4000 }) {
   const [active, setActive] = useState(0);
   useEffect(() => {
-    if (! images || images.length === 0) return;
+    if (!images || images.length === 0) return;
     const t = setInterval(
       () => setActive((p) => (p + 1) % images.length),
       intervalMs
     );
     return () => clearInterval(t);
   }, [images, intervalMs]);
-  if (! images || images.length === 0) return null;
+  if (!images || images.length === 0) return null;
   return (
     <div className="flex flex-col items-center justify-center w-full h-full">
       <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center mt-6 sm:mt-10">
@@ -225,6 +153,7 @@ function ImageSlider({ images = [], intervalMs = 4000 }) {
   );
 }
 
+
 export default function Partners() {
   const [config, setConfig] = useState(null);
   const [canonicalEvent, setCanonicalEvent] = useState(null);
@@ -238,7 +167,7 @@ export default function Partners() {
   // Mobile detection
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!! mq.matches);
+    const onChange = () => setIsMobile(!!mq.matches);
     onChange();
     if (mq.addEventListener) mq.addEventListener("change", onChange);
     else mq.addListener(onChange);
@@ -265,7 +194,7 @@ export default function Partners() {
           setCanonicalEvent({
             name: val.name || "",
             date: val.date || val.dates || "",
-            venue: val. venue || "",
+            venue: val.venue || "",
             time: val.time || "",
             tagline: val.tagline || "",
           });
@@ -315,12 +244,12 @@ export default function Partners() {
         : [];
       try {
         const existing = new Set(
-          (normalized.fields || []).map((f) => (f && f.name ?  f.name : ""))
+          (normalized.fields || []).map((f) => (f && f.name ? f.name : ""))
         );
         DEFAULT_PARTNER_FIELDS.forEach((def) => {
-          if (! existing.has(def.name)) normalized.fields.push(clone(def));
+          if (!existing.has(def.name)) normalized.fields.push({...def});
         });
-      } catch (e) {}
+      } catch (e) { }
 
       if (normalized.backgroundMedia && normalized.backgroundMedia.url) {
         normalized.backgroundMedia = {
@@ -338,7 +267,7 @@ export default function Partners() {
             typeof candidate === "string" &&
             /\.(mp4|webm|ogg)(\?|$)/i.test(candidate);
           normalized.backgroundMedia = {
-            type: isVideo ? "video" :  "image",
+            type: isVideo ? "video" : "image",
             url: normalizeAdminUrl(candidate),
           };
         } else {
@@ -353,20 +282,20 @@ export default function Partners() {
       normalized.termsLabel = normalized.termsLabel || "Terms & Conditions";
       normalized.termsRequired = !!normalized.termsRequired;
 
-      normalized.images = Array.isArray(normalized. images)
-        ? normalized.images. map(normalizeAdminUrl)
+      normalized.images = Array.isArray(normalized.images)
+        ? normalized.images.map(normalizeAdminUrl)
         : [];
       normalized.eventDetails =
         typeof normalized.eventDetails === "object" && normalized.eventDetails
-          ? normalized. eventDetails
+          ? normalized.eventDetails
           : {};
 
-      normalized.fields = normalized.fields. map((f) => {
-        if (! f || !f.name) return f;
+      normalized.fields = normalized.fields.map((f) => {
+        if (!f || !f.name) return f;
         const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
-        const isEmailField = f.type === "email" || /email/. test(nameLabel);
+        const isEmailField = f.type === "email" || /email/.test(nameLabel);
         if (isEmailField) {
-          const fm = Object.assign({}, f. meta || {});
+          const fm = Object.assign({}, f.meta || {});
           if (fm.useOtp === undefined) fm.useOtp = true;
           return { ...f, meta: fm };
         }
@@ -377,7 +306,7 @@ export default function Partners() {
     } catch (e) {
       console.error("[Partners] fetchConfig error:", e);
       setConfig({
-        fields: DEFAULT_PARTNER_FIELDS. slice(),
+        fields: DEFAULT_PARTNER_FIELDS.slice(),
         images: [],
         backgroundMedia: { type: "image", url: "" },
         eventDetails: {},
@@ -396,11 +325,11 @@ export default function Partners() {
       fetchCanonicalEvent();
     };
     const onConfigUpdated = (e) => {
-      const key = e && e.detail && e.detail.key ?  e.detail.key : null;
-      if (! key || key === "event-details")
-        fetchCanonicalEvent().catch(() => {});
+      const key = e && e.detail && e.detail.key ? e.detail.key : null;
+      if (!key || key === "event-details")
+        fetchCanonicalEvent().catch(() => { });
     };
-    window. addEventListener("partner-config-updated", onCfg);
+    window.addEventListener("partner-config-updated", onCfg);
     window.addEventListener("config-updated", onConfigUpdated);
     window.addEventListener("event-details-updated", fetchCanonicalEvent);
     return () => {
@@ -415,41 +344,24 @@ export default function Partners() {
     setError("");
     setSaving(true);
     try {
-      const email =
-        pickFirstString(formData, ["email", "emailAddress", "contactEmail"]) ||
-        "";
-      if (!email) {
+      if (!formData?.email) {
         setError("Email is required to proceed.");
         setSaving(false);
         return;
-      }
+      }      
 
       setForm(formData || {});
 
-      // Log step attempt
-      try {
-        await postJSON(apiUrl("/api/partners/step"), {
-          step: "registration_attempt",
-          data: { form: formData },
-        });
-      } catch {}
+     
 
       // Save partner (backend will send ACK email automatically)
       const payload = {
-        ... formData,
+        ...formData,
         termsAccepted: !!formData.termsAccepted,
         _rawForm: formData,
       };
 
       const json = await savePartnerApi(payload);
-
-      // Log completion
-      try {
-        await postJSON(apiUrl("/api/partners/step"), {
-          step: "registration_completed",
-          data: { id: json?. insertedId || null, payload },
-        });
-      } catch {}
 
       // Go directly to thank you page (backend sends ACK email in background)
       setStep(2);
@@ -478,14 +390,14 @@ export default function Partners() {
         <div className="w-full max-w-md">
           <Topbar />
 
-          {! loading && step === 1 && config?. fields ?  (
+          {!loading && step === 1 && config?.fields ? (
             <>
               <div className="mt-4">
                 <h2 className="text-xl font-bold text-[#21809b] mb-4 text-center">
                   Partner Registration
                 </h2>
                 <DynamicRegistrationForm
-                  config={{ ... config, fields: config.fields }}
+                  config={{ ...config, fields: config.fields }}
                   form={form}
                   setForm={setForm}
                   onSubmit={handleFormSubmit}
@@ -495,11 +407,11 @@ export default function Partners() {
                   terms={
                     config && (config.termsUrl || config.termsText)
                       ? {
-                          url: config.termsUrl,
-                          text: config.termsText,
-                          label: config.termsLabel || "Terms & Conditions",
-                          required: !!config.termsRequired,
-                        }
+                        url: config.termsUrl,
+                        text: config.termsText,
+                        label: config.termsLabel || "Terms & Conditions",
+                        required: !!config.termsRequired,
+                      }
                       : null
                   }
                 />
@@ -532,22 +444,23 @@ export default function Partners() {
   /* ---------- DESKTOP RENDER ---------- */
   return (
     <div className="min-h-screen w-full relative">
-      {! isMobile &&
-      config?.backgroundMedia?.type === "video" &&
-      config?.backgroundMedia?.url ? (
-        <video
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="metadata"
-        className="fixed inset-0 w-full h-full object-cover"
-        onError={(e) => console.error("Video error", e)}
-      >
-        <source src={config.backgroundMedia.url} type="video/mp4" />
-        Your browser does not support the video tag.
-      </video>
-      
+      {!isMobile &&
+        config?.backgroundMedia?.type === "video" &&
+        config?.backgroundMedia?.url ? (
+          <video
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          className="fixed inset-0 w-full h-full object-cover"
+          onError={(e) => console.error("Video error", e)}
+        >
+        
+          <source src={config.backgroundMedia.url} />
+
+        </video>
+
       ) : config?.backgroundMedia?.type === "image" &&
         config?.backgroundMedia?.url ? (
         <div
@@ -582,7 +495,7 @@ export default function Partners() {
                 <span className="text-[#21809b] text-2xl font-bold">
                   Loading images...
                 </span>
-              ) : config?.images && config.images.length ?  (
+              ) : config?.images && config.images.length ? (
                 <ImageSlider images={config.images} />
               ) : (
                 <div className="text-[#21809b]"> </div>
@@ -599,7 +512,7 @@ export default function Partners() {
                   <div
                     className="font-extrabold text-3xl sm:text-5xl mb-3 text-center"
                     style={{
-                      background: 
+                      background:
                         "linear-gradient(90deg,#ffba08 0%,#19a6e7 60%,#21809b 100%)",
                       WebkitBackgroundClip: "text",
                       WebkitTextFillColor: "transparent",
@@ -623,10 +536,10 @@ export default function Partners() {
                       "Event Venue"}
                   </div>
 
-                  {(canonicalEvent && canonicalEvent. tagline) ||
-                  config?.eventDetails?.tagline ?  (
+                  {(canonicalEvent && canonicalEvent.tagline) ||
+                    config?.eventDetails?.tagline ? (
                     <div className="text-sm mt-2 text-center text-gray-700">
-                      {(canonicalEvent && canonicalEvent. tagline) ||
+                      {(canonicalEvent && canonicalEvent.tagline) ||
                         config?.eventDetails?.tagline}
                     </div>
                   ) : null}
@@ -643,10 +556,10 @@ export default function Partners() {
             <div className="flex-grow border-t border-[#21809b]" />
           </div>
 
-          {! loading && step === 1 && config?.fields && (
+          {!loading && step === 1 && config?.fields && (
             <div className="mx-auto w-full max-w-2xl">
               <DynamicRegistrationForm
-                config={{ ...config, fields: config. fields }}
+                config={{ ...config, fields: config.fields }}
                 form={form}
                 setForm={setForm}
                 onSubmit={handleFormSubmit}
@@ -655,11 +568,11 @@ export default function Partners() {
                 terms={
                   config && (config.termsUrl || config.termsText)
                     ? {
-                        url:  config.termsUrl,
-                        text: config.termsText,
-                        label: config. termsLabel || "Terms & Conditions",
-                        required: !!config.termsRequired,
-                      }
+                      url: config.termsUrl,
+                      text: config.termsText,
+                      label: config.termsLabel || "Terms & Conditions",
+                      required: !!config.termsRequired,
+                    }
                     : null
                 }
               />
@@ -683,7 +596,7 @@ export default function Partners() {
 
           <footer className="mt-16 text-center text-[#21809b] font-semibold py-6 text-lg">
             © {new Date().getFullYear()}{" "}
-            {(canonicalEvent && canonicalEvent. name) ||
+            {(canonicalEvent && canonicalEvent.name) ||
               config?.eventDetails?.name ||
               "RailTrans Expo"}
           </footer>

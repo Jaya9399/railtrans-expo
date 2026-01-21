@@ -301,10 +301,24 @@ export default function Exhibitors() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [savedId, setSavedId] = useState(null);
   const [isMobile, setIsMobile] = useState(false);
   const apiBase = getApiBaseFromEnvOrWindow();
-
+  const videoRef = useRef(null);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+  
+    const tryPlay = async () => {
+      try {
+        await v.play();
+      } catch {
+        // Autoplay blocked – ignore silently
+      }
+    };
+  
+    tryPlay();
+  }, [config?.backgroundMedia?.url]);
+  
   // Mobile detection
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
@@ -523,7 +537,6 @@ export default function Exhibitors() {
     try {
       const json = await saveExhibitorApi(payload);
       if (json?.insertedId) {
-        setSavedId(json.insertedId);
         scheduleReminder(json.insertedId, config?.eventDetails?.date).catch(
           () => { }
         );
@@ -615,16 +628,16 @@ export default function Exhibitors() {
     <div className="min-h-screen w-full relative">
       {config?.backgroundMedia?.type === "video" &&
         config?.backgroundMedia?.url ? (
-        <video
+          <video
+          ref={videoRef}
           autoPlay
           muted
           loop
           playsInline
-          webkit-playsinline="true"
           preload="metadata"
           className="fixed inset-0 w-full h-full object-cover"
-          onError={(e) => console.error("Video error", e)}
         >
+        
           <source src={config.backgroundMedia.url} type="video/mp4" />
           Your browser does not support the video tag.
         </video>
