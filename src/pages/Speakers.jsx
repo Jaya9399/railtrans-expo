@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import Topbar from "../components/Topbar";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
 import ThankYouMessage from "../components/ThankYouMessage";
+import useIsMobile from "../hooks/useIsMobile";
 /*
   Speakers.jsx - with mobile view support and corrected redirect
   - Mobile-responsive layout (desktop + mobile views)
@@ -133,7 +134,7 @@ export default function Speakers() {
   const [submissionComplete, setSubmissionComplete] = useState(false);
 
   const videoRef = useRef(null);
-  const [isMobile, setIsMobile] = useState(false);
+  const isMobile = useIsMobile(900);
 
   // Redirect after successful submission
   useEffect(() => {
@@ -254,18 +255,7 @@ export default function Speakers() {
     };
   }, [fetchConfig, fetchCanonicalEvent]);
 
-  // Mobile detection
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!!mq.matches);
-    onChange();
-    if (mq.addEventListener) mq.addEventListener("change", onChange);
-    else mq.addListener(onChange);
-    return () => {
-      if (mq.removeEventListener) mq.removeEventListener("change", onChange);
-      else mq.removeListener(onChange);
-    };
-  }, []);
+  
   
 
   /* Handle form submit:  validate and save immediately.  Backend sends confirmation email.  */

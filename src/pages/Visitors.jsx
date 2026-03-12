@@ -5,6 +5,7 @@ import TicketCategorySelector from "../components/TicketCategoryGenerator";
 import ManualPaymentStep from "../components/ManualPayemntStep";
 import ThankYouMessage from "../components/ThankYouMessage";
 import ProcessingCard from "../components/ProcessingCard";
+import useIsMobile from "../hooks/useIsMobile";
 
 const API_BASE = (
   process.env.REACT_APP_API_BASE ||
@@ -89,21 +90,7 @@ export default function Visitors() {
   const videoRef = useRef(null);
   const [bgVideoReady, setBgVideoReady] = useState(false);
   const [bgVideoErrorMsg, setBgVideoErrorMsg] = useState("");
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!!mq.matches);
-    onChange();
-    mq.addEventListener
-      ? mq.addEventListener("change", onChange)
-      : mq.addListener(onChange);
-    return () => {
-      mq.removeEventListener
-        ? mq.removeEventListener("change", onChange)
-        : mq.removeListener(onChange);
-    };
-  }, []);
+  const isMobile = useIsMobile(900);
 
 
 

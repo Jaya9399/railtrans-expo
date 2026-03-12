@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import Topbar from "../components/Topbar";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
 import ThankYouMessage from "../components/ThankYouMessage";
+import useIsMobile from "../hooks/useIsMobile";
 
 /*
   Exhibitors.jsx
@@ -301,7 +302,7 @@ export default function Exhibitors() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [isMobile, setIsMobile] = useState(false);
+  const isMobile = useIsMobile(900);
   const apiBase = getApiBaseFromEnvOrWindow();
   const videoRef = useRef(null);
   useEffect(() => {
@@ -319,20 +320,7 @@ export default function Exhibitors() {
     tryPlay();
   }, [config?.backgroundMedia?.url]);
   
-  // Mobile detection
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!!mq.matches);
-    onChange();
-    mq.addEventListener
-      ? mq.addEventListener("change", onChange)
-      : mq.addListener(onChange);
-    return () => {
-      mq.removeEventListener
-        ? mq.removeEventListener("change", onChange)
-        : mq.removeListener(onChange);
-    };
-  }, []);
+
 
   async function fetchConfig() {
     setLoading(true);

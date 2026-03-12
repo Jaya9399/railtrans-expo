@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import Topbar from "../components/Topbar";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
 import ThankYouMessage from "../components/ThankYouMessage";
+import useIsMobile from "../hooks/useIsMobile";
 
 /*
   Cleaned Awardees.jsx — FREE awardees flow
@@ -202,20 +203,7 @@ export default function Awardees() {
   const [awardeeTicketCode, setAwardeeTicketCode] = useState(null);
 
   const videoRef = useRef(null);
-  const [isMobile, setIsMobile] = useState(false);
-
-  // Mobile detection (updated to 900px to match other pages)
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = () => setIsMobile(!!mq.matches);
-    onChange();
-    if (mq.addEventListener) mq.addEventListener("change", onChange);
-    else mq.addListener(onChange);
-    return () => {
-      if (mq.removeEventListener) mq.removeEventListener("change", onChange);
-      else mq.removeListener(onChange);
-    };
-  }, []);
+  const isMobile = useIsMobile(900);
 
   const fetchConfig = useCallback(async () => {
     setLoading(true);
