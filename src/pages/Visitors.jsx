@@ -437,6 +437,25 @@ export default function Visitors() {
     }
   }, [step]);
 
+  const videoUrl =
+    config?.backgroundMedia?.type === "video"
+      ? config.backgroundMedia.url
+      : null;
+
+  const bgImageUrl =
+    config?.backgroundMedia?.type !== "video"
+      ? config?.backgroundMedia?.url
+      : null;
+
+  useEffect(() => {
+    setBgVideoReady(false);
+    setBgVideoErrorMsg("");
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.load();
+    }
+  }, [videoUrl]);
+
   /* ---------- render ---------- */
   if (isMobile) {
     return (
@@ -531,25 +550,6 @@ export default function Visitors() {
       </div>
     );
   }
-
-  const videoUrl =
-    config?.backgroundMedia?.type === "video"
-      ? config.backgroundMedia.url
-      : null;
-
-  const bgImageUrl =
-    config?.backgroundMedia?.type !== "video"
-      ? config?.backgroundMedia?.url
-      : null;
-
-  useEffect(() => {
-    setBgVideoReady(false);
-    setBgVideoErrorMsg("");
-    if (videoRef.current) {
-      videoRef.current.pause();
-      videoRef.current.load();
-    }
-  }, [videoUrl]);
 
   return (
     <div

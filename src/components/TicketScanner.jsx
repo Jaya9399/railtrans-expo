@@ -48,8 +48,18 @@ function extractTicketIdFromObject(obj) {
 
 function extractTicketId(input) {
   if (!input) return null;
-  const m = String(input).match(/\b\d{4,12}\b/);
-  return m ? m[0] : null;
+  const s = String(input).trim();
+  try {
+    const parsed = JSON.parse(s);
+    if (parsed && typeof parsed === "object") {
+      const fromObj = extractTicketIdFromObject(parsed);
+      if (fromObj) return fromObj;
+    }
+  } catch (_) { /* not JSON */ }
+  const m = s.match(/\b\d{4,12}\b/);
+  if (m) return m[0];
+  const tok = s.match(/[A-Za-z0-9][A-Za-z0-9._-]{2,30}/);
+  return tok ? tok[0] : null;
 }
 
 
@@ -59,6 +69,7 @@ export default function TicketScanner({ apiPath = null, autoPrintOnValidate = fa
   const rafRef = useRef(null);
   const streamRef = useRef(null);
   const scanningRef = useRef(false);
+  const successPausedRef = useRef(false); // pause scanning after success until Reset
 
   const [message, setMessage] = useState("Scanning for QR…");
   const [rawPayload, setRawPayload] = useState("");
@@ -98,7 +109,7 @@ export default function TicketScanner({ apiPath = null, autoPrintOnValidate = fa
               ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
               const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
               const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
-              if (code && !scanningRef.current) {
+              if (code && !scanningRef.current && !successPausedRef.current) {
                 handleRawScan(code.data);
               }
             }
@@ -157,6 +168,7 @@ export default function TicketScanner({ apiPath = null, autoPrintOnValidate = fa
       } else {
         setValidation({ ok: true, ticket: js.ticket || js });
         setMessage("✅ Ticket matched");
+        successPausedRef.current = true; // stop scanning until Reset
         if (autoPrintOnValidate) {
           await doPrint(extracted);
         }
@@ -172,17 +184,24 @@ export default function TicketScanner({ apiPath = null, autoPrintOnValidate = fa
 
   async function doPrint(id) {
     if (!id) return;
+    // Open window immediately (synchronous with user click) to avoid popup blocker
+    const printWin = window.open("", "_blank", "width=800,height=600");
+    if (!printWin) {
+      setMessage("Popup blocked — allow popups and try again");
+      return;
+    }
     setMessage("Requesting print...");
     try {
       const res = await fetch(printUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticketId: id }),
+        body: JSON.stringify({ ticketId: String(id) }),
         credentials: "include"
       });
       if (!res.ok) {
+        printWin.close();
         const js = await res.json().catch(() => null);
-        setValidation({ ok: false, error: js?.error || `Print failed (${res.status})` });
+        setValidation(prev => (prev?.ok ? prev : { ok: false, error: js?.error || `Print failed (${res.status})` }));
         setMessage("Print request failed");
         return;
       }
@@ -190,17 +209,30 @@ export default function TicketScanner({ apiPath = null, autoPrintOnValidate = fa
       if (ct.includes("application/pdf")) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
-        window.open(url, "_blank");
-        setMessage("PDF opened in new tab");
+        printWin.location.href = url;
+        setTimeout(() => {
+          try { if (printWin && !printWin.closed) printWin.print(); } catch (_) {}
+        }, 800);
+        setMessage("PDF opened — print dialog should appear");
       } else {
+        printWin.close();
         const js = await res.json().catch(() => null);
         console.log("[TicketScanner] print response:", js);
         setMessage("Print returned non-PDF response");
       }
     } catch (e) {
+      if (printWin && !printWin.closed) printWin.close();
       console.error("Print error", e);
       setMessage("Print error");
     }
+  }
+
+  function handleScanAgain() {
+    successPausedRef.current = false;
+    setValidation(null);
+    setTicketId(null);
+    setRawPayload("");
+    setMessage("Scanning for QR…");
   }
 
   function renderValidation() {
@@ -209,6 +241,7 @@ export default function TicketScanner({ apiPath = null, autoPrintOnValidate = fa
       <div className="p-3 bg-red-50 text-red-700 rounded">
         <div><strong>Not matched</strong></div>
         <div className="text-sm">{validation.error || "Ticket not found"}</div>
+        <button className="mt-2 px-3 py-1 bg-red-100 hover:bg-red-200 rounded" onClick={handleScanAgain}>Scan again</button>
       </div>
     );
     const t = validation.ticket || {};
@@ -217,9 +250,10 @@ export default function TicketScanner({ apiPath = null, autoPrintOnValidate = fa
         <div className="font-semibold">Matched</div>
         <div className="text-sm">{t.name || t.n || t.full_name || ""}</div>
         <div className="text-xs text-gray-700">{t.company || t.org || ""} — {t.category || t.cat || t.ticket_category || ""}</div>
+        <p className="text-xs text-gray-600 mt-2">Print badge or scan next ticket</p>
         <div className="mt-2 flex gap-2">
           <button className="px-3 py-1 bg-[#196e87] text-white rounded" onClick={() => doPrint(ticketId)}>Print</button>
-          <button className="px-3 py-1 bg-gray-100 rounded" onClick={() => { setValidation(null); setTicketId(null); setRawPayload(""); setMessage("Scanning for QR…"); }}>Reset</button>
+          <button className="px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded" onClick={handleScanAgain}>Scan again</button>
         </div>
       </div>
     );
