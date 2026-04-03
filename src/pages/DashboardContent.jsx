@@ -661,7 +661,7 @@ export default function DashboardContent() {
     const resendUrl = buildApiUrl(`${basePath}/${encodeURIComponent(String(idVal))}/resend-email`);
 
     setResendLoadingId(idVal);
-    setActionMsg(`Resending email for ${table} ${idVal}...`);
+    setActionMsg(`Sending email for ${table} ${idVal}...`);
 
     try {
       // Try the ticket-specific endpoint first

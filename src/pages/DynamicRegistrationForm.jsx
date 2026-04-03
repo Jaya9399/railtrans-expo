@@ -210,7 +210,7 @@ export default function DynamicRegistrationForm({
   }
 
   function handleOtpSuccess({ email, token }) {
-    console.log('[DynamicRegistrationForm] OTP Success - Token:', token);
+  
     setEmailVerified(true);
     setVerifiedEmailValue(email.toLowerCase());
     setVerificationToken(token);
