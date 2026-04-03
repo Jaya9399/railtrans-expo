@@ -459,9 +459,8 @@ export default function Awardees() {
         _rawForm: payload,
       };
   
-     
       const res = await saveAwardeeApi({
-        ...serverPayload,
+        form: payload,  
         verificationToken: verificationToken
       });
       
