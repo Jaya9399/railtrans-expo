@@ -562,6 +562,7 @@ export default function Awardees() {
                   }}
                   form={form}
                   setForm={setForm}
+                  registrationType="awardee"
                   onSubmit={handleFormSubmit}
                   editable={true}
                   submitting={submitting}
@@ -730,10 +731,11 @@ export default function Awardees() {
                 }}
                 form={form}
                 setForm={setForm}
+                registrationType="awardee"
                 onSubmit={handleFormSubmit}
                 editable={true}
                 submitting={submitting}
-                registrationType="awardee"
+                
                 terms={
                   config && (config.termsUrl || config.termsText)
                     ? {

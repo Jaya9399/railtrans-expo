@@ -461,6 +461,7 @@ export default function Speakers() {
                 config={{ ...config, fields: config.fields || [] }}
                 form={form}
                 setForm={setForm}
+                registrationType="speaker"
                 onSubmit={handleFormSubmit}
                 editable={true}
                 submitting={submitting || processing}
