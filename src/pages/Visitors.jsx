@@ -681,6 +681,7 @@ export default function Visitors() {
                 config={config}
                 form={form}
                 setForm={setForm}
+                registrationType="visitor"
                 onSubmit={handleFormSubmit}
                 editable
                 terms={{

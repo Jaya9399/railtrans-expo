@@ -157,7 +157,7 @@ export default function EmailOtpVerifier({
         body: JSON.stringify({ type: role, value: emailNorm, requestId, registrationType: role }),
       });
       let data = null;
-      console.log("OTP SEND ROLE:", role);
+      
       try { data = await res.json(); } catch { data = null; }
 
       if (res.status === 409 && data && data.existing) {
@@ -203,7 +203,7 @@ export default function EmailOtpVerifier({
         })
       });
       let data = null;
-      console.log("OTP VERIFY ROLE:", role);
+      
       try { data = await res.json(); } catch { data = null; }
 
       if (!data || !data.success) {
