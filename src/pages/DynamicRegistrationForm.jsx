@@ -209,12 +209,18 @@ export default function DynamicRegistrationForm({
     }
   }
 
-  // --- Handler if OTP verifies
   function handleOtpSuccess({ email, token }) {
+    console.log('[DynamicRegistrationForm] OTP Success - Token:', token);
     setEmailVerified(true);
     setVerifiedEmailValue(email.toLowerCase());
     setVerificationToken(token);
-    // may autosend form if pendingSubmitAfterOtp
+    // ✅ ADD THIS - update form state with token
+    setForm(prev => ({ 
+      ...prev, 
+      verificationToken: token,
+      emailVerified: true 
+    }));
+    
     if (pendingSubmitAfterOtp) {
       setPendingSubmitAfterOtp(false);
       handleSubmit({ preventDefault: () => {} });

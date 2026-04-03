@@ -485,11 +485,12 @@ export default function Exhibitors() {
 
   async function handleFormSubmit(formData) {
     setError("");
+    console.log('[Exhibitors] handleFormSubmit - formData:', formData);
+    console.log('[Exhibitors] handleFormSubmit - verificationToken:', formData.verificationToken);
     setForm(formData || {});
     await saveStep("registration_attempt", { form: formData }).catch(() => { });
     await finalizeSave();
   }
-
   async function finalizeSave() {
     setError("");
     const companyCandidates = [
