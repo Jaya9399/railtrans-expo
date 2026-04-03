@@ -552,6 +552,7 @@ export default function Partners() {
                 setForm={setForm}
                 onSubmit={handleFormSubmit}
                 editable={true}
+                registrationType="partner"
                 saving={saving}
                 terms={
                   config && (config.termsUrl || config.termsText)

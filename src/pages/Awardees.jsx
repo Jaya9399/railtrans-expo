@@ -433,7 +433,6 @@ export default function Awardees() {
     }
   }, [step]);
 
-  // Form submit:  validate and create awardee (FREE flow)
   async function handleFormSubmit(payload) {
     setError("");
     if (!isEmailLike(payload.email)) {
@@ -443,36 +442,37 @@ export default function Awardees() {
     setSubmitting(true);
     try {
       setForm(payload || {});
-      // build server payload; minimal fields only
-      const verificationToken =
-        payload?.verificationToken || payload?.verification_token || null;
+      
+      const verificationToken = payload?.verificationToken || payload?.verification_token || null;
+      
       const serverPayload = {
         name: payload.name || payload.fullName || "Awardee",
         email: payload.email || "",
         mobile: payload.mobile || "",
         designation: payload.designation || null,
-        organization:
-          findFieldValue(payload, ["company", "organization"]) || "",
+        organization: findFieldValue(payload, ["company", "organization"]) || "",
         awardType: payload.awardType || null,
         awardOther: payload.awardOther || null,
         bio: payload.bio || null,
         ticket_category: "awardee",
         txId: null,
-        ...(verificationToken ? { verificationToken } : {}),
         _rawForm: payload,
       };
-
-      const res = await saveAwardeeApi(serverPayload);
+  
+     
+      const res = await saveAwardeeApi({
+        ...serverPayload,
+        verificationToken: verificationToken
+      });
+      
       setAwardeeId(res.insertedId || null);
       setAwardeeTicketCode(res.ticket_code || (res.saved && res.saved.ticket_code) || null);
-
-      // optionally schedule reminder if canonical event has date
+  
       const eventDate = canonicalEvent && canonicalEvent.date ? canonicalEvent.date : null;
       if (eventDate && res.insertedId) {
-        scheduleReminder(res.insertedId, eventDate).catch(() => { });
+        scheduleReminder(res.insertedId, eventDate).catch(() => {});
       }
-
-      // Show Thank You
+  
       setStep(2);
     } catch (e) {
       console.error("handleFormSubmit error", e);
@@ -481,7 +481,6 @@ export default function Awardees() {
       setSubmitting(false);
     }
   }
-
   async function fetchStats() {
     try {
       const res = await fetch(apiUrl("/api/awardees/stats"), {

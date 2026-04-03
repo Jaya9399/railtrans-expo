@@ -493,24 +493,17 @@ export default function Exhibitors() {
   async function finalizeSave() {
     setError("");
     const companyCandidates = [
-      "companyName",
-      "company",
-      "company_name",
-      "company name",
-      "organization",
-      "organizationName",
-      "organization_name",
-      "companyTitle",
-      "companytitle",
+      "companyName", "company", "company_name", "company name",
+      "organization", "organizationName", "organization_name",
+      "companyTitle", "companytitle"
     ];
     let companyValue = findFieldValue(form || {}, companyCandidates);
     if (!companyValue && form && typeof form._rawForm === "object")
       companyValue = findFieldValue(form._rawForm, companyCandidates);
     companyValue = companyValue || "";
-
-    const verificationToken =
-      form?.verificationToken || form?.verification_token || null;
-
+  
+    const verificationToken = form?.verificationToken || form?.verification_token || null;
+  
     const payload = {
       name: form.name || form.fullName || "",
       email: form.email || "",
@@ -522,23 +515,21 @@ export default function Exhibitors() {
       purpose: form.purpose || "",
       slots: Array.isArray(form.slots) ? form.slots : [],
       termsAccepted: !!form.termsAccepted,
-      ...(verificationToken ? { verificationToken } : {}),
       _rawForm: form,
     };
-
+  
     try {
-      const json = await saveExhibitorApi(payload);
+     
+      const json = await saveExhibitorApi({
+        ...payload,
+        verificationToken: verificationToken  // Token at root level
+      });
+      
       if (json?.insertedId) {
-        scheduleReminder(json.insertedId, config?.eventDetails?.date).catch(
-          () => { }
-        );
+        scheduleReminder(json.insertedId, config?.eventDetails?.date).catch(() => {});
       }
-
-      await saveStep(
-        "registration",
-        { form },
-        { insertedId: json?.insertedId || null }
-      ).catch(() => { });
+  
+      await saveStep("registration", { form }, { insertedId: json?.insertedId || null }).catch(() => {});
       setStep(4);
     } catch (err) {
       console.error("[Exhibitors] finalize save error:", err);
