@@ -54,7 +54,9 @@ export default function ManualPaymentStep({
   const gst = Math.round(ticketPrice * 0.18);
   const originalTotal = Number((ticketPrice + gst).toFixed(2));
   const effectiveTotal =
-    couponResult && couponResult.valid && typeof couponResult.reducedPrice === "number"
+    couponResult &&
+    couponResult.valid &&
+    typeof couponResult.reducedPrice === "number"
       ? Number((couponResult.reducedPrice || 0).toFixed(2))
       : originalTotal;
 
@@ -70,7 +72,9 @@ export default function ManualPaymentStep({
   // Determine backend base
   const backendBaseCandidate =
     (apiBase && String(apiBase).trim()) ||
-    (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE) ||
+    (typeof process !== "undefined" &&
+      process.env &&
+      process.env.REACT_APP_API_BASE) ||
     (typeof window !== "undefined" && window.__API_BASE__) ||
     "";
 
@@ -86,7 +90,9 @@ export default function ManualPaymentStep({
     );
   }
 
-  const backendBase = likelyProviderHost(backendBaseCandidate) ? "" : backendBaseCandidate;
+  const backendBase = likelyProviderHost(backendBaseCandidate)
+    ? ""
+    : backendBaseCandidate;
 
   function makeUrl(path) {
     const base = backendBase ? String(backendBase).replace(/\/$/, "") : "";
@@ -115,7 +121,7 @@ export default function ManualPaymentStep({
       const payload = {
         code,
         price: originalTotal,
-        markUsed: false
+        markUsed: false,
       };
 
       const url = makeUrl("/api/coupons/validate");
@@ -124,7 +130,7 @@ export default function ManualPaymentStep({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "69420"
+          "ngrok-skip-browser-warning": "69420",
         },
         body: JSON.stringify(payload),
         credentials: "include",
@@ -133,7 +139,8 @@ export default function ManualPaymentStep({
       const js = await res.json().catch(() => null);
 
       if (!res.ok || !js) {
-        const msg = (js && (js.error || js.message)) || `Validate failed (${res.status})`;
+        const msg =
+          (js && (js.error || js.message)) || `Validate failed (${res.status})`;
         setCouponError(msg);
         setCouponBusy(false);
         return;
@@ -156,7 +163,6 @@ export default function ManualPaymentStep({
     }
   }
 
-  /* ---------- Payment: create order & poll ---------- */
   async function createOrder() {
     setError("");
     setPayLoading(true);
@@ -166,33 +172,49 @@ export default function ManualPaymentStep({
 
       if (!amountToPay || amountToPay <= 0) {
         setPaymentStatus("paid");
+
         try {
           onTxIdChange && onTxIdChange(`free-${Date.now()}`);
         } catch (_) {}
+
         try {
           onProofUpload && onProofUpload();
         } catch (_) {}
+
         setPayLoading(false);
         return;
       }
 
       const verifiedEmail =
         (typeof window !== "undefined" &&
-          (localStorage.getItem("verifiedEmail") || sessionStorage.getItem("verifiedEmail"))) ||
+          (localStorage.getItem("verifiedEmail") ||
+            sessionStorage.getItem("verifiedEmail"))) ||
         "";
-      const referenceId = (verifiedEmail && verifiedEmail.trim()) || `guest-${Date.now()}`;
+
+      const referenceId =
+        (verifiedEmail && verifiedEmail.trim()) || `guest-${Date.now()}`;
 
       const payload = {
         amount: amountToPay,
         currency: "INR",
         description: `Ticket - ${ticketType || "General"}`,
         reference_id: referenceId,
+
         metadata: {
           ticketType,
           referenceId,
-          couponCode: couponResult && couponResult.coupon ? couponResult.coupon.code : couponCode.trim().toUpperCase(),
-          buyer_name: (typeof window !== "undefined" && localStorage.getItem("visitorName")) || "",
-          email: (verifiedEmail && verifiedEmail.trim()) || "",
+
+          couponCode:
+            couponResult && couponResult.coupon
+              ? couponResult.coupon.code
+              : couponCode.trim().toUpperCase(),
+
+          buyer_name:
+            (typeof window !== "undefined" &&
+              localStorage.getItem("visitorName")) ||
+            "",
+
+          email: verifiedEmail || "",
         },
       };
 
@@ -200,101 +222,166 @@ export default function ManualPaymentStep({
 
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
+
         body: JSON.stringify(payload),
+
         credentials: "include",
       });
 
-      let data = null;
-      let rawText = null;
-      try {
-        rawText = await res.text();
-        try {
-          data = JSON.parse(rawText);
-        } catch {
-          data = null;
-        }
-      } catch (e) {
-        rawText = null;
-        data = null;
-      }
+      const data = await res.json().catch(() => null);
 
       if (!res.ok || !data || !data.success) {
-        const providerHint =
-          backendBaseCandidate && likelyProviderHost(backendBaseCandidate)
-            ? "It looks like your frontend is configured to call the payment provider directly. Make sure REACT_APP_API_BASE / window.__API_BASE__ point to your backend (not the provider)."
-            : null;
         const errMsg =
-          (data && (data.error || data.provider_error || data.details || JSON.stringify(data))) ||
-          (rawText && rawText.slice(0, 200)) ||
-          `Failed to create payment order (status ${res.status})` +
-            (providerHint ? " - " + providerHint : "");
+          (data &&
+            (data.error ||
+              data.provider_error ||
+              data.details ||
+              JSON.stringify(data))) ||
+          `Failed to create payment order (${res.status})`;
+
         setError(errMsg);
         setPayLoading(false);
         return;
       }
 
-      const checkoutUrl =
-        data.checkoutUrl || data.longurl || data.raw?.payment_request?.longurl || data.raw?.longurl;
-      if (!checkoutUrl) {
-        setError("Payment provider did not return a checkout URL.");
+      if (!window.Razorpay) {
+        setError("Razorpay SDK not loaded. Check index.html script.");
+
         setPayLoading(false);
         return;
       }
 
-      const w = window.open(checkoutUrl, "_blank", "noopener,noreferrer");
-      if (!w) {
-        setError("Could not open payment window. Please allow popups.");
-        setPayLoading(false);
-        return;
-      }
+      const options = {
+        key: data.key,
 
-      setCheckoutOpened(true);
-      setPaymentStatus("pending");
+        amount: data.amount,
+
+        currency: data.currency,
+
+        order_id: data.orderId,
+
+        name: "RailTrans Expo",
+
+        description: `Ticket - ${ticketType || "General"}`,
+
+        prefill: {
+          name:
+            (typeof window !== "undefined" &&
+              localStorage.getItem("visitorName")) ||
+            "",
+
+          email: verifiedEmail || "",
+        },
+
+        theme: {
+          color: "#1B3A8A",
+        },
+
+        method: {
+          upi: true,
+          card: true,
+          netbanking: true,
+          wallet: true,
+        },
+
+        handler(response) {
+          console.log("Payment success:", response);
+
+          setCheckoutOpened(true);
+
+          setPaymentStatus("pending");
+        },
+
+        modal: {
+          ondismiss: function () {
+            setPayLoading(false);
+          },
+        },
+      };
+
+      const razor = new window.Razorpay(options);
+
+      razor.open();
+
+      /* =====================================================
+       POLLING
+    ===================================================== */
 
       let attempts = 0;
+
       pollRef.current = setInterval(async () => {
         attempts += 1;
+
         try {
-          const statusUrl = makeUrl(`/api/payment/status?reference_id=${encodeURIComponent(referenceId)}`);
-          const st = await fetch(statusUrl, { method: "GET", credentials: "include", headers: { "ngrok-skip-browser-warning": "69420" } });
+          const statusUrl = makeUrl(
+            `/api/payment/status?reference_id=${encodeURIComponent(
+              referenceId,
+            )}`,
+          );
+
+          const st = await fetch(statusUrl, {
+            method: "GET",
+
+            credentials: "include",
+
+            headers: {
+              "ngrok-skip-browser-warning": "69420",
+            },
+          });
+
           if (!st.ok) return;
 
           const js = await st.json().catch(() => null);
+
           if (!js) return;
+
           const status = (js.status || "").toString().toLowerCase();
 
           if (["paid", "captured", "completed", "success"].includes(status)) {
             clearInterval(pollRef.current);
+
             pollRef.current = null;
+
             setPaymentStatus("paid");
 
-            // 🔥 DO NOT CONSUME COUPON HERE — BACKEND FINALIZES AFTER TICKET UPGRADE
-
             const rec = js.record || js.data || js.payment || js;
-            const providerPaymentId = rec?.provider_payment_id || rec?.payment_id || rec?.id || null;
+
+            const providerPaymentId =
+              rec?.provider_payment_id || rec?.payment_id || rec?.id || null;
+
             const finalTx = providerPaymentId || `provider-${Date.now()}`;
+
             try {
               onTxIdChange && onTxIdChange(finalTx);
             } catch (_) {}
+
             try {
-              if (w && !w.closed) w.close();
+              onProofUpload && onProofUpload();
             } catch (_) {}
-            onProofUpload && onProofUpload();
           } else if (["failed", "cancelled", "void"].includes(status)) {
             clearInterval(pollRef.current);
+
             pollRef.current = null;
+
             setPaymentStatus("failed");
+
             setError("Payment failed or cancelled. You may retry.");
-            try {
-              if (w && !w.closed) w.close();
-            } catch (_) {}
           } else {
             if (attempts > 40) {
               clearInterval(pollRef.current);
+
               pollRef.current = null;
+
               setPaymentStatus("pending");
-              setError("Payment not confirmed yet. If you completed payment, wait a bit and refresh the page.");
+
+              setError(
+                "Payment not confirmed yet. If you completed payment, wait a bit and refresh.",
+              );
             }
           }
         } catch (e) {
@@ -321,13 +408,20 @@ export default function ManualPaymentStep({
   return (
     <div className="bg-white rounded-xl shadow-xl p-8 max-w-lg mx-auto mt-8">
       <div className="text-xl font-bold mb-2">
-        Payment — {ticketType ? `${ticketType.charAt(0).toUpperCase() + ticketType.slice(1)} Ticket` : "Ticket"}
+        Payment —{" "}
+        {ticketType
+          ? `${ticketType.charAt(0).toUpperCase() + ticketType.slice(1)} Ticket`
+          : "Ticket"}
       </div>
 
       <div className="mb-4">
         <div className="text-sm text-gray-600">Base Price</div>
-        <div className="text-2xl font-semibold text-[#196e87]">₹{ticketPrice}</div>
-        <div className="text-xs text-gray-500">GST (18%): ₹{gst} — Original Total: ₹{originalTotal}</div>
+        <div className="text-2xl font-semibold text-[#196e87]">
+          ₹{ticketPrice}
+        </div>
+        <div className="text-xs text-gray-500">
+          GST (18%): ₹{gst} — Original Total: ₹{originalTotal}
+        </div>
       </div>
 
       {/* Coupon area */}
@@ -351,9 +445,13 @@ export default function ManualPaymentStep({
               disabled={couponBusy || (couponResult && couponResult.valid)}
               type="button"
             >
-              {couponBusy ? "Applying..." : (couponResult && couponResult.valid ? "Applied" : "Apply")}
+              {couponBusy
+                ? "Applying..."
+                : couponResult && couponResult.valid
+                  ? "Applied"
+                  : "Apply"}
             </button>
-            {(couponResult && couponResult.valid) && (
+            {couponResult && couponResult.valid && (
               <button
                 className="px-2 py-1 text-xs border border-gray-500 rounded bg-white text-gray-700"
                 onClick={handleClearCoupon}
@@ -364,22 +462,38 @@ export default function ManualPaymentStep({
             )}
           </div>
         </div>
-        {couponError && <div className="mt-2 text-red-600 text-sm">{couponError}</div>}
+        {couponError && (
+          <div className="mt-2 text-red-600 text-sm">{couponError}</div>
+        )}
         {couponResult && (
           <div className="mt-3 text-sm text-gray-700 p-2 bg-white border rounded">
             {couponResult.valid ? (
               <>
-                <div className="font-medium text-green-700">✅ Coupon applied: {couponResult.coupon?.code || couponCode}</div>
+                <div className="font-medium text-green-700">
+                  ✅ Coupon applied: {couponResult.coupon?.code || couponCode}
+                </div>
                 <div>Discount: {couponResult.discount}%</div>
                 <div>
-                  Reduced total: <span className="font-semibold">₹{Number(couponResult.reducedPrice).toFixed(2)}</span>
+                  Reduced total:{" "}
+                  <span className="font-semibold">
+                    ₹{Number(couponResult.reducedPrice).toFixed(2)}
+                  </span>
                 </div>
-                <div className="mt-2 text-xs text-gray-600">Coupon will be consumed only after your ticket/registration is confirmed.</div>
+                <div className="mt-2 text-xs text-gray-600">
+                  Coupon will be consumed only after your ticket/registration is
+                  confirmed.
+                </div>
               </>
             ) : (
               <>
-                <div className="font-medium text-red-600">❌ Coupon invalid</div>
-                {couponResult.error && <div className="text-xs text-gray-600 mt-1">{couponResult.error}</div>}
+                <div className="font-medium text-red-600">
+                  ❌ Coupon invalid
+                </div>
+                {couponResult.error && (
+                  <div className="text-xs text-gray-600 mt-1">
+                    {couponResult.error}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -388,13 +502,18 @@ export default function ManualPaymentStep({
 
       <div className="mb-6">
         <div className="font-semibold mb-2">Pay Online</div>
-        <div className="text-sm text-gray-700 mb-3">Secure checkout via your payment provider.</div>
+        <div className="text-sm text-gray-700 mb-3">
+          Secure checkout via your payment provider.
+        </div>
         <div className="mb-3">
           <div className="text-sm text-gray-600">Amount to pay</div>
-          <div className="text-2xl font-semibold text-[#196e87]">₹{Number(effectiveTotal).toFixed(2)}</div>
+          <div className="text-2xl font-semibold text-[#196e87]">
+            ₹{Number(effectiveTotal).toFixed(2)}
+          </div>
           {effectiveTotal !== originalTotal && (
             <div className="text-xs text-gray-500">
-              Original: ₹{originalTotal} — You saved ₹{(originalTotal - effectiveTotal).toFixed(2)}
+              Original: ₹{originalTotal} — You saved ₹
+              {(originalTotal - effectiveTotal).toFixed(2)}
             </div>
           )}
         </div>
@@ -404,16 +523,34 @@ export default function ManualPaymentStep({
             onClick={createOrder}
             disabled={payLoading || checkoutOpened || couponBusy}
           >
-            {payLoading ? "Opening checkout..." : checkoutOpened ? "Checkout opened" : "Pay Online"}
+            {payLoading
+              ? "Opening checkout..."
+              : checkoutOpened
+                ? "Checkout opened"
+                : "Pay Online"}
           </button>
         </div>
-        {paymentStatus === "pending" && <div className="mt-2 text-sm text-yellow-600">Waiting for provider confirmation...</div>}
-        {paymentStatus === "paid" && <div className="mt-2 text-sm text-green-600">✅ Payment confirmed.</div>}
+        {paymentStatus === "pending" && (
+          <div className="mt-2 text-sm text-yellow-600">
+            Waiting for provider confirmation...
+          </div>
+        )}
+        {paymentStatus === "paid" && (
+          <div className="mt-2 text-sm text-green-600">
+            ✅ Payment confirmed.
+          </div>
+        )}
       </div>
       <hr className="my-4" />
-      {error && <div className="mt-4 text-red-600 font-medium whitespace-pre-wrap">{error}</div>}
+      {error && (
+        <div className="mt-4 text-red-600 font-medium whitespace-pre-wrap">
+          {error}
+        </div>
+      )}
       <div className="mt-4 text-xs text-gray-500">
-        If you pay online, the checkout will open in a new tab. After successful payment your registration will continue and your coupon will be consumed.
+        If you pay online, the checkout will open in a new tab. After successful
+        payment your registration will continue and your coupon will be
+        consumed.
       </div>
     </div>
   );
