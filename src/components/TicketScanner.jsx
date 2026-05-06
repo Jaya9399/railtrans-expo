@@ -2,9 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import jsQR from "jsqr";
 
 const API_BASE =
-  (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE) ||
-  (typeof window !== "undefined" && (window.__API_BASE__ || window.__BACKEND_ORIGIN__ || null)) ||
-  (typeof window !== "undefined" && window.location && window.location.origin) ||
+  (typeof process !== "undefined" &&
+    process.env &&
+    process.env.REACT_APP_API_BASE) ||
+  (typeof window !== "undefined" &&
+    (window.__API_BASE__ || window.__BACKEND_ORIGIN__ || null)) ||
+  (typeof window !== "undefined" &&
+    window.location &&
+    window.location.origin) ||
   "";
 
 function apiUrl(path) {
@@ -19,16 +24,23 @@ function apiUrl(path) {
 // Extract ticket ID from QR data
 function extractTicketIdFromObject(obj) {
   if (!obj || typeof obj !== "object") return null;
-  
-  const priorityKeys = ["ticket_code", "ticketCode", "code", "ticketId", "ticket_id", "id"];
-  
+
+  const priorityKeys = [
+    "ticket_code",
+    "ticketCode",
+    "code",
+    "ticketId",
+    "ticket_id",
+    "id",
+  ];
+
   for (const k of priorityKeys) {
     if (obj[k] !== undefined && obj[k] !== null) {
       const val = String(obj[k]).trim();
       if (val) return val;
     }
   }
-  
+
   for (const k of Object.keys(obj)) {
     const v = obj[k];
     if (v && typeof v === "object") {
@@ -42,27 +54,35 @@ function extractTicketIdFromObject(obj) {
 function extractTicketId(input) {
   if (!input) return null;
   const s = String(input).trim();
-  
+
   try {
     const parsed = JSON.parse(s);
     if (parsed && typeof parsed === "object") {
       const fromObj = extractTicketIdFromObject(parsed);
       if (fromObj) return fromObj;
     }
-  } catch (_) { }
-  
+  } catch (_) {}
+
   const numericMatch = s.match(/\b\d{6,8}\b/);
   if (numericMatch) return numericMatch[0];
-  
+
   const alnumMatch = s.match(/[A-Za-z0-9]{6,12}/);
   return alnumMatch ? alnumMatch[0] : null;
 }
 
 // Extract name and organization from ticket data
 function extractNameAndOrganization(ticket) {
-  if (!ticket || typeof ticket !== "object") return { name: "", organization: "" };
-  
-  const nameFields = ["name", "full_name", "fullName", "visitor_name", "attendee_name", "n"];
+  if (!ticket || typeof ticket !== "object")
+    return { name: "", organization: "" };
+
+  const nameFields = [
+    "name",
+    "full_name",
+    "fullName",
+    "visitor_name",
+    "attendee_name",
+    "n",
+  ];
   let name = "";
   for (const field of nameFields) {
     if (ticket[field]) {
@@ -70,8 +90,16 @@ function extractNameAndOrganization(ticket) {
       if (name) break;
     }
   }
-  
-  const orgFields = ["company", "organization", "org", "company_name", "companyName", "employer", "affiliation"];
+
+  const orgFields = [
+    "company",
+    "organization",
+    "org",
+    "company_name",
+    "companyName",
+    "employer",
+    "affiliation",
+  ];
   let organization = "";
   for (const field of orgFields) {
     if (ticket[field]) {
@@ -79,21 +107,23 @@ function extractNameAndOrganization(ticket) {
       if (organization) break;
     }
   }
-  
+
   if (!name && ticket.data && typeof ticket.data === "object") {
     name = ticket.data.name || ticket.data.full_name || "";
     organization = ticket.data.company || ticket.data.organization || "";
   }
-  
-  return { 
-    name: name || "Guest", 
-    organization: organization || "Visitor" 
+
+  return {
+    name: name || "Guest",
+    organization: organization || "Visitor",
   };
 }
 
 function normalizeStickerText(v) {
   try {
-    const s = String(v ?? "").replace(/\s+/g, " ").trim();
+    const s = String(v ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
     return s || "";
   } catch {
     return "";
@@ -212,13 +242,15 @@ function printSticker({ name, organization, page = { w: "80mm", h: "50mm" } }) {
   printWin.document.open();
   printWin.document.write(html);
   printWin.document.close();
-  
+
   printWin.onload = () => {
     setTimeout(() => {
       printWin.focus();
       printWin.print();
-      setTimeout(() => { 
-        try { printWin.close(); } catch {} 
+      setTimeout(() => {
+        try {
+          printWin.close();
+        } catch {}
       }, 500);
     }, 200);
   };
@@ -262,19 +294,23 @@ export default function TicketScanner({
 
   useEffect(() => {
     let mounted = true;
-    
+
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+          video: {
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
           audio: false,
         });
-        
+
         if (!mounted) {
-          stream.getTracks().forEach(t => t.stop());
+          stream.getTracks().forEach((t) => t.stop());
           return;
         }
-        
+
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -283,20 +319,38 @@ export default function TicketScanner({
 
         const canvas = canvasRef.current;
         if (!canvas) return;
-        
+
         const ctx = canvas.getContext("2d");
 
         const tick = () => {
           if (!mounted || !videoRef.current || !canvasRef.current) return;
-          
+
           try {
-            if (videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
+            if (
+              videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA
+            ) {
               canvas.width = videoRef.current.videoWidth;
               canvas.height = videoRef.current.videoHeight;
-              ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-              const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
-              
+              ctx.drawImage(
+                videoRef.current,
+                0,
+                0,
+                canvas.width,
+                canvas.height,
+              );
+              const imageData = ctx.getImageData(
+                0,
+                0,
+                canvas.width,
+                canvas.height,
+              );
+              const code = jsQR(
+                imageData.data,
+                imageData.width,
+                imageData.height,
+                { inversionAttempts: "attemptBoth" },
+              );
+
               if (code && !scanningRef.current && !successPausedRef.current) {
                 handleRawScan(code.data);
               }
@@ -304,7 +358,7 @@ export default function TicketScanner({
           } catch (e) {
             console.warn("frame read error", e?.message);
           }
-          
+
           rafRef.current = requestAnimationFrame(tick);
         };
 
@@ -321,13 +375,14 @@ export default function TicketScanner({
     return () => {
       mounted = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      if (streamRef.current)
+        streamRef.current.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
   async function handleRawScan(data) {
     if (scanningRef.current) return;
-    
+
     scanningRef.current = true;
     setRawPayload(String(data));
     setMessage("QR detected — processing...");
@@ -338,7 +393,9 @@ export default function TicketScanner({
       setMessage("QR scanned but no ticket id found.");
       setValidation({ ok: false, error: "No ticket id extracted" });
       if (onError) onError(new Error("No ticket id extracted"));
-      setTimeout(() => { scanningRef.current = false; }, 700);
+      setTimeout(() => {
+        scanningRef.current = false;
+      }, 700);
       return;
     }
 
@@ -350,22 +407,26 @@ export default function TicketScanner({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticketId: extracted }),
-        credentials: "include"
+        credentials: "include",
       });
-      
+
       const js = await res.json().catch(() => ({}));
-      
+
       if (!res.ok || !js || !js.success) {
-        setValidation({ ok: false, error: js?.error || `Validate failed (${res.status})` });
+        setValidation({
+          ok: false,
+          error: js?.error || `Validate failed (${res.status})`,
+        });
         setMessage("❌ Ticket not matched");
-        if (onError) onError(new Error(js?.error || `Validate failed (${res.status})`));
+        if (onError)
+          onError(new Error(js?.error || `Validate failed (${res.status})`));
       } else {
         setValidation({ ok: true, ticket: js.ticket || js });
         setMessage("✅ Ticket matched");
         successPausedRef.current = true;
-        
+
         if (onSuccess) onSuccess(js.ticket || js);
-        
+
         // Auto-print in sticker mode if enabled
         if (autoPrintOnValidate && isStickerMode) {
           const nameOrg = extractNameAndOrganization(js.ticket || js);
@@ -380,43 +441,53 @@ export default function TicketScanner({
       setMessage("Validation request error");
       if (onError) onError(e);
     } finally {
-      setTimeout(() => { scanningRef.current = false; }, 800);
+      if (!successPausedRef.current) {
+        setTimeout(() => {
+          scanningRef.current = false;
+        }, 800);
+      }
     }
   }
 
   async function doPrint(id) {
     if (!id) return;
-    
+
     const printWin = window.open("", "_blank", "width=800,height=600");
     if (!printWin) {
       setMessage("Popup blocked — allow popups and try again");
       return;
     }
-    
+
     setMessage("Requesting print...");
     try {
       const res = await fetch(printUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticketId: String(id) }),
-        credentials: "include"
+        credentials: "include",
       });
-      
+
       if (!res.ok) {
         printWin.close();
         const js = await res.json().catch(() => null);
-        setValidation(prev => (prev?.ok ? prev : { ok: false, error: js?.error || `Print failed (${res.status})` }));
+        setValidation((prev) =>
+          prev?.ok
+            ? prev
+            : { ok: false, error: js?.error || `Print failed (${res.status})` },
+        );
         setMessage("Print request failed");
         return;
       }
-      
+
       const ct = res.headers.get("content-type") || "";
       if (ct.includes("application/pdf")) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         printWin.location.href = url;
         setTimeout(() => {
-          try { if (printWin && !printWin.closed) printWin.print(); } catch (_) {}
+          try {
+            if (printWin && !printWin.closed) printWin.print();
+          } catch (_) {}
         }, 800);
         setMessage("PDF opened — print dialog should appear");
       } else {
@@ -440,23 +511,32 @@ export default function TicketScanner({
     }
   }
 
-  function handleScanAgain() {
-    successPausedRef.current = false;
-    setValidation(null);
-    setTicketId(null);
-    setRawPayload("");
-    setMessage("Scanning for QR…");
-  }
+ function handleScanAgain() {
+  successPausedRef.current = false;
+  scanningRef.current = false;
+
+  setValidation(null);
+  setTicketId(null);
+  setRawPayload("");
+  setMessage("Scanning for QR…");
+}
 
   function renderValidation() {
     if (!validation) return null;
-    
+
     if (!validation.ok) {
       return (
         <div className="p-3 bg-red-50 text-red-700 rounded">
-          <div><strong>Not matched</strong></div>
-          <div className="text-sm">{validation.error || "Ticket not found"}</div>
-          <button className="mt-2 px-3 py-1 bg-red-100 hover:bg-red-200 rounded" onClick={handleScanAgain}>
+          <div>
+            <strong>Not matched</strong>
+          </div>
+          <div className="text-sm">
+            {validation.error || "Ticket not found"}
+          </div>
+          <button
+            className="mt-2 px-3 py-1 bg-red-100 hover:bg-red-200 rounded"
+            onClick={handleScanAgain}
+          >
             Scan again
           </button>
         </div>
@@ -467,7 +547,10 @@ export default function TicketScanner({
     if (isStickerMode) {
       return (
         <div className="p-3 rounded border bg-white text-gray-900">
-          <div className="border rounded bg-gray-50 p-3" style={{ maxWidth: 420 }}>
+          <div
+            className="border rounded bg-gray-50 p-3"
+            style={{ maxWidth: 420 }}
+          >
             <div className="text-xl font-extrabold leading-tight text-[#1B3A8A]">
               {stickerData.name || "—"}
             </div>
@@ -483,7 +566,7 @@ export default function TicketScanner({
             >
               🖨️ Print Sticker
             </button>
-            <button 
+            <button
               className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded"
               onClick={handleScanAgain}
             >
@@ -499,14 +582,26 @@ export default function TicketScanner({
     return (
       <div className="p-3 bg-green-50 text-green-800 rounded">
         <div className="font-semibold">✅ Ticket Matched</div>
-        <div className="text-sm mt-1"><strong>Name:</strong> {t.name || t.full_name || "-"}</div>
-        <div className="text-sm"><strong>Company:</strong> {t.company || t.organization || "-"}</div>
-        <div className="text-sm"><strong>Category:</strong> {t.category || t.ticket_category || "-"}</div>
+        <div className="text-sm mt-1">
+          <strong>Name:</strong> {t.name || t.full_name || "-"}
+        </div>
+        <div className="text-sm">
+          <strong>Company:</strong> {t.company || t.organization || "-"}
+        </div>
+        <div className="text-sm">
+          <strong>Category:</strong> {t.category || t.ticket_category || "-"}
+        </div>
         <div className="mt-3 flex gap-2">
-          <button className="px-4 py-2 bg-[#196e87] text-white rounded" onClick={() => doPrint(ticketId)}>
+          <button
+            className="px-4 py-2 bg-[#196e87] text-white rounded"
+            onClick={() => doPrint(ticketId)}
+          >
             🖨️ Print Badge
           </button>
-          <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded" onClick={handleScanAgain}>
+          <button
+            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded"
+            onClick={handleScanAgain}
+          >
             Scan again
           </button>
         </div>
@@ -518,7 +613,12 @@ export default function TicketScanner({
     <div>
       <div className="bg-white rounded-lg shadow p-3">
         <div className="mb-3">
-          <video ref={videoRef} style={{ width: "100%", maxHeight: 480, borderRadius: 8 }} playsInline muted />
+          <video
+            ref={videoRef}
+            style={{ width: "100%", maxHeight: 480, borderRadius: 8 }}
+            playsInline
+            muted
+          />
           <canvas ref={canvasRef} style={{ display: "none" }} />
         </div>
 
@@ -533,11 +633,15 @@ export default function TicketScanner({
           <>
             <div className="mb-3">
               <div className="text-xs text-gray-500">Raw payload:</div>
-              <pre className="bg-gray-50 p-2 rounded text-xs max-h-28 overflow-auto">{rawPayload || "—"}</pre>
+              <pre className="bg-gray-50 p-2 rounded text-xs max-h-28 overflow-auto">
+                {rawPayload || "—"}
+              </pre>
             </div>
             <div className="mb-3">
               <div className="text-xs text-gray-500">Extracted ticket id:</div>
-              <div className="font-mono text-sm p-2 bg-gray-50 rounded">{ticketId || "—"}</div>
+              <div className="font-mono text-sm p-2 bg-gray-50 rounded">
+                {ticketId || "—"}
+              </div>
             </div>
           </>
         )}
