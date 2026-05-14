@@ -268,14 +268,14 @@ export default function TicketScanner({
   const canvasRef = useRef(null);
   const rafRef = useRef(null);
   const streamRef = useRef(null);
-  const scanningLockRef = useRef(false);
-  const mountedRef = useRef(true);
+  const isLockedRef = useRef(false);
+  const isMountedRef = useRef(true);
 
-  const [message, setMessage] = useState("Scanning for QR…");
+  const [message, setMessage] = useState("Initializing camera...");
   const [rawPayload, setRawPayload] = useState("");
   const [ticketId, setTicketId] = useState(null);
   const [validation, setValidation] = useState(null);
-  const [cameraActive, setCameraActive] = useState(false); // Start as false, will be set to true after camera starts
+  const [showVideo, setShowVideo] = useState(true);
 
   const validateUrl = apiUrl("/api/tickets/validate");
   const printUrl = apiUrl("/api/tickets/scan");
@@ -321,7 +321,7 @@ export default function TicketScanner({
         audio: false,
       });
 
-      if (!mountedRef.current) {
+      if (!isMountedRef.current) {
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
@@ -335,7 +335,7 @@ export default function TicketScanner({
         console.log("Video playing");
       }
 
-      setCameraActive(true);
+      setShowVideo(true);
       setMessage("Scanning for QR…");
 
       const canvas = canvasRef.current;
@@ -348,13 +348,11 @@ export default function TicketScanner({
 
       const tick = () => {
         // Check all conditions that should stop scanning
-        if (!mountedRef.current) {
-          console.log("Component unmounted, stopping scan");
+        if (!isMountedRef.current) {
           return;
         }
         
-        if (scanningLockRef.current) {
-          // Stop the loop when locked
+        if (isLockedRef.current) {
           return;
         }
         
@@ -388,17 +386,16 @@ export default function TicketScanner({
             { inversionAttempts: "attemptBoth" },
           );
 
-          if (code && !scanningLockRef.current) {
+          if (code && !isLockedRef.current) {
             console.log("QR Code detected!");
             handleRawScan(code.data);
-            return; // Stop the animation loop after detecting QR
+            return;
           }
         } catch (e) {
           console.warn("frame read error", e?.message);
         }
 
-        // Only continue if still mounted and not locked
-        if (mountedRef.current && !scanningLockRef.current) {
+        if (isMountedRef.current && !isLockedRef.current) {
           rafRef.current = requestAnimationFrame(tick);
         }
       };
@@ -408,7 +405,7 @@ export default function TicketScanner({
     } catch (err) {
       console.error("Camera start error:", err);
       setMessage(`Camera error: ${err.message || err}`);
-      setCameraActive(false);
+      setShowVideo(false);
       if (onError) onError(err);
     }
   };
@@ -416,26 +413,21 @@ export default function TicketScanner({
   // Start camera on component mount
   useEffect(() => {
     console.log("Component mounted, starting camera...");
-    mountedRef.current = true;
-    scanningLockRef.current = false;
+    isMountedRef.current = true;
+    isLockedRef.current = false;
     
-    // Small delay to ensure DOM is ready
-    const timer = setTimeout(() => {
-      startCamera();
-    }, 500);
+    startCamera();
 
     return () => {
       console.log("Component unmounting, cleaning up...");
-      clearTimeout(timer);
-      mountedRef.current = false;
-      scanningLockRef.current = true; // Lock to stop any pending operations
+      isMountedRef.current = false;
       cleanup();
     };
-  }, []); // Only run on mount
+  }, []);
 
   async function handleRawScan(data) {
     // Double-check lock
-    if (scanningLockRef.current) {
+    if (isLockedRef.current) {
       console.log("Scan locked, ignoring QR detection");
       return;
     }
@@ -443,11 +435,11 @@ export default function TicketScanner({
     console.log("Processing QR data...");
     
     // Lock immediately to prevent any further scanning
-    scanningLockRef.current = true;
+    isLockedRef.current = true;
     
     // Stop camera and animation frame
     cleanup();
-    setCameraActive(false);
+    setShowVideo(false);
 
     setRawPayload(String(data));
     setMessage("QR detected — processing...");
@@ -459,10 +451,10 @@ export default function TicketScanner({
       setValidation({ ok: false, error: "No ticket id extracted" });
       if (onError) onError(new Error("No ticket id extracted"));
       
-      // Auto-unlock after error (user can click scan again sooner)
+      // Auto-unlock after error
       setTimeout(() => {
-        if (mountedRef.current) {
-          scanningLockRef.current = false;
+        if (isMountedRef.current) {
+          isLockedRef.current = false;
         }
       }, 2000);
       return;
@@ -492,12 +484,13 @@ export default function TicketScanner({
         
         // Auto-unlock after error
         setTimeout(() => {
-          if (mountedRef.current) {
-            scanningLockRef.current = false;
+          if (isMountedRef.current) {
+            isLockedRef.current = false;
           }
         }, 2000);
       } else {
         // SUCCESS - Keep everything locked
+        console.log("✅ Validation successful, keeping UI visible");
         setValidation({ ok: true, ticket: js.ticket || js });
         setMessage("✅ Ticket matched");
 
@@ -512,7 +505,6 @@ export default function TicketScanner({
         }
         
         // DO NOT unlock - stay locked until user clicks "Scan again"
-        console.log("Ticket validated successfully, waiting for user action");
       }
     } catch (e) {
       console.error("[TicketScanner] validate error", e);
@@ -522,8 +514,8 @@ export default function TicketScanner({
       
       // Auto-unlock after error
       setTimeout(() => {
-        if (mountedRef.current) {
-          scanningLockRef.current = false;
+        if (isMountedRef.current) {
+          isLockedRef.current = false;
         }
       }, 2000);
     }
@@ -554,9 +546,6 @@ export default function TicketScanner({
         const js = await res.json().catch(() => null);
         const errorMsg = js?.error || `Print failed (${res.status})`;
         setMessage(`Print failed: ${errorMsg}`);
-        if (!validation?.ok) {
-          setValidation({ ok: false, error: errorMsg });
-        }
         return;
       }
 
@@ -600,7 +589,7 @@ export default function TicketScanner({
     console.log("Resetting scanner...");
     
     // Unlock scanning
-    scanningLockRef.current = false;
+    isLockedRef.current = false;
 
     // Clear validation state
     setValidation(null);
@@ -705,21 +694,20 @@ export default function TicketScanner({
     <div>
       <div className="bg-white rounded-lg shadow p-3">
         <div className="mb-3">
-          {/* Always render video element, control visibility with cameraActive */}
-          <video
-            ref={videoRef}
-            style={{ 
-              width: "100%", 
-              maxHeight: 480, 
-              borderRadius: 8,
-              display: cameraActive ? "block" : "none"
-            }}
-            playsInline
-            muted
-            autoPlay
-          />
-          {/* Show placeholder when camera is not active */}
-          {!cameraActive && (
+          {/* Video element - shown/hidden based on showVideo state */}
+          {showVideo ? (
+            <video
+              ref={videoRef}
+              style={{ 
+                width: "100%", 
+                maxHeight: 480, 
+                borderRadius: 8,
+              }}
+              playsInline
+              muted
+              autoPlay
+            />
+          ) : (
             <div 
               className="bg-gray-100 rounded-lg flex items-center justify-center"
               style={{ width: "100%", height: 320, borderRadius: 8 }}
@@ -729,17 +717,22 @@ export default function TicketScanner({
                   {validation?.ok ? "✅" : "📷"}
                 </div>
                 <div className="text-lg font-semibold">
-                  {validation?.ok ? "Ticket Validated" : "Camera Starting..."}
+                  {validation?.ok ? "Ticket Validated" : "Camera Paused"}
                 </div>
                 <div className="text-sm mt-1">
-                  {validation?.ok ? "Ready to print or scan again" : "Please allow camera access"}
+                  {validation?.ok 
+                    ? "Ready to print or scan again" 
+                    : message.includes("error") || message.includes("Error")
+                      ? "Camera access failed"
+                      : "Camera stopped"
+                  }
                 </div>
-                {!validation?.ok && !cameraActive && (
+                {!validation?.ok && !message.includes("Scanning") && (
                   <button
                     className="mt-3 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
                     onClick={startCamera}
                   >
-                    🔄 Retry Camera
+                    🔄 Start Camera
                   </button>
                 )}
               </div>
@@ -770,21 +763,22 @@ export default function TicketScanner({
               </div>
             </div>
             <div className="mb-3">
-              <div className="text-xs text-gray-500">Camera Status:</div>
+              <div className="text-xs text-gray-500">Video visible:</div>
               <div className="font-mono text-sm p-2 bg-gray-50 rounded">
-                {cameraActive ? "📹 Active" : "⏸️ Paused"}
+                {showVideo ? "📹 Visible" : "🚫 Hidden"}
               </div>
             </div>
             <div className="mb-3">
               <div className="text-xs text-gray-500">Lock status:</div>
               <div className="font-mono text-sm p-2 bg-gray-50 rounded">
-                {scanningLockRef.current ? "LOCKED 🔒" : "UNLOCKED 🔓"}
+                {isLockedRef.current ? "LOCKED 🔒" : "UNLOCKED 🔓"}
               </div>
             </div>
           </>
         )}
 
-        <div>{renderValidation()}</div>
+        {/* VALIDATION RESULT - Always shown when validation exists */}
+        {validation && renderValidation()}
       </div>
     </div>
   );
