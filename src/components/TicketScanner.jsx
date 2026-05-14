@@ -392,15 +392,14 @@ const TicketScanner = React.memo(function TicketScanner({
     }
 
     const iframe = document.querySelector("#badge-preview-frame");
-
     if (iframe && iframe.contentWindow) {
       iframe.contentWindow.focus();
 
-     
+      setTimeout(() => {
+        iframe.contentWindow.print();
+      }, 300);
 
       setMessage("✅ Print dialog opened");
-    } else {
-      setMessage("❌ Preview not ready");
     }
   }, [pdfUrl]);
 
