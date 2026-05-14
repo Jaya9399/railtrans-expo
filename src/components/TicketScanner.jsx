@@ -243,17 +243,14 @@ function printSticker({ name, organization, page = { w: "80mm", h: "50mm" } }) {
   printWin.document.write(html);
   printWin.document.close();
 
-  printWin.onload = () => {
+ printWin.onload = () => {
+  try {
     setTimeout(() => {
       printWin.focus();
       printWin.print();
-      setTimeout(() => {
-        try {
-          printWin.close();
-        } catch {}
-      }, 500);
-    }, 200);
-  };
+    }, 500);
+  } catch (_) {}
+};
 
   return true;
 }
@@ -351,9 +348,14 @@ export default function TicketScanner({
                 { inversionAttempts: "attemptBoth" },
               );
 
-              if (code && !scanningRef.current && !successPausedRef.current) {
-                handleRawScan(code.data);
-              }
+              if (
+  code &&
+  !scanningRef.current &&
+  !successPausedRef.current &&
+  !validation?.ok
+) {
+  handleRawScan(code.data);
+}
             }
           } catch (e) {
             console.warn("frame read error", e?.message);
@@ -524,14 +526,15 @@ export default function TicketScanner({
   }
 
   function handleScanAgain() {
-    successPausedRef.current = false;
-    scanningRef.current = false;
+  successPausedRef.current = false;
+  scanningRef.current = false;
 
-    setValidation(null);
-    setTicketId(null);
-    setRawPayload("");
-    setMessage("Scanning for QR…");
-  }
+  setValidation(null);
+  setMessage("Scanning for QR…");
+
+  setTicketId(null);
+  setRawPayload("");
+}
 
   function renderValidation() {
     if (!validation) return null;
