@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+} from "react";
 import jsQR from "jsqr";
 
 const API_BASE =
@@ -261,7 +267,7 @@ const TicketScanner = React.memo(function TicketScanner({
   const streamRef = useRef(null);
   const isLockedRef = useRef(false);
   const isMountedRef = useRef(true);
-  
+
   // Store ticket data in refs to prevent re-render issues
   const ticketDataRef = useRef({
     ticketId: null,
@@ -315,91 +321,86 @@ const TicketScanner = React.memo(function TicketScanner({
   }, []);
 
   // Handle print badge - defined early to avoid issues
-  const handlePrintBadge = useCallback(async (id) => {
-    console.log("handlePrintBadge called with id:", id);
-    if (!id) {
-      console.log("No ticket ID provided");
-      return;
-    }
-
-    setIsLoadingPDF(true);
-    setPrintError(null);
-    setMessage("Loading badge preview...");
-
-    try {
-      console.log("Fetching PDF from:", printUrl);
-      const res = await fetch(printUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticketId: String(id) }),
-        credentials: "include",
-      });
-
-      console.log("Response status:", res.status);
-
-      if (!res.ok) {
-        const js = await res.json().catch(() => null);
-        const errorMsg = js?.error || `Failed to load badge (${res.status})`;
-        setPrintError(errorMsg);
-        setMessage(`Error: ${errorMsg}`);
-        setIsLoadingPDF(false);
+  const handlePrintBadge = useCallback(
+    async (id) => {
+      console.log("handlePrintBadge called with id:", id);
+      if (!id) {
+        console.log("No ticket ID provided");
         return;
       }
 
-      const ct = res.headers.get("content-type") || "";
-      console.log("Content-Type:", ct);
-      
-      if (ct.includes("application/pdf")) {
-        const blob = await res.blob();
-        console.log("PDF blob size:", blob.size);
-        const url = URL.createObjectURL(blob);
-        setPdfUrl(url);
-        ticketDataRef.current.pdfUrl = url;
-        setShowPrintPreview(true);
-        setMessage("✅ Badge preview loaded - Click print when ready");
-      } else {
-        setPrintError("Server did not return a PDF");
-        setMessage("Error: Invalid response from server");
+      setIsLoadingPDF(true);
+      setPrintError(null);
+      setMessage("Loading badge preview...");
+
+      try {
+        console.log("Fetching PDF from:", printUrl);
+        const res = await fetch(printUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ticketId: String(id) }),
+          credentials: "include",
+        });
+
+        console.log("Response status:", res.status);
+
+        if (!res.ok) {
+          const js = await res.json().catch(() => null);
+          const errorMsg = js?.error || `Failed to load badge (${res.status})`;
+          setPrintError(errorMsg);
+          setMessage(`Error: ${errorMsg}`);
+          setIsLoadingPDF(false);
+          return;
+        }
+
+        const ct = res.headers.get("content-type") || "";
+        console.log("Content-Type:", ct);
+
+        if (ct.includes("application/pdf")) {
+          const blob = await res.blob();
+          console.log("PDF blob size:", blob.size);
+          const url = URL.createObjectURL(blob);
+          setPdfUrl(url);
+          ticketDataRef.current.pdfUrl = url;
+          setShowPrintPreview(true);
+          setMessage("✅ Badge preview loaded - Click print when ready");
+          setShowVideo(false);
+          isLockedRef.current = true;
+        } else {
+          setPrintError("Server did not return a PDF");
+          setMessage("Error: Invalid response from server");
+        }
+      } catch (e) {
+        console.error("Print error:", e);
+        setPrintError(e.message || "Unknown error");
+        setMessage(`Error: ${e.message || "Failed to load badge"}`);
+      } finally {
+        setIsLoadingPDF(false);
       }
-    } catch (e) {
-      console.error("Print error:", e);
-      setPrintError(e.message || "Unknown error");
-      setMessage(`Error: ${e.message || "Failed to load badge"}`);
-    } finally {
-      setIsLoadingPDF(false);
-    }
-  }, [printUrl]);
+    },
+    [printUrl],
+  );
 
   // Handle printing
   const handlePrint = useCallback(() => {
     const currentPdfUrl = pdfUrl || ticketDataRef.current.pdfUrl;
     console.log("handlePrint called, pdfUrl:", currentPdfUrl);
-    
+
     if (!currentPdfUrl) {
       console.log("No PDF URL available");
       return;
     }
-    
-    const printWindow = window.open(currentPdfUrl, "_blank");
-    if (printWindow) {
-      printWindow.onload = () => {
-        setTimeout(() => {
-          printWindow.print();
-        }, 500);
-      };
+
+    const iframe = document.querySelector("#badge-preview-frame");
+
+    if (iframe && iframe.contentWindow) {
+      iframe.contentWindow.focus();
+
+     
+
       setMessage("✅ Print dialog opened");
     } else {
-      setMessage("⚠️ Popup blocked - Please allow popups and try again");
-      // Alternative: try direct print
-      const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      iframe.src = currentPdfUrl;
-      document.body.appendChild(iframe);
-      iframe.onload = () => {
-        setTimeout(() => {
-          iframe.contentWindow.print();
-        }, 500);
-      };
+      setMessage("❌ Preview not ready");
     }
   }, [pdfUrl]);
 
@@ -407,8 +408,8 @@ const TicketScanner = React.memo(function TicketScanner({
   const handleDownload = useCallback(() => {
     const currentPdfUrl = pdfUrl || ticketDataRef.current.pdfUrl;
     if (!currentPdfUrl) return;
-    
-    const a = document.createElement('a');
+
+    const a = document.createElement("a");
     a.href = currentPdfUrl;
     a.download = `badge-${ticketId || ticketDataRef.current.ticketId}.pdf`;
     document.body.appendChild(a);
@@ -432,30 +433,30 @@ const TicketScanner = React.memo(function TicketScanner({
   // Handle scan again
   const handleScanAgain = useCallback(() => {
     console.log("Resetting scanner...");
-    
+
     if (showPrintPreview) {
       handleClosePreview();
     }
-    
+
     isLockedRef.current = false;
-    
+
     setValidation(null);
     setTicketId(null);
     setRawPayload("");
     setShowPrintPreview(false);
     setPrintError(null);
-    
+
     if (pdfUrl) {
       URL.revokeObjectURL(pdfUrl);
       setPdfUrl(null);
     }
-    
+
     ticketDataRef.current = {
       ticketId: null,
       validation: null,
       pdfUrl: null,
     };
-    
+
     startCamera();
   }, [showPrintPreview, handleClosePreview, pdfUrl]);
 
@@ -481,7 +482,7 @@ const TicketScanner = React.memo(function TicketScanner({
 
       console.log("Camera access granted, setting up video...");
       streamRef.current = stream;
-      
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -503,7 +504,7 @@ const TicketScanner = React.memo(function TicketScanner({
         if (!isMountedRef.current) return;
         if (isLockedRef.current) return;
         if (!videoRef.current || !canvasRef.current) return;
-        
+
         if (videoRef.current.readyState !== videoRef.current.HAVE_ENOUGH_DATA) {
           rafRef.current = requestAnimationFrame(tick);
           return;
@@ -543,98 +544,113 @@ const TicketScanner = React.memo(function TicketScanner({
   }, [cleanup, onError]);
 
   // Handle raw scan
-  const handleRawScan = useCallback(async (data) => {
-    if (isLockedRef.current) {
-      console.log("Scan locked, ignoring QR detection");
-      return;
-    }
+  const handleRawScan = useCallback(
+    async (data) => {
+      if (isLockedRef.current) {
+        console.log("Scan locked, ignoring QR detection");
+        return;
+      }
 
-    console.log("Processing QR data...");
-    
-    isLockedRef.current = true;
-    cleanup();
-    setShowVideo(false);
-    setRawPayload(String(data));
-    setMessage("QR detected — processing...");
-    setValidation(null);
+      console.log("Processing QR data...");
 
-    const extracted = extractTicketId(String(data));
-    if (!extracted) {
-      setMessage("QR scanned but no ticket id found.");
-      setValidation({ ok: false, error: "No ticket id extracted" });
-      if (onError) onError(new Error("No ticket id extracted"));
-      
-      setTimeout(() => {
-        if (isMountedRef.current) {
-          isLockedRef.current = false;
-        }
-      }, 2000);
-      return;
-    }
+      isLockedRef.current = true;
+      cleanup();
+      setShowVideo(false);
+      setRawPayload(String(data));
+      setMessage("QR detected — processing...");
+      setValidation(null);
 
-    setTicketId(extracted);
-    ticketDataRef.current.ticketId = extracted;
-    setMessage(`Validating ticket: ${extracted}...`);
+      const extracted = extractTicketId(String(data));
+      if (!extracted) {
+        setMessage("QR scanned but no ticket id found.");
+        setValidation({ ok: false, error: "No ticket id extracted" });
+        if (onError) onError(new Error("No ticket id extracted"));
 
-    try {
-      const res = await fetch(validateUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticketId: extracted }),
-        credentials: "include",
-      });
-
-      const js = await res.json().catch(() => ({}));
-
-      if (!res.ok || !js || !js.success) {
-        setValidation({
-          ok: false,
-          error: js?.error || `Validate failed (${res.status})`,
-        });
-        setMessage("❌ Ticket not matched");
-        if (onError)
-          onError(new Error(js?.error || `Validate failed (${res.status})`));
-        
         setTimeout(() => {
           if (isMountedRef.current) {
             isLockedRef.current = false;
           }
         }, 2000);
-      } else {
-        console.log("✅ Validation successful, keeping UI visible");
-        setValidation({ ok: true, ticket: js.ticket || js });
-        ticketDataRef.current.validation = { ok: true, ticket: js.ticket || js };
-        setMessage("✅ Ticket matched - Ready to print");
-
-        if (onSuccess) onSuccess(js.ticket || js);
-
-        if (autoPrintOnValidate && isStickerMode) {
-          const nameOrg = extractNameAndOrganization(js.ticket || js);
-          printSticker({ ...nameOrg, page: stickerPageSize });
-        } else if (autoPrintOnValidate && !isStickerMode) {
-          await handlePrintBadge(extracted);
-        }
+        return;
       }
-    } catch (e) {
-      console.error("[TicketScanner] validate error", e);
-      setValidation({ ok: false, error: e.message || String(e) });
-      setMessage("Validation request error");
-      if (onError) onError(e);
-      
-      setTimeout(() => {
-        if (isMountedRef.current) {
-          isLockedRef.current = false;
+
+      setTicketId(extracted);
+      ticketDataRef.current.ticketId = extracted;
+      setMessage(`Validating ticket: ${extracted}...`);
+
+      try {
+        const res = await fetch(validateUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ticketId: extracted }),
+          credentials: "include",
+        });
+
+        const js = await res.json().catch(() => ({}));
+
+        if (!res.ok || !js || !js.success) {
+          setValidation({
+            ok: false,
+            error: js?.error || `Validate failed (${res.status})`,
+          });
+          setMessage("❌ Ticket not matched");
+          if (onError)
+            onError(new Error(js?.error || `Validate failed (${res.status})`));
+
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              isLockedRef.current = false;
+            }
+          }, 2000);
+        } else {
+          console.log("✅ Validation successful, keeping UI visible");
+          setValidation({ ok: true, ticket: js.ticket || js });
+          ticketDataRef.current.validation = {
+            ok: true,
+            ticket: js.ticket || js,
+          };
+          setMessage("✅ Ticket matched - Ready to print");
+
+          if (onSuccess) onSuccess(js.ticket || js);
+
+          if (autoPrintOnValidate && isStickerMode) {
+            const nameOrg = extractNameAndOrganization(js.ticket || js);
+            printSticker({ ...nameOrg, page: stickerPageSize });
+          } else if (autoPrintOnValidate && !isStickerMode) {
+            await handlePrintBadge(extracted);
+          }
         }
-      }, 2000);
-    }
-  }, [cleanup, validateUrl, onError, onSuccess, autoPrintOnValidate, isStickerMode, handlePrintBadge, stickerPageSize]);
+      } catch (e) {
+        console.error("[TicketScanner] validate error", e);
+        setValidation({ ok: false, error: e.message || String(e) });
+        setMessage("Validation request error");
+        if (onError) onError(e);
+
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            isLockedRef.current = false;
+          }
+        }, 2000);
+      }
+    },
+    [
+      cleanup,
+      validateUrl,
+      onError,
+      onSuccess,
+      autoPrintOnValidate,
+      isStickerMode,
+      handlePrintBadge,
+      stickerPageSize,
+    ],
+  );
 
   // Start camera on component mount
   useEffect(() => {
     console.log("Component mounted, starting camera...");
     isMountedRef.current = true;
     isLockedRef.current = false;
-    
+
     startCamera();
 
     return () => {
@@ -755,7 +771,9 @@ const TicketScanner = React.memo(function TicketScanner({
       <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
           <div className="flex items-center justify-between p-4 border-b">
-            <h3 className="text-lg font-semibold">Badge Preview - {currentTicketId}</h3>
+            <h3 className="text-lg font-semibold">
+              Badge Preview - {currentTicketId}
+            </h3>
             <button
               onClick={handleClosePreview}
               className="text-gray-500 hover:text-gray-700 text-2xl leading-none"
@@ -763,10 +781,14 @@ const TicketScanner = React.memo(function TicketScanner({
               ×
             </button>
           </div>
-          
-          <div className="flex-1 p-4 overflow-auto" style={{ minHeight: "60vh" }}>
+
+          <div
+            className="flex-1 p-4 overflow-auto"
+            style={{ minHeight: "60vh" }}
+          >
             {currentPdfUrl ? (
               <iframe
+                id="badge-preview-frame"
                 src={currentPdfUrl}
                 className="w-full h-full border-0"
                 style={{ minHeight: "60vh" }}
@@ -776,7 +798,9 @@ const TicketScanner = React.memo(function TicketScanner({
               <div className="flex items-center justify-center h-full">
                 <div className="text-center text-red-600">
                   <div className="text-4xl mb-2">⚠️</div>
-                  <div className="text-lg font-semibold">Error Loading Preview</div>
+                  <div className="text-lg font-semibold">
+                    Error Loading Preview
+                  </div>
                   <div className="text-sm mt-2">{printError}</div>
                 </div>
               </div>
@@ -789,11 +813,13 @@ const TicketScanner = React.memo(function TicketScanner({
               </div>
             )}
           </div>
-          
+
           <div className="flex items-center justify-between p-4 border-t bg-gray-50">
             <div className="text-sm text-gray-600">
               {validation?.ticket?.name && (
-                <span>Attendee: <strong>{validation.ticket.name}</strong></span>
+                <span>
+                  Attendee: <strong>{validation.ticket.name}</strong>
+                </span>
               )}
             </div>
             <div className="flex gap-2">
@@ -831,9 +857,9 @@ const TicketScanner = React.memo(function TicketScanner({
           {showVideo ? (
             <video
               ref={videoRef}
-              style={{ 
-                width: "100%", 
-                maxHeight: 480, 
+              style={{
+                width: "100%",
+                maxHeight: 480,
                 borderRadius: 8,
               }}
               playsInline
@@ -841,7 +867,7 @@ const TicketScanner = React.memo(function TicketScanner({
               autoPlay
             />
           ) : (
-            <div 
+            <div
               className="bg-gray-100 rounded-lg flex items-center justify-center"
               style={{ width: "100%", height: 320, borderRadius: 8 }}
             >
@@ -853,12 +879,11 @@ const TicketScanner = React.memo(function TicketScanner({
                   {validation?.ok ? "Ticket Validated" : "Camera Paused"}
                 </div>
                 <div className="text-sm mt-1">
-                  {validation?.ok 
-                    ? "Click 'Print Badge' to preview and print" 
+                  {validation?.ok
+                    ? "Click 'Print Badge' to preview and print"
                     : message.includes("error") || message.includes("Error")
                       ? "Camera access failed"
-                      : "Camera stopped"
-                  }
+                      : "Camera stopped"}
                 </div>
                 {!validation?.ok && !message.includes("Scanning") && (
                   <button
@@ -912,7 +937,7 @@ const TicketScanner = React.memo(function TicketScanner({
 
         {validation && renderValidation()}
       </div>
-      
+
       {renderPrintPreview()}
     </div>
   );
