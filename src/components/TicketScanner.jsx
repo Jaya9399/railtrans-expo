@@ -243,14 +243,14 @@ function printSticker({ name, organization, page = { w: "80mm", h: "50mm" } }) {
   printWin.document.write(html);
   printWin.document.close();
 
- printWin.onload = () => {
-  try {
-    setTimeout(() => {
-      printWin.focus();
-      printWin.print();
-    }, 500);
-  } catch (_) {}
-};
+  printWin.onload = () => {
+    try {
+      setTimeout(() => {
+        printWin.focus();
+        printWin.print();
+      }, 500);
+    } catch (_) {}
+  };
 
   return true;
 }
@@ -348,14 +348,17 @@ export default function TicketScanner({
                 { inversionAttempts: "attemptBoth" },
               );
 
-              if (
-  code &&
-  !scanningRef.current &&
-  !successPausedRef.current &&
-  !validation?.ok
-) {
-  handleRawScan(code.data);
-}
+              if (code) {
+                // HARD STOP after successful validation
+                if (successPausedRef.current || validation?.ok) {
+                  return;
+                }
+
+                // Prevent duplicate scans
+                if (!scanningRef.current) {
+                  handleRawScan(code.data);
+                }
+              }
             }
           } catch (e) {
             console.warn("frame read error", e?.message);
@@ -524,17 +527,21 @@ export default function TicketScanner({
       setMessage("No ticket data available to print");
     }
   }
-
   function handleScanAgain() {
-  successPausedRef.current = false;
-  scanningRef.current = false;
+    // reset all scanner locks
+    successPausedRef.current = false;
+    scanningRef.current = false;
 
-  setValidation(null);
-  setMessage("Scanning for QR…");
+    // clear validation state
+    setValidation(null);
 
-  setTicketId(null);
-  setRawPayload("");
-}
+    // clear scanned data
+    setTicketId(null);
+    setRawPayload("");
+
+    // restore scanner UI
+    setMessage("Scanning for QR…");
+  }
 
   function renderValidation() {
     if (!validation) return null;
@@ -611,7 +618,9 @@ export default function TicketScanner({
             className="px-4 py-2 bg-[#196e87] text-white rounded"
             onClick={() => {
               successPausedRef.current = true;
-              scanningRef.current = true;
+
+              // DO NOT leave scanner active after success
+              scanningRef.current = false;
               doPrint(ticketId);
             }}
           >
