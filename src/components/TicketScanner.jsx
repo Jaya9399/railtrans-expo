@@ -85,9 +85,8 @@ function extractNameAndOrganization(ticket) {
 }
 
 function normalizeStickerText(v) {
-  try {
-    return String(v ?? "").replace(/\s+/g, " ").trim() || "";
-  } catch { return ""; }
+  try { return String(v ?? "").replace(/\s+/g, " ").trim() || ""; }
+  catch { return ""; }
 }
 
 function printSticker({ name, organization, page = { w: "80mm", h: "50mm" } }) {
@@ -114,10 +113,8 @@ function printSticker({ name, organization, page = { w: "80mm", h: "50mm" } }) {
     </style>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Event Sticker</title>${style}</head>
     <body><div class="sticker-wrap"><div class="sticker">
-      <div class="name">${safeName}</div>
-      <div class="org">${safeOrg}</div>
-      <div class="separator"></div>
-      <div class="event-name">RailTrans Expo 2026</div>
+      <div class="name">${safeName}</div><div class="org">${safeOrg}</div>
+      <div class="separator"></div><div class="event-name">RailTrans Expo 2026</div>
     </div></div></body></html>`;
   printWin.document.open();
   printWin.document.write(html);
@@ -142,12 +139,7 @@ const TicketScanner = React.memo(function TicketScanner({
   const startCameraRef = useRef(null);
   const handleRawScanRef = useRef(null);
 
-  // All ticket data lives in ONE ref — no stale closures ever
-  const ticketDataRef = useRef({
-    ticketId: null,
-    validation: null,
-    pdfUrl: null,
-  });
+  const ticketDataRef = useRef({ ticketId: null, validation: null, pdfUrl: null });
 
   const [message, setMessage] = useState("Initializing camera...");
   const [rawPayload, setRawPayload] = useState("");
@@ -161,7 +153,6 @@ const TicketScanner = React.memo(function TicketScanner({
 
   const validateUrl = useMemo(() => apiUrl("/api/tickets/validate"), []);
   const printUrl = useMemo(() => apiUrl("/api/tickets/scan"), []);
-
   const isStickerMode = String(mode).toLowerCase() === "sticker";
 
   const stickerData = useMemo(() => {
@@ -169,16 +160,9 @@ const TicketScanner = React.memo(function TicketScanner({
     return extractNameAndOrganization(validation.ticket);
   }, [validation]);
 
-  // Keep ref in sync with state so modal can always read latest values
-  useEffect(() => {
-    ticketDataRef.current.ticketId = ticketId;
-  }, [ticketId]);
-  useEffect(() => {
-    ticketDataRef.current.validation = validation;
-  }, [validation]);
-  useEffect(() => {
-    ticketDataRef.current.pdfUrl = pdfUrl;
-  }, [pdfUrl]);
+  useEffect(() => { ticketDataRef.current.ticketId = ticketId; }, [ticketId]);
+  useEffect(() => { ticketDataRef.current.validation = validation; }, [validation]);
+  useEffect(() => { ticketDataRef.current.pdfUrl = pdfUrl; }, [pdfUrl]);
 
   const cleanup = useCallback(() => {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
@@ -186,14 +170,10 @@ const TicketScanner = React.memo(function TicketScanner({
     if (videoRef.current) { videoRef.current.srcObject = null; }
   }, []);
 
-  // ── handlePrintBadge ──────────────────────────────────────────────────────
-  // Opens modal immediately with spinner, then loads PDF.
-  // Never closes the modal on its own — only user buttons do that.
   const handlePrintBadge = useCallback(async (id) => {
     const resolvedId = id || ticketDataRef.current.ticketId;
     if (!resolvedId) return;
 
-    // Open modal right away so user sees spinner
     setIsLoadingPDF(true);
     setPrintError(null);
     setPdfUrl(null);
@@ -223,7 +203,6 @@ const TicketScanner = React.memo(function TicketScanner({
       if (ct.includes("application/pdf")) {
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
-        // Set ref FIRST, then state — so modal body reads it instantly
         ticketDataRef.current.pdfUrl = url;
         setPdfUrl(url);
         setMessage("✅ Badge ready — click Print");
@@ -239,7 +218,6 @@ const TicketScanner = React.memo(function TicketScanner({
     }
   }, [printUrl]);
 
-  // ── handlePrint ───────────────────────────────────────────────────────────
   const handlePrint = useCallback(() => {
     const url = ticketDataRef.current.pdfUrl || pdfUrl;
     if (!url) return;
@@ -251,8 +229,6 @@ const TicketScanner = React.memo(function TicketScanner({
     }
   }, [pdfUrl]);
 
-  // ── handleClosePreview ────────────────────────────────────────────────────
-  // Only called by × button or Close button. Never called automatically.
   const handleClosePreview = useCallback(() => {
     const url = ticketDataRef.current.pdfUrl;
     if (url) { URL.revokeObjectURL(url); ticketDataRef.current.pdfUrl = null; }
@@ -262,15 +238,11 @@ const TicketScanner = React.memo(function TicketScanner({
     setMessage("✅ Ticket matched — scan another or print again");
   }, []);
 
-  // ── handleScanAgain ───────────────────────────────────────────────────────
-  // Resets everything and restarts camera. Does NOT call handleClosePreview.
   const handleScanAgain = useCallback(() => {
     const url = ticketDataRef.current.pdfUrl;
     if (url) { URL.revokeObjectURL(url); }
-
     ticketDataRef.current = { ticketId: null, validation: null, pdfUrl: null };
     isLockedRef.current = false;
-
     setPdfUrl(null);
     setPrintError(null);
     setShowPrintPreview(false);
@@ -278,15 +250,11 @@ const TicketScanner = React.memo(function TicketScanner({
     setTicketId(null);
     setRawPayload("");
     setMessage("Starting camera...");
-
-    // Call via ref — avoids circular dependency with startCamera
     if (startCameraRef.current) startCameraRef.current();
   }, []);
 
-  // ── handleRawScan ─────────────────────────────────────────────────────────
   const handleRawScan = useCallback(async (data) => {
     if (isLockedRef.current) return;
-
     isLockedRef.current = true;
     cleanup();
     setShowVideo(false);
@@ -334,7 +302,6 @@ const TicketScanner = React.memo(function TicketScanner({
             printSticker({ ...nameOrg, page: stickerPageSize });
           }
         } else {
-          // Auto-open badge preview immediately — extracted is local, never stale
           await handlePrintBadge(extracted);
         }
       }
@@ -346,10 +313,8 @@ const TicketScanner = React.memo(function TicketScanner({
     }
   }, [cleanup, validateUrl, onError, onSuccess, autoPrintOnValidate, isStickerMode, handlePrintBadge, stickerPageSize]);
 
-  // Keep handleRawScan ref current so startCamera's tick() always uses latest
   useEffect(() => { handleRawScanRef.current = handleRawScan; }, [handleRawScan]);
 
-  // ── startCamera ───────────────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
     try {
       cleanup();
@@ -358,12 +323,8 @@ const TicketScanner = React.memo(function TicketScanner({
         audio: false,
       });
       if (!isMountedRef.current) { stream.getTracks().forEach((t) => t.stop()); return; }
-
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
       setShowVideo(true);
       setMessage("Scanning for QR…");
 
@@ -375,8 +336,7 @@ const TicketScanner = React.memo(function TicketScanner({
         if (!isMountedRef.current || isLockedRef.current) return;
         if (!videoRef.current || !canvasRef.current) return;
         if (videoRef.current.readyState !== videoRef.current.HAVE_ENOUGH_DATA) {
-          rafRef.current = requestAnimationFrame(tick);
-          return;
+          rafRef.current = requestAnimationFrame(tick); return;
         }
         try {
           canvas.width = videoRef.current.videoWidth;
@@ -384,11 +344,7 @@ const TicketScanner = React.memo(function TicketScanner({
           ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "attemptBoth" });
-          if (code && !isLockedRef.current) {
-            // Always call via ref — never stale
-            handleRawScanRef.current(code.data);
-            return;
-          }
+          if (code && !isLockedRef.current) { handleRawScanRef.current(code.data); return; }
         } catch (e) { console.warn("frame read error", e?.message); }
         if (isMountedRef.current && !isLockedRef.current) rafRef.current = requestAnimationFrame(tick);
       };
@@ -400,20 +356,15 @@ const TicketScanner = React.memo(function TicketScanner({
     }
   }, [cleanup, onError]);
 
-  // Keep startCamera ref current so handleScanAgain can call it
   useEffect(() => { startCameraRef.current = startCamera; }, [startCamera]);
 
   useEffect(() => {
     isMountedRef.current = true;
     isLockedRef.current = false;
     startCamera();
-    return () => {
-      isMountedRef.current = false;
-      cleanup();
-    };
+    return () => { isMountedRef.current = false; cleanup(); };
   }, [startCamera, cleanup]);
 
-  // ── renderValidation ──────────────────────────────────────────────────────
   function renderValidation() {
     if (!validation) return null;
 
@@ -422,10 +373,7 @@ const TicketScanner = React.memo(function TicketScanner({
         <div className="p-3 bg-red-50 text-red-700 rounded">
           <div><strong>Not matched</strong></div>
           <div className="text-sm">{validation.error || "Ticket not found"}</div>
-          <button
-            className="mt-2 px-3 py-1 bg-red-100 hover:bg-red-200 rounded"
-            onClick={handleScanAgain}
-          >
+          <button className="mt-2 px-3 py-1 bg-red-100 hover:bg-red-200 rounded" onClick={handleScanAgain}>
             Scan again
           </button>
         </div>
@@ -455,7 +403,6 @@ const TicketScanner = React.memo(function TicketScanner({
       );
     }
 
-    // Badge mode
     const t = validation.ticket || {};
     return (
       <div className="p-3 bg-green-50 text-green-800 rounded">
@@ -479,9 +426,6 @@ const TicketScanner = React.memo(function TicketScanner({
     );
   }
 
-  // ── renderPrintPreview ────────────────────────────────────────────────────
-  // Modal never closes on its own. Only × , Close, or Scan Again close it.
-  // Backdrop click does nothing.
   function renderPrintPreview() {
     if (!showPrintPreview) return null;
 
@@ -490,40 +434,68 @@ const TicketScanner = React.memo(function TicketScanner({
     const currentValidation = validation || ticketDataRef.current.validation;
 
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
-
-          {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b">
-            <h3 className="text-lg font-semibold">Badge Preview — {currentTicketId}</h3>
+      /*
+       * FIX: backdrop is pointer-events-none so it NEVER intercepts clicks.
+       * The inner white card is pointer-events-auto so all its buttons work.
+       * stopPropagation on the card is a belt-and-suspenders safety measure.
+       */
+      <div
+        style={{
+          position: "fixed", inset: 0, zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "16px",
+          backgroundColor: "rgba(0,0,0,0.5)",
+          pointerEvents: "none",          /* backdrop swallows NO clicks */
+        }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            pointerEvents: "auto",        /* card + all its children ARE clickable */
+            background: "#fff",
+            borderRadius: "12px",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+            width: "100%",
+            maxWidth: "900px",
+            maxHeight: "90vh",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
+          {/* ── Header ── */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid #e5e7eb" }}>
+            <h3 style={{ margin: 0, fontSize: "17px", fontWeight: 600 }}>
+              Badge Preview — {currentTicketId}
+            </h3>
             <button
               onClick={handleClosePreview}
-              className="text-gray-500 hover:text-gray-700 text-2xl leading-none"
-              title="Close preview"
+              style={{ background: "none", border: "none", fontSize: "26px", cursor: "pointer", color: "#6b7280", lineHeight: 1, padding: "0 4px" }}
+              title="Close"
             >
               ×
             </button>
           </div>
 
-          {/* Body */}
-          <div className="flex-1 p-4 overflow-auto" style={{ minHeight: "60vh" }}>
+          {/* ── Body ── */}
+          <div style={{ flex: 1, overflow: "auto", padding: "16px", minHeight: "55vh" }}>
             {isLoadingPDF ? (
-              <div className="flex items-center justify-center" style={{ minHeight: "60vh" }}>
-                <div className="text-center text-gray-500">
-                  <div className="text-4xl mb-3">⏳</div>
-                  <div className="text-lg font-semibold">Loading badge...</div>
-                  <div className="text-sm mt-1 text-gray-400">Fetching PDF from server</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "55vh" }}>
+                <div style={{ textAlign: "center", color: "#6b7280" }}>
+                  <div style={{ fontSize: "48px", marginBottom: "12px" }}>⏳</div>
+                  <div style={{ fontSize: "18px", fontWeight: 600 }}>Loading badge...</div>
+                  <div style={{ fontSize: "13px", marginTop: "6px", color: "#9ca3af" }}>Fetching PDF from server</div>
                 </div>
               </div>
             ) : printError ? (
-              <div className="flex items-center justify-center" style={{ minHeight: "60vh" }}>
-                <div className="text-center text-red-600">
-                  <div className="text-4xl mb-2">⚠️</div>
-                  <div className="text-lg font-semibold">Error Loading Badge</div>
-                  <div className="text-sm mt-2">{printError}</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "55vh" }}>
+                <div style={{ textAlign: "center", color: "#dc2626" }}>
+                  <div style={{ fontSize: "48px", marginBottom: "10px" }}>⚠️</div>
+                  <div style={{ fontSize: "18px", fontWeight: 600 }}>Error Loading Badge</div>
+                  <div style={{ fontSize: "13px", marginTop: "8px" }}>{printError}</div>
                   <button
-                    className="mt-4 px-4 py-2 bg-red-100 hover:bg-red-200 rounded text-red-700"
                     onClick={() => handlePrintBadge(ticketDataRef.current.ticketId)}
+                    style={{ marginTop: "16px", padding: "8px 18px", background: "#fee2e2", border: "none", borderRadius: "6px", cursor: "pointer", color: "#dc2626", fontWeight: 600 }}
                   >
                     🔄 Retry
                   </button>
@@ -533,56 +505,62 @@ const TicketScanner = React.memo(function TicketScanner({
               <iframe
                 id="badge-preview-frame"
                 src={currentPdfUrl}
-                className="w-full h-full border-0"
-                style={{ minHeight: "60vh" }}
+                style={{ width: "100%", minHeight: "55vh", border: "none", display: "block" }}
                 title="Badge Preview"
               />
             ) : (
-              <div className="flex items-center justify-center" style={{ minHeight: "60vh" }}>
-                <div className="text-center text-gray-400">
-                  <div className="text-4xl mb-2">📄</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "55vh" }}>
+                <div style={{ textAlign: "center", color: "#9ca3af" }}>
+                  <div style={{ fontSize: "48px", marginBottom: "8px" }}>📄</div>
                   <div>Waiting for PDF...</div>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Footer — NO download button */}
-          <div className="flex items-center justify-between p-4 border-t bg-gray-50">
-            <div className="text-sm text-gray-600">
+          {/* ── Footer ── */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid #e5e7eb", background: "#f9fafb" }}>
+            <div style={{ fontSize: "13px", color: "#6b7280" }}>
               {currentValidation?.ticket?.name && (
                 <span>Attendee: <strong>{currentValidation.ticket.name}</strong></span>
               )}
             </div>
-            <div className="flex gap-2">
+            <div style={{ display: "flex", gap: "10px" }}>
               <button
                 onClick={handleScanAgain}
-                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded"
+                style={{ padding: "9px 18px", background: "#e5e7eb", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 500, fontSize: "14px" }}
               >
                 🔄 Scan Again
               </button>
               <button
                 onClick={handleClosePreview}
-                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded"
+                style={{ padding: "9px 18px", background: "#e5e7eb", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 500, fontSize: "14px" }}
               >
                 Close
               </button>
               <button
                 onClick={handlePrint}
-                className="px-4 py-2 bg-[#196e87] text-white rounded hover:bg-[#0f5568]"
                 disabled={!currentPdfUrl}
+                style={{
+                  padding: "9px 18px",
+                  background: !currentPdfUrl ? "#9ca3af" : "#196e87",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: !currentPdfUrl ? "not-allowed" : "pointer",
+                  fontWeight: 600,
+                  fontSize: "14px",
+                }}
               >
                 🖨️ Print
               </button>
             </div>
           </div>
-
         </div>
       </div>
     );
   }
 
-  // ── render ────────────────────────────────────────────────────────────────
   return (
     <div>
       <div className="bg-white rounded-lg shadow p-3">
