@@ -28,7 +28,7 @@ function extractTicketId(input) {
   return m ? m[0] : (s.match(/[A-Za-z0-9]{6,12}/) || [null])[0];
 }
 
-// ====== BADGE MODAL ======
+// ====== BADGE MODAL (FIXED) ======
 function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
   const [pdfUrl, setPdfUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -76,22 +76,218 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
     return () => { cancelled = true; };
   }, [ticketId, printUrl]);
 
+  const handlePrint = () => {
+    if (!pdfUrl) return;
+    
+    // Try opening in new window with print
+    const printWindow = window.open(pdfUrl, "_blank", "width=800,height=600");
+    if (printWindow) {
+      printWindow.onload = () => {
+        setTimeout(() => {
+          try {
+            printWindow.focus();
+            printWindow.print();
+          } catch (e) {
+            console.log("Auto-print failed, user can print manually (Ctrl+P)");
+          }
+        }, 800);
+      };
+    } else {
+      // Fallback - open in same window
+      alert("Pop-up blocked! The PDF will open in a new tab. Please use Ctrl+P to print.");
+      window.open(pdfUrl, "_blank");
+    }
+  };
+
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, zIndex: 99999, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "white", borderRadius: 12, width: "100%", maxWidth: 800, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between" }}>
-          <strong>Badge — {ticketId}</strong>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer" }}>✕</button>
+    <div style={{ 
+      position: "fixed", 
+      top: 0, left: 0, right: 0, bottom: 0, 
+      zIndex: 99999, 
+      background: "rgba(0,0,0,0.7)", 
+      display: "flex", 
+      alignItems: "center", 
+      justifyContent: "center", 
+      padding: "20px" 
+    }}>
+      <div style={{ 
+        background: "white", 
+        borderRadius: "12px", 
+        width: "100%", 
+        maxWidth: "850px", 
+        height: "90vh",
+        display: "flex", 
+        flexDirection: "column",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+        overflow: "hidden"
+      }}>
+        
+        {/* HEADER */}
+        <div style={{ 
+          padding: "14px 20px", 
+          borderBottom: "1px solid #e5e7eb", 
+          display: "flex", 
+          justifyContent: "space-between", 
+          alignItems: "center",
+          flexShrink: 0
+        }}>
+          <strong style={{ fontSize: "16px" }}>Badge Preview</strong>
+          <button 
+            onClick={onClose} 
+            style={{ 
+              background: "none", 
+              border: "none", 
+              fontSize: "24px", 
+              cursor: "pointer",
+              padding: "4px 8px",
+              borderRadius: "4px",
+              color: "#6b7280"
+            }}
+          >✕</button>
         </div>
-        <div style={{ flex: 1, minHeight: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          {loading && <div style={{ textAlign: "center", color: "#6b7280" }}><div style={{ fontSize: 40 }}>⏳</div><div>Loading...</div></div>}
-          {error && <div style={{ textAlign: "center", color: "#dc2626" }}><div style={{ fontSize: 40 }}>⚠️</div><div>{error}</div></div>}
-          {!loading && !error && pdfUrl && <iframe src={pdfUrl} style={{ width: "100%", height: "100%", border: "none" }} />}
+
+        {/* BODY - PDF Preview */}
+        <div style={{ 
+          flex: 1, 
+          overflow: "auto",
+          background: "#f9fafb",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center"
+        }}>
+          {loading && (
+            <div style={{ textAlign: "center", color: "#6b7280", padding: "40px" }}>
+              <div style={{ fontSize: "48px", marginBottom: "12px" }}>⏳</div>
+              <div style={{ fontSize: "16px", fontWeight: 500 }}>Loading badge preview...</div>
+              <div style={{ fontSize: "13px", marginTop: "6px", color: "#9ca3af" }}>Please wait</div>
+            </div>
+          )}
+          
+          {error && (
+            <div style={{ textAlign: "center", color: "#dc2626", padding: "40px" }}>
+              <div style={{ fontSize: "48px", marginBottom: "12px" }}>⚠️</div>
+              <div style={{ fontSize: "16px", fontWeight: 600 }}>Error Loading Badge</div>
+              <div style={{ fontSize: "13px", marginTop: "6px", maxWidth: "400px" }}>{error}</div>
+              <button 
+                onClick={() => {
+                  setError(null);
+                  setLoading(true);
+                  // Retry fetch
+                  fetch(printUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ticketId: String(ticketId) }),
+                    credentials: "include",
+                  })
+                    .then(async (res) => {
+                      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
+                      return res.blob();
+                    })
+                    .then((blob) => {
+                      if (!mountedRef.current) return;
+                      const url = URL.createObjectURL(blob);
+                      pdfUrlRef.current = url;
+                      setPdfUrl(url);
+                      setLoading(false);
+                    })
+                    .catch((err) => {
+                      if (mountedRef.current) { setError(err.message); setLoading(false); }
+                    });
+                }}
+                style={{ 
+                  marginTop: "12px",
+                  padding: "8px 20px", 
+                  background: "#fee2e2", 
+                  color: "#dc2626", 
+                  border: "none", 
+                  borderRadius: "6px", 
+                  cursor: "pointer",
+                  fontWeight: 600
+                }}
+              >
+                🔄 Retry
+              </button>
+            </div>
+          )}
+          
+          {!loading && !error && pdfUrl && (
+            <iframe 
+              src={pdfUrl} 
+              style={{ 
+                width: "100%", 
+                height: "100%", 
+                border: "none",
+                background: "white"
+              }} 
+              title="Badge Preview"
+            />
+          )}
         </div>
-        <div style={{ padding: "12px 20px", borderTop: "1px solid #e5e7eb", background: "#f9fafb", display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button onClick={onScanAgain} style={{ padding: "8px 16px", background: "#e5e7eb", border: "none", borderRadius: 6, cursor: "pointer" }}>Scan Again</button>
-          <button onClick={onClose} style={{ padding: "8px 16px", background: "#e5e7eb", border: "none", borderRadius: 6, cursor: "pointer" }}>Close</button>
-          <button onClick={() => { if (pdfUrl) { const w = window.open(pdfUrl, "_blank"); setTimeout(() => { try { w.print(); } catch(e) {} }, 1000); } }} disabled={!pdfUrl} style={{ padding: "8px 20px", background: pdfUrl ? "#196e87" : "#d1d5db", color: "white", border: "none", borderRadius: 6, cursor: pdfUrl ? "pointer" : "not-allowed" }}>Print</button>
+
+        {/* FOOTER - BUTTONS ALWAYS VISIBLE */}
+        <div style={{ 
+          padding: "14px 20px", 
+          borderTop: "1px solid #e5e7eb", 
+          background: "#ffffff", 
+          display: "flex", 
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexShrink: 0
+        }}>
+          <div style={{ fontSize: "13px", color: "#6b7280" }}>
+            {validation?.ticket?.name && (
+              <span>Attendee: <strong>{validation.ticket.name}</strong></span>
+            )}
+          </div>
+          
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button 
+              onClick={onScanAgain} 
+              style={{ 
+                padding: "10px 18px", 
+                background: "#e5e7eb", 
+                border: "none", 
+                borderRadius: "6px", 
+                cursor: "pointer",
+                fontSize: "14px",
+                fontWeight: 500
+              }}
+            >
+              🔄 Scan Again
+            </button>
+            
+            <button 
+              onClick={onClose} 
+              style={{ 
+                padding: "10px 18px", 
+                background: "#e5e7eb", 
+                border: "none", 
+                borderRadius: "6px", 
+                cursor: "pointer",
+                fontSize: "14px",
+                fontWeight: 500
+              }}
+            >
+              Close
+            </button>
+            
+            <button 
+              onClick={handlePrint} 
+              disabled={!pdfUrl} 
+              style={{ 
+                padding: "10px 24px", 
+                background: pdfUrl ? "#196e87" : "#d1d5db", 
+                color: "white", 
+                border: "none", 
+                borderRadius: "6px", 
+                cursor: pdfUrl ? "pointer" : "not-allowed",
+                fontSize: "14px",
+                fontWeight: 600
+              }}
+            >
+              🖨️ Print Badge
+            </button>
+          </div>
         </div>
       </div>
     </div>,
