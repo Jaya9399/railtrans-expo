@@ -66,7 +66,7 @@ function ImageSlider({ images = [] }) {
     if (!images || images.length === 0) return;
     const t = setInterval(
       () => setActive((p) => (p + 1) % images.length),
-      3500
+      3500,
     );
     return () => clearInterval(t);
   }, [images]);
@@ -142,7 +142,7 @@ function findFieldValue(obj = {}, candidates = []) {
   const normCandidates = candidates.map((s) =>
     String(s)
       .replace(/[^a-z0-9]/gi, "")
-      .toLowerCase()
+      .toLowerCase(),
   );
   for (const k of keys) {
     const kn = String(k)
@@ -308,7 +308,7 @@ export default function Exhibitors() {
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-  
+
     const tryPlay = async () => {
       try {
         await v.play();
@@ -316,11 +316,9 @@ export default function Exhibitors() {
         // Autoplay blocked – ignore silently
       }
     };
-  
+
     tryPlay();
   }, [config?.backgroundMedia?.url]);
-  
-
 
   async function fetchConfig() {
     setLoading(true);
@@ -344,12 +342,12 @@ export default function Exhibitors() {
 
       try {
         const existing = new Set(
-          normalized.fields.map((f) => (f && f.name ? f.name : ""))
+          normalized.fields.map((f) => (f && f.name ? f.name : "")),
         );
         DEFAULT_EXHIBITOR_FIELDS.forEach((def) => {
           if (!existing.has(def.name)) normalized.fields.push(clone(def));
         });
-      } catch (e) { }
+      } catch (e) {}
 
       if (normalized.backgroundMedia && normalized.backgroundMedia.url) {
         normalized.backgroundMedia = {
@@ -471,7 +469,7 @@ export default function Exhibitors() {
     const onConfigUpdated = (e) => {
       const key = e && e.detail && e.detail.key ? e.detail.key : null;
       if (!key || key === "event-details")
-        fetchCanonicalEvent().catch(() => { });
+        fetchCanonicalEvent().catch(() => {});
     };
     window.addEventListener("exhibitor-config-updated", onCfg);
     window.addEventListener("config-updated", onConfigUpdated);
@@ -485,26 +483,36 @@ export default function Exhibitors() {
 
   async function handleFormSubmit(formData) {
     setError("");
-    console.log('[Exhibitors] handleFormSubmit - formData:', formData);
-    console.log('[Exhibitors] handleFormSubmit - verificationToken:', formData.verificationToken);
+    console.log("[Exhibitors] handleFormSubmit - formData:", formData);
+    console.log(
+      "[Exhibitors] handleFormSubmit - verificationToken:",
+      formData.verificationToken,
+    );
     setForm(formData || {});
-    await saveStep("registration_attempt", { form: formData }).catch(() => { });
+    await saveStep("registration_attempt", { form: formData }).catch(() => {});
     await finalizeSave();
   }
   async function finalizeSave() {
     setError("");
     const companyCandidates = [
-      "companyName", "company", "company_name", "company name",
-      "organization", "organizationName", "organization_name",
-      "companyTitle", "companytitle"
+      "companyName",
+      "company",
+      "company_name",
+      "company name",
+      "organization",
+      "organizationName",
+      "organization_name",
+      "companyTitle",
+      "companytitle",
     ];
     let companyValue = findFieldValue(form || {}, companyCandidates);
     if (!companyValue && form && typeof form._rawForm === "object")
       companyValue = findFieldValue(form._rawForm, companyCandidates);
     companyValue = companyValue || "";
-  
-    const verificationToken = form?.verificationToken || form?.verification_token || null;
-  
+
+    const verificationToken =
+      form?.verificationToken || form?.verification_token || null;
+
     const payload = {
       name: form.name || form.fullName || "",
       email: form.email || "",
@@ -512,25 +520,45 @@ export default function Exhibitors() {
       designation: form.designation || "",
       company: companyValue,
       companyName: companyValue,
+      // ✅ ADD THESE FIELDS:
+      stall_size: form.stall_size || form.stallSize || "",
+      stall_type:
+        form.stall_type ||
+        form.stallType ||
+        form.space_type ||
+        form.spaceType ||
+        "",
+      type_of_space: form.type_of_space || form.typeOfSpace || "",
+      product_category: form.product_category || form.productCategory || "",
+      product_details: form.product_details || form.productDetails || "",
+      space_size: form.space_size || form.spaceSize || "",
+      boothType: form.boothType || form.booth_type || "",
+      spaceType: form.spaceType || form.space_type || "",
+      // ✅ END ADDITIONS
       other_details: form.other_details || form.otherDetails || "",
       purpose: form.purpose || "",
       slots: Array.isArray(form.slots) ? form.slots : [],
       termsAccepted: !!form.termsAccepted,
       _rawForm: form,
     };
-  
+
     try {
-     
       const json = await saveExhibitorApi({
         ...payload,
-        verificationToken: verificationToken  // Token at root level
+        verificationToken: verificationToken, // Token at root level
       });
-      
+
       if (json?.insertedId) {
-        scheduleReminder(json.insertedId, config?.eventDetails?.date).catch(() => {});
+        scheduleReminder(json.insertedId, config?.eventDetails?.date).catch(
+          () => {},
+        );
       }
-  
-      await saveStep("registration", { form }, { insertedId: json?.insertedId || null }).catch(() => {});
+
+      await saveStep(
+        "registration",
+        { form },
+        { insertedId: json?.insertedId || null },
+      ).catch(() => {});
       setStep(4);
     } catch (err) {
       console.error("[Exhibitors] finalize save error:", err);
@@ -598,9 +626,7 @@ export default function Exhibitors() {
           )}
 
           {error && (
-            <div className="text-red-600 mt-3 text-center text-sm">
-              {error}
-            </div>
+            <div className="text-red-600 mt-3 text-center text-sm">{error}</div>
           )}
         </div>
       </div>
@@ -611,8 +637,8 @@ export default function Exhibitors() {
   return (
     <div className="min-h-screen w-full relative">
       {config?.backgroundMedia?.type === "video" &&
-        config?.backgroundMedia?.url ? (
-          <video
+      config?.backgroundMedia?.url ? (
+        <video
           ref={videoRef}
           autoPlay
           muted
@@ -622,7 +648,6 @@ export default function Exhibitors() {
           className="fixed inset-0 w-full h-full object-cover"
           style={{ zIndex: -1000 }}
         >
-        
           <source src={config.backgroundMedia.url} type="video/mp4" />
           Your browser does not support the video tag.
         </video>
@@ -638,7 +663,6 @@ export default function Exhibitors() {
           }}
         />
       ) : null}
-
 
       <div
         className="absolute inset-0 bg-white/50 pointer-events-none"
@@ -685,7 +709,7 @@ export default function Exhibitors() {
                 onSubmit={handleFormSubmit}
                 editable
                 apiBase={apiBase}
-                registrationType="exhibitor" 
+                registrationType="exhibitor"
                 terms={{
                   url: config?.termsUrl,
                   label: config?.termsLabel || "Terms & Conditions",
