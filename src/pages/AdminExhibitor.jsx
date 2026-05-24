@@ -11,7 +11,9 @@ function StatusBadge({ status }) {
     cancelled: "bg-red-100 text-red-700",
   };
   return (
-    <span className={`px-2 py-1 rounded text-sm font-semibold ${map[status] || "bg-gray-100 text-gray-700"}`}>
+    <span
+      className={`px-2 py-1 rounded text-sm font-semibold ${map[status] || "bg-gray-100 text-gray-700"}`}
+    >
       {status || "unknown"}
     </span>
   );
@@ -44,7 +46,6 @@ export default function ExhibitorsAdmin() {
       mountedRef.current = false;
       if (socket) socket.disconnect && socket.disconnect();
     };
-    
   }, []);
 
   async function load() {
@@ -54,7 +55,11 @@ export default function ExhibitorsAdmin() {
       if (!res.ok) throw new Error("Failed to fetch");
       const js = await res.json();
       // Accept either array or {rows: [...], meta:...}
-      const list = Array.isArray(js) ? js : (Array.isArray(js.rows) ? js.rows : []);
+      const list = Array.isArray(js)
+        ? js
+        : Array.isArray(js.rows)
+          ? js.rows
+          : [];
       if (!mountedRef.current) return;
       setRows(list);
       setLoading(false);
@@ -88,27 +93,41 @@ export default function ExhibitorsAdmin() {
     try {
       const res = await fetch(`/api/exhibitors/${id}/approve`, {
         method: "POST",
-         headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
         body: JSON.stringify({ admin: "web-admin" }),
       });
 
       // parse body safely
       let js = null;
-      try { js = await res.json(); } catch { js = null; }
+      try {
+        js = await res.json();
+      } catch {
+        js = null;
+      }
 
       if (!res.ok) {
-        const msg = (js && (js.error || js.message)) || `Approve failed (${res.status})`;
+        const msg =
+          (js && (js.error || js.message)) || `Approve failed (${res.status})`;
         throw new Error(msg);
       }
 
       // Success: server returned updated row (if implemented)
       if (js && js.updated && js.updated.email) {
-        setActionMsg(`Approved successfully — notification will be sent to ${js.updated.email} (check spam).`);
+        setActionMsg(
+          `Approved successfully — notification will be sent to ${js.updated.email} (check spam).`,
+        );
       } else if (js && js.updated) {
-        setActionMsg("Approved successfully. No email found for this exhibitor so no notification was sent.");
+        setActionMsg(
+          "Approved successfully. No email found for this exhibitor so no notification was sent.",
+        );
       } else {
         // fallback message
-        setActionMsg("Approved successfully. Email notification will be sent if configured on the server.");
+        setActionMsg(
+          "Approved successfully. Email notification will be sent if configured on the server.",
+        );
       }
 
       // reload list to update status
@@ -126,11 +145,15 @@ export default function ExhibitorsAdmin() {
     try {
       const res = await fetch(`/api/exhibitors/${id}/cancel`, {
         method: "POST",
-         headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
         body: JSON.stringify({ admin: "web-admin" }),
       });
       const js = await res.json().catch(() => null);
-      if (!res.ok) throw new Error((js && (js.error || js.message)) || "Cancel failed");
+      if (!res.ok)
+        throw new Error((js && (js.error || js.message)) || "Cancel failed");
       setActionMsg("Cancelled successfully");
       await load();
     } catch (err) {
@@ -145,11 +168,15 @@ export default function ExhibitorsAdmin() {
     try {
       const res = await fetch(`/api/exhibitors/${edited.id}`, {
         method: "PUT",
-         headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
         body: JSON.stringify(edited),
       });
       const js = await res.json().catch(() => null);
-      if (!res.ok) throw new Error((js && (js.error || js.message)) || "Update failed");
+      if (!res.ok)
+        throw new Error((js && (js.error || js.message)) || "Update failed");
       setActionMsg("Updated successfully");
       await load();
     } catch (err) {
@@ -166,7 +193,8 @@ export default function ExhibitorsAdmin() {
       if (!id) throw new Error("No id selected");
       const res = await fetch(`/api/exhibitors/${id}`, { method: "DELETE" });
       const js = await res.json().catch(() => null);
-      if (!res.ok) throw new Error((js && (js.error || js.message)) || "Delete failed");
+      if (!res.ok)
+        throw new Error((js && (js.error || js.message)) || "Delete failed");
       setActionMsg("Deleted successfully");
       setSelectedRow(null);
       await load();
@@ -182,7 +210,9 @@ export default function ExhibitorsAdmin() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Exhibitor Registrations</h1>
-        <div className="text-sm text-gray-600">Total: <strong>{rows.length}</strong></div>
+        <div className="text-sm text-gray-600">
+          Total: <strong>{rows.length}</strong>
+        </div>
       </div>
 
       {actionMsg && <div className="mb-4 text-green-700">{actionMsg}</div>}
@@ -201,6 +231,18 @@ export default function ExhibitorsAdmin() {
                 <th className="px-3 py-2 text-left font-semibold">Company</th>
                 <th className="px-3 py-2 text-left font-semibold">Email</th>
                 <th className="px-3 py-2 text-left font-semibold">Mobile</th>
+                <th className="px-3 py-2 text-left font-semibold">
+                  Designation
+                </th>
+                <th className="px-3 py-2 text-left font-semibold">
+                  Space/Stall
+                </th>
+                <th className="px-3 py-2 text-left font-semibold">
+                  Booth Type
+                </th>
+                <th className="px-3 py-2 text-left font-semibold">
+                  Ticket Code
+                </th>
                 <th className="px-3 py-2 text-left font-semibold">Status</th>
                 <th className="px-3 py-2 text-left font-semibold">Actions</th>
               </tr>
@@ -208,15 +250,36 @@ export default function ExhibitorsAdmin() {
             <tbody>
               {paginated().map((r, i) => (
                 <tr key={r.id || i} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 align-top">{(page - 1) * PAGE_SIZE + i + 1}</td>
-                  <td className="px-3 py-2 align-top">{r.name}</td>
-                  <td className="px-3 py-2 align-top">{r.companyName || r.company || r.organization}</td>
-                  <td className="px-3 py-2 align-top">{r.email}</td>
-                  <td className="px-3 py-2 align-top">{r.mobile}</td>
-                  <td className="px-3 py-2 align-top"><StatusBadge status={r.status} /></td>
+                  <td className="px-3 py-2 align-top">
+                    {(page - 1) * PAGE_SIZE + i + 1}
+                  </td>
+                  <td className="px-3 py-2 align-top">{r.name || "-"}</td>
+                  <td className="px-3 py-2 align-top">
+                    {r.company || r.companyName || r.organization || "-"}
+                  </td>
+                  <td className="px-3 py-2 align-top">{r.email || "-"}</td>
+                  <td className="px-3 py-2 align-top">{r.mobile || "-"}</td>
+                  <td className="px-3 py-2 align-top">
+                    {r.designation || "-"}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    {r.space_size || r.stall_size || r.spaceType || "-"}
+                  </td>
+                  <td className="px-3 py-2 align-top">{r.boothType || "-"}</td>
+                  <td className="px-3 py-2 align-top">
+                    {r.ticket_code || "-"}
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <StatusBadge status={r.status} />
+                  </td>
                   <td className="px-3 py-2 align-top">
                     <div className="flex items-center gap-2">
-                      <button className="px-3 py-1 bg-blue-50 text-blue-700 rounded text-sm" onClick={() => openEdit(r)}>Edit</button>
+                      <button
+                        className="px-3 py-1 bg-blue-50 text-blue-700 rounded text-sm"
+                        onClick={() => openEdit(r)}
+                      >
+                        Edit
+                      </button>
 
                       {r.status !== "approved" && (
                         <button
@@ -229,9 +292,40 @@ export default function ExhibitorsAdmin() {
                       )}
 
                       {r.status !== "cancelled" && (
-                        <button className="px-3 py-1 bg-red-50 text-red-700 rounded text-sm" onClick={() => doCancel(r.id)}>Cancel</button>
+                        <button
+                          className="px-3 py-1 bg-red-50 text-red-700 rounded text-sm"
+                          onClick={() => doCancel(r.id)}
+                        >
+                          Cancel
+                        </button>
                       )}
-                      <button className="px-3 py-1 bg-gray-50 text-gray-700 rounded text-sm" onClick={() => openDelete(r)}>Delete</button>
+                      <button
+                        className="px-3 py-1 bg-gray-50 text-gray-700 rounded text-sm"
+                        onClick={() => openDelete(r)}
+                      >
+                        Delete
+                      </button>
+                      <button
+                        className="px-3 py-1 bg-purple-50 text-purple-700 rounded text-sm"
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(
+                              `/api/exhibitors/${r.id}/resend-email`,
+                              { method: "POST" },
+                            );
+                            const js = await res.json().catch(() => null);
+                            if (res.ok) setActionMsg("Ticket email sent!");
+                            else
+                              setActionMsg(
+                                "Failed: " + (js?.error || "unknown"),
+                              );
+                          } catch (e) {
+                            setActionMsg("Error sending ticket");
+                          }
+                        }}
+                      >
+                        Send Ticket
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -244,18 +338,53 @@ export default function ExhibitorsAdmin() {
               Page {page} / {totalPages}
             </div>
             <div className="flex items-center gap-2">
-              <button className="px-2 py-1 border rounded disabled:opacity-50" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>Prev</button>
-              <button className="px-2 py-1 border rounded disabled:opacity-50" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Next</button>
+              <button
+                className="px-2 py-1 border rounded disabled:opacity-50"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+              >
+                Prev
+              </button>
+              <button
+                className="px-2 py-1 border rounded disabled:opacity-50"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+              >
+                Next
+              </button>
             </div>
           </div>
         </div>
       )}
 
       {editOpen && selectedRow && (
-        <EditModal open={editOpen} onClose={() => setEditOpen(false)} row={selectedRow} columns={Object.keys(selectedRow)} onSave={handleEditSave} />
+        <EditModal
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
+          row={selectedRow}
+          columns={[
+            "name",
+            "email",
+            "mobile",
+            "company",
+            "designation",
+            "space_size",
+            "stall_size",
+            "boothType",
+            "spaceType",
+            "productDetails",
+            "notes",
+            "status",
+          ]}
+          onSave={handleEditSave}
+        />
       )}
       {deleteOpen && selectedRow && (
-        <DeleteModal open={deleteOpen} onClose={() => setDeleteOpen(false)} onConfirm={handleDeleteConfirm} />
+        <DeleteModal
+          open={deleteOpen}
+          onClose={() => setDeleteOpen(false)}
+          onConfirm={handleDeleteConfirm}
+        />
       )}
     </div>
   );
