@@ -51,7 +51,6 @@ function normalizeAdminUrl(url) {
   return `${base}/${t}`;
 }
 
-
 async function savePartnerApi(payload) {
   const res = await fetch(apiUrl("/api/partners"), {
     method: "POST",
@@ -135,7 +134,7 @@ function ImageSlider({ images = [], intervalMs = 4000 }) {
     if (!images || images.length === 0) return;
     const t = setInterval(
       () => setActive((p) => (p + 1) % images.length),
-      intervalMs
+      intervalMs,
     );
     return () => clearInterval(t);
   }, [images, intervalMs]);
@@ -154,7 +153,6 @@ function ImageSlider({ images = [], intervalMs = 4000 }) {
   );
 }
 
-
 export default function Partners() {
   const [config, setConfig] = useState(null);
   const [canonicalEvent, setCanonicalEvent] = useState(null);
@@ -164,7 +162,7 @@ export default function Partners() {
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
   const isMobile = useIsMobile(900);
-const [primaryColor, setPrimaryColor] = useState("#196e87");
+  const [primaryColor, setPrimaryColor] = useState("#196e87");
 
   useEffect(() => {
     try {
@@ -229,7 +227,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
   async function fetchConfig() {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/partner-config" ), {
+      const res = await fetch(apiUrl("/api/partner-config"), {
         cache: "no-store",
         headers: {
           Accept: "application/json",
@@ -244,12 +242,12 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
         : [];
       try {
         const existing = new Set(
-          (normalized.fields || []).map((f) => (f && f.name ? f.name : ""))
+          (normalized.fields || []).map((f) => (f && f.name ? f.name : "")),
         );
         DEFAULT_PARTNER_FIELDS.forEach((def) => {
-          if (!existing.has(def.name)) normalized.fields.push({...def});
+          if (!existing.has(def.name)) normalized.fields.push({ ...def });
         });
-      } catch (e) { }
+      } catch (e) {}
 
       if (normalized.backgroundMedia && normalized.backgroundMedia.url) {
         normalized.backgroundMedia = {
@@ -327,7 +325,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
     const onConfigUpdated = (e) => {
       const key = e && e.detail && e.detail.key ? e.detail.key : null;
       if (!key || key === "event-details")
-        fetchCanonicalEvent().catch(() => { });
+        fetchCanonicalEvent().catch(() => {});
     };
     window.addEventListener("partner-config-updated", onCfg);
     window.addEventListener("config-updated", onConfigUpdated);
@@ -348,11 +346,9 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
         setError("Email is required to proceed.");
         setSaving(false);
         return;
-      }      
+      }
 
       setForm(formData || {});
-
-     
 
       // Save partner (backend will send ACK email automatically)
       const payload = {
@@ -367,7 +363,9 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
       setStep(2);
     } catch (e) {
       console.error("[Partners] handleFormSubmit error:", e);
-      setError(e.message || "Failed to submit registration.  Please try again.");
+      setError(
+        e.message || "Failed to submit registration.  Please try again.",
+      );
     } finally {
       setSaving(false);
     }
@@ -407,11 +405,11 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
                   terms={
                     config && (config.termsUrl || config.termsText)
                       ? {
-                        url: config.termsUrl,
-                        text: config.termsText,
-                        label: config.termsLabel || "Terms & Conditions",
-                        required: !!config.termsRequired,
-                      }
+                          url: config.termsUrl,
+                          text: config.termsText,
+                          label: config.termsLabel || "Terms & Conditions",
+                          required: !!config.termsRequired,
+                        }
                       : null
                   }
                 />
@@ -432,9 +430,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           )}
 
           {error && (
-            <div className="text-red-600 mt-3 text-center text-sm">
-              {error}
-            </div>
+            <div className="text-red-600 mt-3 text-center text-sm">{error}</div>
           )}
         </div>
       </div>
@@ -445,22 +441,19 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
   return (
     <div className="min-h-screen w-full relative">
       {!isMobile &&
-        config?.backgroundMedia?.type === "video" &&
-        config?.backgroundMedia?.url ? (
-          <video
+      config?.backgroundMedia?.type === "video" &&
+      config?.backgroundMedia?.url ? (
+        <video
+          ref={videoRef}
           autoPlay
           muted
           loop
           playsInline
-          preload="auto"
-          className="fixed inset-0 w-full h-full object-cover"
-          onError={(e) => console.error("Video error", e)}
+          preload="metadata"
+          className="absolute inset-0 w-full h-full object-cover"
         >
-        
-          <source src={config.backgroundMedia.url} />
-
+          <source src={videoUrl} type="video/mp4" />
         </video>
-
       ) : config?.backgroundMedia?.type === "image" &&
         config?.backgroundMedia?.url ? (
         <div
@@ -537,7 +530,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
                   </div>
 
                   {(canonicalEvent && canonicalEvent.tagline) ||
-                    config?.eventDetails?.tagline ? (
+                  config?.eventDetails?.tagline ? (
                     <div className="text-sm mt-2 text-center text-gray-700">
                       {(canonicalEvent && canonicalEvent.tagline) ||
                         config?.eventDetails?.tagline}
@@ -569,11 +562,11 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
                 terms={
                   config && (config.termsUrl || config.termsText)
                     ? {
-                      url: config.termsUrl,
-                      text: config.termsText,
-                      label: config.termsLabel || "Terms & Conditions",
-                      required: !!config.termsRequired,
-                    }
+                        url: config.termsUrl,
+                        text: config.termsText,
+                        label: config.termsLabel || "Terms & Conditions",
+                        required: !!config.termsRequired,
+                      }
                     : null
                 }
               />
@@ -594,8 +587,6 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
               {error}
             </div>
           )}
-
-          
         </div>
       </div>
       <Footer primaryColor={primaryColor} />

@@ -65,7 +65,7 @@ function findFieldValue(obj = {}, candidates = []) {
   const normCandidates = candidates.map((s) =>
     String(s)
       .replace(/[^a-z0-9]/gi, "")
-      .toLowerCase()
+      .toLowerCase(),
   );
 
   for (const k of keys) {
@@ -205,7 +205,7 @@ export default function Awardees() {
   const videoRef = useRef(null);
   const isMobile = useIsMobile(900);
 
-    const [primaryColor, setPrimaryColor] = useState("#196e87");
+  const [primaryColor, setPrimaryColor] = useState("#196e87");
 
   // Load primary color from localStorage and listen for updates
   useEffect(() => {
@@ -218,7 +218,10 @@ export default function Awardees() {
       if (e?.detail?.primaryColor) {
         setPrimaryColor(e.detail.primaryColor);
         try {
-          localStorage.setItem("admin:topbar", JSON.stringify({ primaryColor: e.detail.primaryColor }));
+          localStorage.setItem(
+            "admin:topbar",
+            JSON.stringify({ primaryColor: e.detail.primaryColor }),
+          );
         } catch {}
       }
     }
@@ -363,7 +366,7 @@ export default function Awardees() {
     const onCfgUpdated = (e) => {
       const key = e && e.detail && e.detail.key ? e.detail.key : null;
       if (!key || key === "event-details")
-        fetchCanonicalEvent().catch(() => { });
+        fetchCanonicalEvent().catch(() => {});
     };
     window.addEventListener("awardee-config-updated", onCfg);
     window.addEventListener("config-updated", onCfgUpdated);
@@ -419,11 +422,11 @@ export default function Awardees() {
         });
         if (!mounted || myId !== attemptId) return;
         await v.play();
-      } catch (err) { }
+      } catch (err) {}
     }
 
     const onCan = () => tryPlay();
-    const onErr = () => { };
+    const onErr = () => {};
     v.addEventListener("canplay", onCan);
     v.addEventListener("error", onErr);
     tryPlay();
@@ -434,7 +437,7 @@ export default function Awardees() {
       try {
         v.removeEventListener("canplay", onCan);
         v.removeEventListener("error", onErr);
-      } catch { }
+      } catch {}
     };
   }, [config?.backgroundMedia?.url, isMobile]);
 
@@ -457,15 +460,17 @@ export default function Awardees() {
     setSubmitting(true);
     try {
       setForm(payload || {});
-      
-      const verificationToken = payload?.verificationToken || payload?.verification_token || null;
-      
+
+      const verificationToken =
+        payload?.verificationToken || payload?.verification_token || null;
+
       const serverPayload = {
         name: payload.name || payload.fullName || "Awardee",
         email: payload.email || "",
         mobile: payload.mobile || "",
         designation: payload.designation || null,
-        organization: findFieldValue(payload, ["company", "organization"]) || "",
+        organization:
+          findFieldValue(payload, ["company", "organization"]) || "",
         awardType: payload.awardType || null,
         awardOther: payload.awardOther || null,
         bio: payload.bio || null,
@@ -473,20 +478,23 @@ export default function Awardees() {
         txId: null,
         _rawForm: payload,
       };
-  
+
       const res = await saveAwardeeApi({
-        form: payload,  
-        verificationToken: verificationToken
+        form: payload,
+        verificationToken: verificationToken,
       });
-      
+
       setAwardeeId(res.insertedId || null);
-      setAwardeeTicketCode(res.ticket_code || (res.saved && res.saved.ticket_code) || null);
-  
-      const eventDate = canonicalEvent && canonicalEvent.date ? canonicalEvent.date : null;
+      setAwardeeTicketCode(
+        res.ticket_code || (res.saved && res.saved.ticket_code) || null,
+      );
+
+      const eventDate =
+        canonicalEvent && canonicalEvent.date ? canonicalEvent.date : null;
       if (eventDate && res.insertedId) {
         scheduleReminder(res.insertedId, eventDate).catch(() => {});
       }
-  
+
       setStep(2);
     } catch (e) {
       console.error("handleFormSubmit error", e);
@@ -584,11 +592,11 @@ export default function Awardees() {
                   terms={
                     config && (config.termsUrl || config.termsText)
                       ? {
-                        url: config.termsUrl,
-                        text: config.termsText,
-                        label: config.termsLabel || "Terms & Conditions",
-                        required: !!config.termsRequired,
-                      }
+                          url: config.termsUrl,
+                          text: config.termsText,
+                          label: config.termsLabel || "Terms & Conditions",
+                          required: !!config.termsRequired,
+                        }
                       : null
                   }
                 />
@@ -610,9 +618,7 @@ export default function Awardees() {
           )}
 
           {error && (
-            <div className="text-red-600 mt-3 text-center text-sm">
-              {error}
-            </div>
+            <div className="text-red-600 mt-3 text-center text-sm">{error}</div>
           )}
         </div>
       </div>
@@ -631,13 +637,10 @@ export default function Awardees() {
             muted
             loop
             playsInline
-            preload="auto"
-            className="fixed inset-0 w-full h-full object-cover"
-            style={{ zIndex: -1000 }}
-            onError={(e) => console.error("Video error", e)}
+            preload="metadata"
+            className="absolute inset-0 w-full h-full object-cover"
           >
-            <source src={config.backgroundMedia.url} type="video/mp4" />
-            Your browser does not support the video tag.
+            <source src={videoUrl} type="video/mp4" />
           </video>
         )}
 
@@ -680,7 +683,8 @@ export default function Awardees() {
                 <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center p-4">
                   <img
                     src={
-                      (config?.images && config.images[0]) || "/images/speaker_placeholder.jpg"
+                      (config?.images && config.images[0]) ||
+                      "/images/speaker_placeholder.jpg"
                     }
                     alt="hero"
                     className="object-cover w-full h-full"
@@ -750,15 +754,14 @@ export default function Awardees() {
                 onSubmit={handleFormSubmit}
                 editable={true}
                 submitting={submitting}
-                
                 terms={
                   config && (config.termsUrl || config.termsText)
                     ? {
-                      url: config.termsUrl,
-                      text: config.termsText,
-                      label: config.termsLabel || "Terms & Conditions",
-                      required: !!config.termsRequired,
-                    }
+                        url: config.termsUrl,
+                        text: config.termsText,
+                        label: config.termsLabel || "Terms & Conditions",
+                        required: !!config.termsRequired,
+                      }
                     : null
                 }
               />
@@ -798,7 +801,7 @@ export default function Awardees() {
                 <div className="text-sm text-gray-700">
                   <div>Total Registrants: {stats.total || 0}</div>
                   <div>
-                    Paid:  {stats.paid || 0} — Free: {stats.free || 0}
+                    Paid: {stats.paid || 0} — Free: {stats.free || 0}
                   </div>
                 </div>
               )}
@@ -811,10 +814,9 @@ export default function Awardees() {
             </div>
           )}
 
-              <Footer primaryColor={primaryColor} />   
+          <Footer primaryColor={primaryColor} />
         </div>
       </div>
-     
     </div>
   );
 }

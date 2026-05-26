@@ -305,7 +305,7 @@ export default function Exhibitors() {
   const isMobile = useIsMobile(900);
   const apiBase = getApiBaseFromEnvOrWindow();
   const videoRef = useRef(null);
-   const [primaryColor, setPrimaryColor] = useState("#196e87");
+  const [primaryColor, setPrimaryColor] = useState("#196e87");
 
   useEffect(() => {
     try {
@@ -447,7 +447,7 @@ export default function Exhibitors() {
           return;
         }
       }
-      const r2 = await fetch(apiUrl("/api/event-details" ), {
+      const r2 = await fetch(apiUrl("/api/event-details"), {
         cache: "no-store",
         headers: {
           Accept: "application/json",
@@ -505,20 +505,27 @@ export default function Exhibitors() {
     await saveStep("registration_attempt", { form: formData }).catch(() => {});
     await finalizeSave();
   }
-async function finalizeSave() {
+  async function finalizeSave() {
     setError("");
     const companyCandidates = [
-      "companyName", "company", "company_name", "company name",
-      "organization", "organizationName", "organization_name",
-      "companyTitle", "companytitle"
+      "companyName",
+      "company",
+      "company_name",
+      "company name",
+      "organization",
+      "organizationName",
+      "organization_name",
+      "companyTitle",
+      "companytitle",
     ];
     let companyValue = findFieldValue(form || {}, companyCandidates);
     if (!companyValue && form && typeof form._rawForm === "object")
       companyValue = findFieldValue(form._rawForm, companyCandidates);
     companyValue = companyValue || "";
-  
-    const verificationToken = form?.verificationToken || form?.verification_token || null;
-  
+
+    const verificationToken =
+      form?.verificationToken || form?.verification_token || null;
+
     // ✅ BUILD PAYLOAD DYNAMICALLY - include ALL form fields
     const payload = {
       name: form.name || form.fullName || "",
@@ -532,44 +539,78 @@ async function finalizeSave() {
     };
 
     // ✅ ADD ALL DYNAMIC FIELDS from form
-    if (form && typeof form === 'object') {
+    if (form && typeof form === "object") {
       const skipKeys = new Set([
-        'name', 'fullName', 'email', 'mobile', 'phone', 
-        'designation', 'company', 'companyName', 'verificationToken',
-        'verification_token', 'termsAccepted', '_rawForm',
-        'slots', 'purpose', 'other_details', 'otherDetails'
+        "name",
+        "fullName",
+        "email",
+        "mobile",
+        "phone",
+        "designation",
+        "company",
+        "companyName",
+        "verificationToken",
+        "verification_token",
+        "termsAccepted",
+        "_rawForm",
+        "slots",
+        "purpose",
+        "other_details",
+        "otherDetails",
       ]);
-      
+
       for (const [key, value] of Object.entries(form)) {
-        if (!skipKeys.has(key) && value !== undefined && value !== null && value !== '') {
+        if (
+          !skipKeys.has(key) &&
+          value !== undefined &&
+          value !== null &&
+          value !== ""
+        ) {
           payload[key] = value;
         }
       }
     }
 
     // ✅ Also include _rawForm fields
-    if (form?._rawForm && typeof form._rawForm === 'object') {
-      const rawSkipKeys = new Set(['name', 'email', 'mobile', 'phone', 'company']);
+    if (form?._rawForm && typeof form._rawForm === "object") {
+      const rawSkipKeys = new Set([
+        "name",
+        "email",
+        "mobile",
+        "phone",
+        "company",
+      ]);
       for (const [key, value] of Object.entries(form._rawForm)) {
-        if (!rawSkipKeys.has(key) && value !== undefined && value !== null && value !== '') {
+        if (
+          !rawSkipKeys.has(key) &&
+          value !== undefined &&
+          value !== null &&
+          value !== ""
+        ) {
           if (!(key in payload)) {
             payload[key] = value;
           }
         }
       }
     }
-  
+
     try {
       const json = await saveExhibitorApi({
         ...payload,
-        verificationToken: verificationToken
+        verificationToken: verificationToken,
       });
-      
+
       if (json?.insertedId) {
-        scheduleReminder(json.insertedId, config?.eventDetails?.date).catch(() => {});
+        scheduleReminder(json.insertedId, config?.eventDetails?.date).catch(
+          () => {},
+        );
       }
-  
-      await saveStep("registration", { form }, { insertedId: json?.insertedId || null }).catch(() => {});
+
+      await saveStep(
+        "registration",
+        { form },
+        { insertedId: json?.insertedId || null },
+      ).catch(() => {});
       setStep(4);
     } catch (err) {
       console.error("[Exhibitors] finalize save error:", err);
@@ -655,12 +696,10 @@ async function finalizeSave() {
           muted
           loop
           playsInline
-          preload="auto"
-          className="fixed inset-0 w-full h-full object-cover"
-          style={{ zIndex: -1000 }}
+          preload="metadata"
+          className="absolute inset-0 w-full h-full object-cover"
         >
-          <source src={config.backgroundMedia.url} type="video/mp4" />
-          Your browser does not support the video tag.
+          <source src={videoUrl} type="video/mp4" />
         </video>
       ) : config?.backgroundMedia?.type === "image" &&
         config?.backgroundMedia?.url ? (
@@ -741,8 +780,6 @@ async function finalizeSave() {
               {error}
             </div>
           )}
-
-          
         </div>
       </div>
       <Footer primaryColor={primaryColor} />

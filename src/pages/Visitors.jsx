@@ -14,7 +14,6 @@ const API_BASE = (
   ""
 ).replace(/\/$/, "");
 
-
 /* ---------- small helpers ---------- */
 
 function normalizeAdminUrl(url) {
@@ -30,7 +29,6 @@ function normalizeAdminUrl(url) {
   if (t.startsWith("/")) return `${base}${t}`;
   return `${base}/${t}`;
 }
-
 
 /* ---------- reminder helper ---------- */
 async function scheduleReminderClient(entityId) {
@@ -53,7 +51,7 @@ async function scheduleReminderClient(entityId) {
     let js = null;
     try {
       js = txt ? JSON.parse(txt) : null;
-    } catch { }
+    } catch {}
     if (!res.ok) {
       return { ok: false, status: res.status, body: js || txt };
     }
@@ -92,7 +90,7 @@ export default function Visitors() {
   const [bgVideoErrorMsg, setBgVideoErrorMsg] = useState("");
   const isMobile = useIsMobile(900);
 
-const [primaryColor, setPrimaryColor] = useState("#196e87");
+  const [primaryColor, setPrimaryColor] = useState("#196e87");
 
   useEffect(() => {
     try {
@@ -146,7 +144,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           setCanonicalEvent(normalizeEvent(js2 || {}));
           return;
         }
-      } catch { }
+      } catch {}
       setCanonicalEvent(null);
     } catch (e) {
       console.warn("[Visitors] fetchCanonicalEvent failed", e);
@@ -157,13 +155,16 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API_BASE}/api/visitor-config? cb=${Date.now()}`, {
-        cache: "no-store",
-        headers: {
-          Accept: "application/json",
-          "ngrok-skip-browser-warning": "69420",
+      const r = await fetch(
+        `${API_BASE}/api/visitor-config? cb=${Date.now()}`,
+        {
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+            "ngrok-skip-browser-warning": "69420",
+          },
         },
-      });
+      );
       const cfg = r.ok ? await r.json() : {};
       const normalized = { ...(cfg || {}) };
       if (normalized.backgroundMedia && normalized.backgroundMedia.url)
@@ -183,16 +184,16 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
         normalized.termsUrl = normalizeAdminUrl(normalized.termsUrl);
       normalized.fields = Array.isArray(normalized.fields)
         ? normalized.fields.map((f) => {
-          if (!f || !f.name) return f;
-          const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
-          const isEmailField = f.type === "email" || /email/.test(nameLabel);
-          if (isEmailField) {
-            const fm = Object.assign({}, f.meta || {});
-            if (fm.useOtp === undefined) fm.useOtp = true;
-            return { ...f, meta: fm };
-          }
-          return f;
-        })
+            if (!f || !f.name) return f;
+            const nameLabel = (f.name + " " + (f.label || "")).toLowerCase();
+            const isEmailField = f.type === "email" || /email/.test(nameLabel);
+            if (isEmailField) {
+              const fm = Object.assign({}, f.meta || {});
+              if (fm.useOtp === undefined) fm.useOtp = true;
+              return { ...f, meta: fm };
+            }
+            return f;
+          })
         : [];
       setConfig(normalized);
     } catch (e) {
@@ -219,7 +220,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
     window.addEventListener("config-updated", (e) => {
       const key = e && e.detail && e.detail.key ? e.detail.key : null;
       if (!key || key === "event-details")
-        fetchCanonicalEvent().catch(() => { });
+        fetchCanonicalEvent().catch(() => {});
     });
     window.addEventListener("event-details-updated", fetchCanonicalEvent);
 
@@ -296,7 +297,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
             (json && json.insertedId) ||
             (json && json.inserted_id) ||
             null;
-          const existed = ! !(json && (json.existed || json.existing));
+          const existed = !!(json && (json.existed || json.existing));
           return {
             ok: true,
             id: id ? String(id) : null,
@@ -324,18 +325,15 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
         return { ok: false, error: String(err && (err.message || err)) };
       }
     },
-    [ticketCategory, ticketMeta, txId]
+    [ticketCategory, ticketMeta, txId],
   );
 
-  const handleTicketSelect = useCallback(
-    async (value, meta = {}) => {
-      setError("");
-      setTicketCategory(value);
-      setTicketMeta(meta || { price: 0, gstAmount: 0, total: 0, label: "" });
-      setStep(3);
-    },
-    []
-  );
+  const handleTicketSelect = useCallback(async (value, meta = {}) => {
+    setError("");
+    setTicketCategory(value);
+    setTicketMeta(meta || { price: 0, gstAmount: 0, total: 0, label: "" });
+    setStep(3);
+  }, []);
 
   async function handleFormSubmit(formData) {
     setError("");
@@ -358,7 +356,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
       if (config?.termsRequired && !form?.termsAccepted) {
         setError(
           config?.termsRequiredMessage ||
-          "You must accept the terms and conditions to complete registration."
+            "You must accept the terms and conditions to complete registration.",
         );
         setProcessing(false);
         submittingRef.current = false;
@@ -411,7 +409,10 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
                 (schedRes.error || schedRes.body || schedRes.status)) ||
               "Schedule failed";
             setReminderError(String(errMsg).slice(0, 500));
-            console.warn("[Visitors] scheduleReminderClient response:", schedRes);
+            console.warn(
+              "[Visitors] scheduleReminderClient response:",
+              schedRes,
+            );
           }
         } catch (e) {
           console.warn("[Visitors] schedule reminder step failed", e);
@@ -426,13 +427,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
       setProcessing(false);
       submittingRef.current = false;
     }
-  }, [
-    config,
-    form,
-    ticketCategory,
-    ticketMeta,
-    saveVisitor,
-  ]);
+  }, [config, form, ticketCategory, ticketMeta, saveVisitor]);
 
   useEffect(() => {
     if (step === 3 && Number(ticketMeta.total) === 0 && !processing) {
@@ -508,7 +503,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
               onChange={(val, meta) => {
                 setTicketCategory(val);
                 setTicketMeta(
-                  meta || { price: 0, gstAmount: 0, total: 0, label: "" }
+                  meta || { price: 0, gstAmount: 0, total: 0, label: "" },
                 );
                 setStep(3);
               }}
@@ -575,22 +570,11 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           muted
           loop
           playsInline
-         preload="auto"
-          className="fixed inset-0 w-full h-full object-cover"
-          style={{ zIndex: -1000 }}
-          onCanPlay={() => {
-            setBgVideoReady(true);
-            setBgVideoErrorMsg("");
-          }}
-          onError={(e) => {
-            console.error("Background video failed to load", e);
-            setBgVideoErrorMsg("Background video failed to load");
-          }}
+          preload="metadata"
+          className="absolute inset-0 w-full h-full object-cover"
         >
           <source src={videoUrl} type="video/mp4" />
         </video>
-
-
       )}
       {!isMobile && (!videoUrl || !bgVideoReady) && bgImageUrl && (
         <div
@@ -669,7 +653,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
                     "Event Venue"}
                 </div>
                 {(canonicalEvent && canonicalEvent.time) ||
-                  (config?.eventDetails && config.eventDetails.time) ? (
+                (config?.eventDetails && config.eventDetails.time) ? (
                   <div className="text-sm mt-2 text-center text-gray-700">
                     {(canonicalEvent && canonicalEvent.time) ||
                       (config?.eventDetails && config.eventDetails.time)}
@@ -759,7 +743,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
 
           {!isMobile && bgVideoErrorMsg && (
             <div className="mt-4 p-3 bg-yellow-50 text-yellow-800 rounded text-sm max-w-3xl mx-auto">
-              Background video not playing:  {String(bgVideoErrorMsg)}. Check
+              Background video not playing: {String(bgVideoErrorMsg)}. Check
               console for details.
             </div>
           )}
@@ -767,8 +751,6 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           {error && (
             <div className="text-red-400 text-center mt-4">{error}</div>
           )}
-
-        
         </div>
       </div>
       <Footer primaryColor={primaryColor} />

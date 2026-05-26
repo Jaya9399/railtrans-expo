@@ -412,18 +412,17 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
   return (
     <div className="min-h-screen w-full relative">
       {!isMobile && config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url && (
-        <video
-        ref={videoRef}
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="auto"
-        className="fixed inset-0 w-full h-full object-cover"
-        onError={(e) => console.error("Video error", e)}
-      >
-        <source src={config.backgroundMedia.url} type="video/mp4" />
-      </video>
+     <video
+  ref={videoRef}
+  autoPlay
+  muted
+  loop
+  playsInline
+  preload="metadata"
+  className="absolute inset-0 w-full h-full object-cover"
+>
+  <source src={videoUrl} type="video/mp4" />
+</video>
       
 
       )}
