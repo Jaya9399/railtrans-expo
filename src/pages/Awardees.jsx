@@ -3,7 +3,7 @@ import Topbar from "../components/Topbar";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
 import ThankYouMessage from "../components/ThankYouMessage";
 import useIsMobile from "../hooks/useIsMobile";
-
+import Footer from "../components/Footer";
 /*
   Cleaned Awardees.jsx — FREE awardees flow
   NOW WITH MOBILE VIEW SUPPORT
@@ -205,6 +205,26 @@ export default function Awardees() {
   const videoRef = useRef(null);
   const isMobile = useIsMobile(900);
 
+    const [primaryColor, setPrimaryColor] = useState("#196e87");
+
+  // Load primary color from localStorage and listen for updates
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("admin:topbar") || "{}");
+      if (saved.primaryColor) setPrimaryColor(saved.primaryColor);
+    } catch {}
+
+    function onUpdate(e) {
+      if (e?.detail?.primaryColor) {
+        setPrimaryColor(e.detail.primaryColor);
+        try {
+          localStorage.setItem("admin:topbar", JSON.stringify({ primaryColor: e.detail.primaryColor }));
+        } catch {}
+      }
+    }
+    window.addEventListener("admin:topbar-updated", onUpdate);
+    return () => window.removeEventListener("admin:topbar-updated", onUpdate);
+  }, []);
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
@@ -796,13 +816,10 @@ export default function Awardees() {
             </div>
           )}
 
-          <footer className="mt-12 text-center text-[#21809b] font-semibold py-6">
-            © {new Date().getFullYear()}{" "}
-            {config?.eventDetails?.name || "RailTrans Expo"} | All rights
-            reserved.
-          </footer>
+              <Footer primaryColor={primaryColor} />   
         </div>
       </div>
+     
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-
+import Footer from "../components/Footer";
 /**
  * AdminTopbarSettings
  *
@@ -230,6 +230,7 @@ export default function AdminTopbarSettings() {
           <div className="text-sm">{message}</div>
         </div>
       </form>
+      <Footer primaryColor={primaryColor} />   {/* ← ADD HERE */}
     </div>
   );
 }

@@ -6,7 +6,7 @@ import ManualPaymentStep from "../components/ManualPayemntStep";
 import ThankYouMessage from "../components/ThankYouMessage";
 import ProcessingCard from "../components/ProcessingCard";
 import useIsMobile from "../hooks/useIsMobile";
-
+import Footer from "../components/Footer";
 const API_BASE = (
   process.env.REACT_APP_API_BASE ||
   process.env.REACT_APP_API_BASE_URL ||
@@ -92,7 +92,19 @@ export default function Visitors() {
   const [bgVideoErrorMsg, setBgVideoErrorMsg] = useState("");
   const isMobile = useIsMobile(900);
 
+const [primaryColor, setPrimaryColor] = useState("#196e87");
 
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("admin:topbar") || "{}");
+      if (saved.primaryColor) setPrimaryColor(saved.primaryColor);
+    } catch {}
+    function onUpdate(e) {
+      if (e?.detail?.primaryColor) setPrimaryColor(e.detail.primaryColor);
+    }
+    window.addEventListener("admin:topbar-updated", onUpdate);
+    return () => window.removeEventListener("admin:topbar-updated", onUpdate);
+  }, []);
 
   const normalizeEvent = (raw = {}) => ({
     name: raw.name || raw.eventName || raw.title || "",
@@ -756,13 +768,10 @@ export default function Visitors() {
             <div className="text-red-400 text-center mt-4">{error}</div>
           )}
 
-          <div className="mt-10 sm:mt-12 pb-8">
-            <footer className="text-center text-white font-semibold py-4 text-sm sm:text-lg">
-              © {new Date().getFullYear()} RailTrans Expo
-            </footer>
-          </div>
+        
         </div>
       </div>
+      <Footer primaryColor={primaryColor} />
     </div>
   );
 }

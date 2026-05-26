@@ -1,7 +1,7 @@
 import React from "react";
 import Topbar from "./Topbar";
 import TicketScanner from "./TicketScanner";
-
+import Footer from "./Footer";
 export default function GateScannerPage() {
   return (
     <div className="min-h-screen bg-gray-50">
@@ -19,6 +19,7 @@ export default function GateScannerPage() {
           />
         </div>
       </div>
+      <Footer primaryColor="#196e87" />   
     </div>
   );
 }

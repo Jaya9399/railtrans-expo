@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import Sidebar from "./components/Sidebar";
 import Topbar from "./components/Topbar";
-
+import Footer from "./components/Footer";
 /**
  * AdminLayout
  * - Renders Desktop sidebar (hidden on small screens) and Mobile overlay (controlled by `sidebarOpen`).
@@ -47,12 +47,13 @@ export default function AdminLayout({ children }) {
       </div>
 
       {/* Main content */}
-      <main className="flex-1" style={{ minHeight: "100vh" }}>
-        <div className="md:ml-64 pt-16">
+          <main className="flex-1 flex flex-col" style={{ minHeight: "100vh" }}>
+        <div className="md:ml-64 pt-16 flex-1">
           <div className="max-w-full md:max-w-screen-xl xl:max-w-screen-2xl mx-auto px-4 md:px-6">
             {children}
           </div>
         </div>
+        <Footer primaryColor="#196e87" />
       </main>
     </div>
   );

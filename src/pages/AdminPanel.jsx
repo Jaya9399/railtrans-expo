@@ -7,7 +7,7 @@ import PartnersAdmin from "./PartnersAdmin";
 import SpeakersAdmin from "./SpeakersAdmin";
 import AwardeesAdmin from "./AwardeesAdmin";
 import DashboardContent from "./DashboardContent"; // <-- Import the dashboard
-
+import Footer from "../components/Footer";
 export default function AdminPanel() {
   const [selected, setSelected] = useState("Dashboard");
   const user = { name: "Admin" };
@@ -36,12 +36,13 @@ export default function AdminPanel() {
     }
   };
 
-  return (
+   return (
     <div className="bg-gray-50 min-h-screen w-full">
       <Topbar user={user} />
       <Sidebar selected={selected} onSelect={setSelected} />
       <div className="flex-1 flex flex-col ml-64">
         <main className="flex-1 overflow-y-auto">{renderPage()}</main>
+        <Footer primaryColor="#196e87" />
       </div>
     </div>
   );

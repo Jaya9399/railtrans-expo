@@ -3,7 +3,7 @@ import Topbar from "../components/Topbar";
 import DynamicRegistrationForm from "./DynamicRegistrationForm";
 import ThankYouMessage from "../components/ThankYouMessage";
 import useIsMobile from "../hooks/useIsMobile";
-
+import Footer from "../components/Footer";
 /*
  Partners.jsx
  
@@ -164,7 +164,19 @@ export default function Partners() {
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
   const isMobile = useIsMobile(900);
+const [primaryColor, setPrimaryColor] = useState("#196e87");
 
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("admin:topbar") || "{}");
+      if (saved.primaryColor) setPrimaryColor(saved.primaryColor);
+    } catch {}
+    function onUpdate(e) {
+      if (e?.detail?.primaryColor) setPrimaryColor(e.detail.primaryColor);
+    }
+    window.addEventListener("admin:topbar-updated", onUpdate);
+    return () => window.removeEventListener("admin:topbar-updated", onUpdate);
+  }, []);
   const fetchCanonicalEvent = useCallback(async () => {
     try {
       const url = apiUrl("/api/configs/event-details");
@@ -583,14 +595,10 @@ export default function Partners() {
             </div>
           )}
 
-          <footer className="mt-16 text-center text-[#21809b] font-semibold py-6 text-lg">
-            © {new Date().getFullYear()}{" "}
-            {(canonicalEvent && canonicalEvent.name) ||
-              config?.eventDetails?.name ||
-              "RailTrans Expo"}
-          </footer>
+          
         </div>
       </div>
+      <Footer primaryColor={primaryColor} />
     </div>
   );
 }
