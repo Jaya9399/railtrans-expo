@@ -201,7 +201,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           return;
         }
       }
-      const r2 = await fetch(apiUrl("/api/event-details? cb=" + Date.now()), {
+      const r2 = await fetch(apiUrl("/api/event-details "), {
         cache: "no-store",
         headers: {
           Accept: "application/json",
@@ -229,7 +229,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
   async function fetchConfig() {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/partner-config? cb=" + Date.now()), {
+      const res = await fetch(apiUrl("/api/partner-config" ), {
         cache: "no-store",
         headers: {
           Accept: "application/json",
@@ -452,7 +452,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           muted
           loop
           playsInline
-          preload="metadata"
+          preload="auto"
           className="fixed inset-0 w-full h-full object-cover"
           onError={(e) => console.error("Video error", e)}
         >

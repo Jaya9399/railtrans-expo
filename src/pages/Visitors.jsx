@@ -575,7 +575,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           muted
           loop
           playsInline
-          preload="metadata"
+         preload="auto"
           className="fixed inset-0 w-full h-full object-cover"
           style={{ zIndex: -1000 }}
           onCanPlay={() => {

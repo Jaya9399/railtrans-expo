@@ -187,7 +187,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/speaker-config? cb=" + Date.now()), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+      const res = await fetch(apiUrl("/api/speaker-config" ), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
       const cfg = res.ok ? await res.json().catch(() => ({})) : {};
       const normalized = { ...(cfg || {}) };
 
@@ -418,7 +418,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
         muted
         loop
         playsInline
-        preload="metadata"
+        preload="auto"
         className="fixed inset-0 w-full h-full object-cover"
         onError={(e) => console.error("Video error", e)}
       >

@@ -336,7 +336,7 @@ export default function Exhibitors() {
   async function fetchConfig() {
     setLoading(true);
     try {
-      const url = apiUrl("/api/exhibitor-config? cb=" + Date.now());
+      const url = apiUrl("/api/exhibitor-config ");
       const r = await fetch(url, {
         cache: "no-store",
         headers: {
@@ -447,7 +447,7 @@ export default function Exhibitors() {
           return;
         }
       }
-      const r2 = await fetch(apiUrl("/api/event-details? cb=" + Date.now()), {
+      const r2 = await fetch(apiUrl("/api/event-details" ), {
         cache: "no-store",
         headers: {
           Accept: "application/json",
@@ -655,7 +655,7 @@ async function finalizeSave() {
           muted
           loop
           playsInline
-          preload="metadata"
+          preload="auto"
           className="fixed inset-0 w-full h-full object-cover"
           style={{ zIndex: -1000 }}
         >

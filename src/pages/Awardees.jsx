@@ -228,7 +228,7 @@ export default function Awardees() {
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/awardee-config? cb=" + Date.now()), {
+      const res = await fetch(apiUrl("/api/awardee-config"), {
         cache: "no-store",
         headers: {
           Accept: "application/json",
@@ -328,7 +328,7 @@ export default function Awardees() {
           return;
         }
       }
-      const r2 = await fetch(apiUrl("/api/event-details? cb=" + Date.now()), {
+      const r2 = await fetch(apiUrl("/api/event-details"), {
         cache: "no-store",
         headers: {
           Accept: "application/json",
@@ -393,12 +393,7 @@ export default function Awardees() {
       const myId = ++attemptId;
       try {
         const currentSrc = v.currentSrc || v.src || "";
-        if (prevSrc.src !== currentSrc) {
-          try {
-            v.load();
-          } catch { }
-          prevSrc.src = currentSrc;
-        }
+        prevSrc.src = currentSrc;
         await new Promise((resolve, reject) => {
           if (!mounted) return reject(new Error("unmounted"));
           if (v.readyState >= 3) return resolve();
@@ -636,7 +631,7 @@ export default function Awardees() {
             muted
             loop
             playsInline
-            preload="metadata"
+            preload="auto"
             className="fixed inset-0 w-full h-full object-cover"
             style={{ zIndex: -1000 }}
             onError={(e) => console.error("Video error", e)}
