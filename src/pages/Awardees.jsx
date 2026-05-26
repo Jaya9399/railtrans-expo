@@ -673,7 +673,7 @@ export default function Awardees() {
 
       <div className="relative z-10">
         <Topbar />
-        <div className="max-w-7xl mx-auto pt-8 px-4">
+        <div className="max-w-7xl mx-auto pt-8">
           <div
             className="flex flex-col sm:flex-row items-stretch mb-10"
             style={{ minHeight: 370 }}
