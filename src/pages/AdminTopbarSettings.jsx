@@ -230,7 +230,9 @@ export default function AdminTopbarSettings() {
           <div className="text-sm">{message}</div>
         </div>
       </form>
-      <Footer primaryColor={primaryColor} />   {/* ← ADD HERE */}
+       <div className="mt-16">
+  <Footer primaryColor={primaryColor} />
+</div>   {/* ← ADD HERE */}
     </div>
   );
 }

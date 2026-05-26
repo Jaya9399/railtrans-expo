@@ -589,7 +589,9 @@ export default function Partners() {
           )}
         </div>
       </div>
-      <Footer primaryColor={primaryColor} />
+       <div className="mt-16">
+  <Footer primaryColor={primaryColor} />
+</div>
     </div>
   );
 }

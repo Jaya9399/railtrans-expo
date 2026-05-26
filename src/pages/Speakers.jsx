@@ -504,7 +504,9 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           
         </div>
       </div>
-      <Footer primaryColor={primaryColor} />
+       <div className="mt-16">
+  <Footer primaryColor={primaryColor} />
+</div>
     </div>
   );
 }
