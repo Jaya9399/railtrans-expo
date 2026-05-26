@@ -208,9 +208,9 @@ export default function Awardees() {
   const [primaryColor, setPrimaryColor] = useState("#196e87");
 
   const videoUrl =
-  config?.backgroundMedia?.type === "video"
-    ? config.backgroundMedia.url
-    : null;
+    config?.backgroundMedia?.type === "video"
+      ? config.backgroundMedia.url
+      : null;
   // Load primary color from localStorage and listen for updates
   useEffect(() => {
     try {
@@ -817,11 +817,10 @@ export default function Awardees() {
               {error}
             </div>
           )}
-
-           <div className="mt-16">
-  <Footer primaryColor={primaryColor} />
-</div>
         </div>
+      </div>
+      <div className="w-full mt-16">
+        <Footer primaryColor={primaryColor} />
       </div>
     </div>
   );
