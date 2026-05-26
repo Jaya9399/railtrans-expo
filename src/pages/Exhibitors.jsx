@@ -305,6 +305,11 @@ export default function Exhibitors() {
   const isMobile = useIsMobile(900);
   const apiBase = getApiBaseFromEnvOrWindow();
   const videoRef = useRef(null);
+ 
+  const videoUrl =
+  config?.backgroundMedia?.type === "video"
+    ? config.backgroundMedia.url
+    : null;
   const [primaryColor, setPrimaryColor] = useState("#196e87");
 
   useEffect(() => {

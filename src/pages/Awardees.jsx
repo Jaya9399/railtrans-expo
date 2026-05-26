@@ -207,6 +207,10 @@ export default function Awardees() {
 
   const [primaryColor, setPrimaryColor] = useState("#196e87");
 
+  const videoUrl =
+  config?.backgroundMedia?.type === "video"
+    ? config.backgroundMedia.url
+    : null;
   // Load primary color from localStorage and listen for updates
   useEffect(() => {
     try {

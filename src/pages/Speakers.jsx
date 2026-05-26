@@ -27,7 +27,6 @@ function getApiBaseFromEnvOrWindow() {
   return "";
 }
 
-
 function apiUrl(path) {
   const base = getApiBaseFromEnvOrWindow();
   if (!path) return base;
@@ -48,7 +47,6 @@ function normalizeAdminUrl(url) {
   if (t.startsWith("/")) return `${base}${t}`;
   return `${base}/${t}`;
 }
-
 
 function isEmailLike(v) {
   return typeof v === "string" && /\S+@\S+\.\S+/.test(v);
@@ -76,7 +74,7 @@ async function scheduleReminder(entityId, eventDate) {
     let js = null;
     try {
       js = txt ? JSON.parse(txt) : null;
-    } catch { }
+    } catch {}
     if (!res.ok) {
       return { ok: false, status: res.status, body: js || txt };
     }
@@ -88,18 +86,41 @@ async function scheduleReminder(entityId, eventDate) {
 
 /* UI helpers */
 function EventDetailsBlock({ event }) {
-  if (!event) return <div className="text-[#21809b]">No event details available</div>;
-  const logoGradient = "linear-gradient(90deg, #ffba08 0%, #19a6e7 60%, #21809b 100%)";
+  if (!event)
+    return <div className="text-[#21809b]">No event details available</div>;
+  const logoGradient =
+    "linear-gradient(90deg, #ffba08 0%, #19a6e7 60%, #21809b 100%)";
   const logoBlue = "#21809b";
   const logoDark = "#196e87";
   return (
     <div className="flex flex-col items-center justify-center h-full w-full mt-6">
-      <div className="font-extrabold text-3xl sm:text-5xl mb-3 text-center" style={{ background: logoGradient, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+      <div
+        className="font-extrabold text-3xl sm:text-5xl mb-3 text-center"
+        style={{
+          background: logoGradient,
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+        }}
+      >
         {event?.name || "Event Name"}
       </div>
-      <div className="text-xl sm:text-2xl font-bold mb-1 text-center" style={{ color: logoBlue }}>{event?.date || "Event Date"}</div>
-      <div className="text-base sm:text-xl font-semibold text-center" style={{ color: logoDark }}>{event?.venue || "Event Venue"}</div>
-      {event?.tagline && <div className="text-base sm:text-xl font-semibold text-center text-[#21809b] mt-2">{event.tagline}</div>}
+      <div
+        className="text-xl sm:text-2xl font-bold mb-1 text-center"
+        style={{ color: logoBlue }}
+      >
+        {event?.date || "Event Date"}
+      </div>
+      <div
+        className="text-base sm:text-xl font-semibold text-center"
+        style={{ color: logoDark }}
+      >
+        {event?.venue || "Event Venue"}
+      </div>
+      {event?.tagline && (
+        <div className="text-base sm:text-xl font-semibold text-center text-[#21809b] mt-2">
+          {event.tagline}
+        </div>
+      )}
     </div>
   );
 }
@@ -108,14 +129,22 @@ function ImageSlider({ images = [], intervalMs = 3500 }) {
   const [active, setActive] = useState(0);
   useEffect(() => {
     if (!images || images.length === 0) return;
-    const t = setInterval(() => setActive((p) => (p + 1) % images.length), intervalMs);
+    const t = setInterval(
+      () => setActive((p) => (p + 1) % images.length),
+      intervalMs,
+    );
     return () => clearInterval(t);
   }, [images, intervalMs]);
   if (!images || images.length === 0) return null;
   return (
     <div className="flex flex-col items-center justify-center w-full h-full">
       <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex items-center justify-center mt-6 sm:mt-10">
-        <img src={images[active]} alt={`Slide ${active + 1}`} className="object-cover w-full h-full" loading="lazy" />
+        <img
+          src={images[active]}
+          alt={`Slide ${active + 1}`}
+          className="object-cover w-full h-full"
+          loading="lazy"
+        />
       </div>
     </div>
   );
@@ -136,7 +165,12 @@ export default function Speakers() {
 
   const videoRef = useRef(null);
   const isMobile = useIsMobile(900);
-const [primaryColor, setPrimaryColor] = useState("#196e87");
+
+  const videoUrl =
+  config?.backgroundMedia?.type === "video"
+    ? config.backgroundMedia.url
+    : null;
+  const [primaryColor, setPrimaryColor] = useState("#196e87");
 
   useEffect(() => {
     try {
@@ -162,19 +196,46 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
   const fetchCanonicalEvent = useCallback(async () => {
     try {
       const url = apiUrl("/api/configs/event-details");
-      const res = await fetch(`${url}?cb=${Date.now()}`, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+      const res = await fetch(`${url}?cb=${Date.now()}`, {
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
+      });
       if (res.ok) {
         const js = await res.json().catch(() => ({}));
         const val = js && js.value !== undefined ? js.value : js;
         if (val && typeof val === "object" && Object.keys(val).length) {
-          setCanonicalEvent({ name: val.name || "", date: val.date || "", venue: val.venue || "", time: val.time || "", tagline: val.tagline || "" });
+          setCanonicalEvent({
+            name: val.name || "",
+            date: val.date || "",
+            venue: val.venue || "",
+            time: val.time || "",
+            tagline: val.tagline || "",
+          });
           return;
         }
       }
-      const legacy = await fetch(`${apiUrl("/api/event-details")}?cb=${Date.now()}`, { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } }).catch(() => null);
+      const legacy = await fetch(
+        `${apiUrl("/api/event-details")}?cb=${Date.now()}`,
+        {
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+            "ngrok-skip-browser-warning": "69420",
+          },
+        },
+      ).catch(() => null);
       if (legacy && legacy.ok) {
         const ljs = await legacy.json().catch(() => ({}));
-        setCanonicalEvent({ name: ljs.name || "", date: ljs.date || "", venue: ljs.venue || "", time: ljs.time || "", tagline: ljs.tagline || "" });
+        setCanonicalEvent({
+          name: ljs.name || "",
+          date: ljs.date || "",
+          venue: ljs.venue || "",
+          time: ljs.time || "",
+          tagline: ljs.tagline || "",
+        });
         return;
       }
       setCanonicalEvent(null);
@@ -187,35 +248,68 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl("/api/speaker-config" ), { cache: "no-store", headers: { Accept: "application/json", "ngrok-skip-browser-warning": "69420" } });
+      const res = await fetch(apiUrl("/api/speaker-config"), {
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
+      });
       const cfg = res.ok ? await res.json().catch(() => ({})) : {};
       const normalized = { ...(cfg || {}) };
 
       if (normalized.backgroundMedia && normalized.backgroundMedia.url) {
-        normalized.backgroundMedia = { type: normalized.backgroundMedia.type || "image", url: normalizeAdminUrl(normalized.backgroundMedia.url) };
+        normalized.backgroundMedia = {
+          type: normalized.backgroundMedia.type || "image",
+          url: normalizeAdminUrl(normalized.backgroundMedia.url),
+        };
       } else {
-        const candidate = normalized.backgroundVideo || normalized.backgroundImage || normalized.background_image || "";
+        const candidate =
+          normalized.backgroundVideo ||
+          normalized.backgroundImage ||
+          normalized.background_image ||
+          "";
         if (candidate) {
-          const isVideo = typeof candidate === "string" && /\.(mp4|webm|ogg)(\?|$)/i.test(candidate);
-          normalized.backgroundMedia = { type: isVideo ? "video" : "image", url: normalizeAdminUrl(candidate) };
+          const isVideo =
+            typeof candidate === "string" &&
+            /\.(mp4|webm|ogg)(\?|$)/i.test(candidate);
+          normalized.backgroundMedia = {
+            type: isVideo ? "video" : "image",
+            url: normalizeAdminUrl(candidate),
+          };
         } else {
           normalized.backgroundMedia = { type: "image", url: "" };
         }
       }
 
-      normalized.termsUrl = normalized.termsUrl ? normalizeAdminUrl(normalized.termsUrl) : (normalized.terms || "");
+      normalized.termsUrl = normalized.termsUrl
+        ? normalizeAdminUrl(normalized.termsUrl)
+        : normalized.terms || "";
       normalized.termsText = normalized.termsText || "";
       normalized.termsLabel = normalized.termsLabel || "Terms & Conditions";
       normalized.termsRequired = !!normalized.termsRequired;
-      normalized.fields = Array.isArray(normalized.fields) ? normalized.fields : [];
+      normalized.fields = Array.isArray(normalized.fields)
+        ? normalized.fields
+        : [];
 
       // remove auto-accept fields
       normalized.fields = normalized.fields.filter((f) => {
         if (!f || typeof f !== "object") return false;
-        const name = (f.name || "").toString().toLowerCase().replace(/\s+/g, "");
+        const name = (f.name || "")
+          .toString()
+          .toLowerCase()
+          .replace(/\s+/g, "");
         const label = (f.label || "").toString().toLowerCase();
-        if (["accept_terms", "acceptterms", "i_agree", "agree"].includes(name)) return false;
-        if (f.type === "checkbox" && (label.includes("i agree") || label.includes("accept the terms") || label.includes("terms & conditions") || label.includes("terms and conditions"))) return false;
+        if (["accept_terms", "acceptterms", "i_agree", "agree"].includes(name))
+          return false;
+        if (
+          f.type === "checkbox" &&
+          (label.includes("i agree") ||
+            label.includes("accept the terms") ||
+            label.includes("terms & conditions") ||
+            label.includes("terms and conditions"))
+        )
+          return false;
         return true;
       });
 
@@ -231,13 +325,23 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
         return f;
       });
 
-      normalized.images = Array.isArray(normalized.images) ? normalized.images.map(normalizeAdminUrl) : [];
-      normalized.eventDetails = typeof normalized.eventDetails === "object" && normalized.eventDetails ? normalized.eventDetails : {};
+      normalized.images = Array.isArray(normalized.images)
+        ? normalized.images.map(normalizeAdminUrl)
+        : [];
+      normalized.eventDetails =
+        typeof normalized.eventDetails === "object" && normalized.eventDetails
+          ? normalized.eventDetails
+          : {};
 
       setConfig(normalized);
     } catch (e) {
       console.error("fetchConfig error", e);
-      setConfig({ fields: [], images: [], backgroundMedia: { type: "image", url: "" }, eventDetails: {} });
+      setConfig({
+        fields: [],
+        images: [],
+        backgroundMedia: { type: "image", url: "" },
+        eventDetails: {},
+      });
     } finally {
       setLoading(false);
     }
@@ -253,7 +357,8 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
     };
     const onConfigUpdated = (e) => {
       const key = e && e.detail && e.detail.key ? e.detail.key : null;
-      if (!key || key === "event-details") fetchCanonicalEvent().catch(() => { });
+      if (!key || key === "event-details")
+        fetchCanonicalEvent().catch(() => {});
     };
 
     window.addEventListener("speaker-config-updated", onCfg);
@@ -267,9 +372,6 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
       window.removeEventListener("event-details-updated", fetchCanonicalEvent);
     };
   }, [fetchConfig, fetchCanonicalEvent]);
-
-  
-  
 
   /* Handle form submit:  validate and save immediately.  Backend sends confirmation email.  */
   async function handleFormSubmit(payload) {
@@ -297,7 +399,10 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
 
     try {
       const formData = submittedForm || form || {};
-      const name = formData.name || `${formData.firstName || ""} ${formData.lastName || ""}`.trim() || "Speaker";
+      const name =
+        formData.name ||
+        `${formData.firstName || ""} ${formData.lastName || ""}`.trim() ||
+        "Speaker";
 
       const payload = {
         ...formData,
@@ -309,12 +414,16 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
       // Save to backend (backend automatically sends ACK email in background)
       const res = await fetch(apiUrl("/api/speakers"), {
         method: "POST",
-        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "69420",
+        },
         body: JSON.stringify(payload),
       });
       const js = await res.json().catch(() => ({}));
       if (!res.ok || !(js && (js.success || js.insertedId || js.id))) {
-        const em = (js && (js.error || js.message)) || `Save failed (${res.status})`;
+        const em =
+          (js && (js.error || js.message)) || `Save failed (${res.status})`;
         setError(em);
         setProcessing(false);
         return;
@@ -330,9 +439,12 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
       // Schedule reminder using server's /api/reminders/scheduled (best-effort)
       try {
         const evDate =
-          (config && config.eventDetails && (config.eventDetails.date || config.eventDetails.dates)) ||
+          (config &&
+            config.eventDetails &&
+            (config.eventDetails.date || config.eventDetails.dates)) ||
           (canonicalEvent && (canonicalEvent.date || canonicalEvent.dates)) ||
-          (formData && (formData.eventDates || formData.date)) || null;
+          (formData && (formData.eventDates || formData.date)) ||
+          null;
         if (insertedId && evDate) {
           const sch = await scheduleReminder(insertedId, evDate);
           if (!sch || !sch.ok) {
@@ -375,12 +487,16 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
                   editable={true}
                   registrationType="speaker"
                   submitting={submitting || processing}
-                  terms={(config && (config.termsUrl || config.termsText)) ? {
-                    url: config.termsUrl,
-                    text: config.termsText,
-                    label: config.termsLabel || "Terms & Conditions",
-                    required: !!config.termsRequired
-                  } : null}
+                  terms={
+                    config && (config.termsUrl || config.termsText)
+                      ? {
+                          url: config.termsUrl,
+                          text: config.termsText,
+                          label: config.termsLabel || "Terms & Conditions",
+                          required: !!config.termsRequired,
+                        }
+                      : null
+                  }
                 />
               </div>
               <div className="mt-3 mb-4" aria-hidden />
@@ -399,9 +515,7 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           )}
 
           {error && (
-            <div className="text-red-600 mt-3 text-center text-sm">
-              {error}
-            </div>
+            <div className="text-red-600 mt-3 text-center text-sm">{error}</div>
           )}
         </div>
       </div>
@@ -411,48 +525,83 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
   /* ---------- DESKTOP RENDER ---------- */
   return (
     <div className="min-h-screen w-full relative">
-      {!isMobile && config?.backgroundMedia?.type === "video" && config?.backgroundMedia?.url && (
-     <video
-  ref={videoRef}
-  autoPlay
-  muted
-  loop
-  playsInline
-  preload="metadata"
-  className="absolute inset-0 w-full h-full object-cover"
->
-  <source src={videoUrl} type="video/mp4" />
-</video>
-      
-
-      )}
-      {(!config?.backgroundColor) && config?.backgroundMedia?.type === "image" && config?.backgroundMedia?.url && (
-        <div style={{ position: "fixed", inset: 0, zIndex: -999, backgroundImage: `url(${config.backgroundMedia.url})`, backgroundSize: "cover", backgroundPosition: "center" }} />
-      )}
-      <div style={{ position: "fixed", inset: 0, background: "rgba(255,255,255,0.55)", zIndex: -900 }} />
+      {!isMobile &&
+        config?.backgroundMedia?.type === "video" &&
+        config?.backgroundMedia?.url && (
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            className="absolute inset-0 w-full h-full object-cover"
+          >
+            <source src={videoUrl} type="video/mp4" />
+          </video>
+        )}
+      {!config?.backgroundColor &&
+        config?.backgroundMedia?.type === "image" &&
+        config?.backgroundMedia?.url && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: -999,
+              backgroundImage: `url(${config.backgroundMedia.url})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            }}
+          />
+        )}
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(255,255,255,0.55)",
+          zIndex: -900,
+        }}
+      />
 
       <div className="relative z-10">
         <Topbar />
         <div className="max-w-7xl mx-auto pt-8 px-4">
-          <div className="flex flex-col sm:flex-row items-stretch mb-10" style={{ minHeight: 370 }}>
+          <div
+            className="flex flex-col sm:flex-row items-stretch mb-10"
+            style={{ minHeight: 370 }}
+          >
             <div className="sm:w-[60%] w-full flex items-center justify-center">
               {loading ? (
-                <span className="text-[#21809b] text-2xl font-bold">Loading images...</span>
+                <span className="text-[#21809b] text-2xl font-bold">
+                  Loading images...
+                </span>
               ) : config?.images && config.images.length ? (
                 <ImageSlider images={config.images} intervalMs={4000} />
               ) : (
                 <div className="rounded-3xl overflow-hidden shadow-2xl border-4 border-[#19a6e7] h-[220px] sm:h-[320px] w-[340px] sm:w-[500px] max-w-full bg-white/75 flex flex-col items-center justify-center mt-6 sm:mt-10 p-4">
-                  <img src={(config?.images && config.images[0]) || "/images/speaker_placeholder.jpg"} alt="hero" className="object-cover w-full h-full" style={{ maxHeight: 220 }} />
+                  <img
+                    src={
+                      (config?.images && config.images[0]) ||
+                      "/images/speaker_placeholder.jpg"
+                    }
+                    alt="hero"
+                    className="object-cover w-full h-full"
+                    style={{ maxHeight: 220 }}
+                  />
                 </div>
               )}
             </div>
 
             <div className="sm:w-[40%] w-full flex items-center justify-center">
               {loading ? (
-                <span className="text-[#21809b] text-xl font-semibold">Loading event details...</span>
+                <span className="text-[#21809b] text-xl font-semibold">
+                  Loading event details...
+                </span>
               ) : (
                 <div className="w-full px-4">
-                  <EventDetailsBlock event={canonicalEvent || config?.eventDetails || null} />
+                  <EventDetailsBlock
+                    event={canonicalEvent || config?.eventDetails || null}
+                  />
                 </div>
               )}
             </div>
@@ -461,7 +610,9 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
           <div className="mb-6">
             <div className="flex items-center">
               <div className="flex-grow border-t border-[#21809b]" />
-              <span className="mx-5 px-8 py-3 text-2xl font-extrabold text-[#21809b] bg-white rounded-2xl">Register as Speaker</span>
+              <span className="mx-5 px-8 py-3 text-2xl font-extrabold text-[#21809b] bg-white rounded-2xl">
+                Register as Speaker
+              </span>
               <div className="flex-grow border-t border-[#21809b]" />
             </div>
           </div>
@@ -477,12 +628,16 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
                 onSubmit={handleFormSubmit}
                 editable={true}
                 submitting={submitting || processing}
-                terms={(config && (config.termsUrl || config.termsText)) ? {
-                  url: config.termsUrl,
-                  text: config.termsText,
-                  label: config.termsLabel || "Terms & Conditions",
-                  required: !!config.termsRequired
-                } : null}
+                terms={
+                  config && (config.termsUrl || config.termsText)
+                    ? {
+                        url: config.termsUrl,
+                        text: config.termsText,
+                        label: config.termsLabel || "Terms & Conditions",
+                        required: !!config.termsRequired,
+                      }
+                    : null
+                }
               />
             </div>
           )}
@@ -494,19 +649,21 @@ const [primaryColor, setPrimaryColor] = useState("#196e87");
             </div>
           )}
 
-          {!isMobile && config?.backgroundMedia?.type === "video" && !loading && (
-            <div className="mt-4 p-3 text-sm text-gray-600">Background video active</div>
-          )}
+          {!isMobile &&
+            config?.backgroundMedia?.type === "video" &&
+            !loading && (
+              <div className="mt-4 p-3 text-sm text-gray-600">
+                Background video active
+              </div>
+            )}
           {error && (
             <div className="text-red-400 text-center mt-4">{error}</div>
           )}
-
-          
         </div>
       </div>
-       <div className="mt-16">
-  <Footer primaryColor={primaryColor} />
-</div>
+      <div className="mt-16">
+        <Footer primaryColor={primaryColor} />
+      </div>
     </div>
   );
 }

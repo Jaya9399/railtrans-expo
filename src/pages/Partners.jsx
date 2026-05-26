@@ -162,6 +162,11 @@ export default function Partners() {
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
   const isMobile = useIsMobile(900);
+  const videoRef = useRef(null);
+  const videoUrl =
+  config?.backgroundMedia?.type === "video"
+    ? config.backgroundMedia.url
+    : null;
   const [primaryColor, setPrimaryColor] = useState("#196e87");
 
   useEffect(() => {
@@ -589,9 +594,9 @@ export default function Partners() {
           )}
         </div>
       </div>
-       <div className="mt-16">
-  <Footer primaryColor={primaryColor} />
-</div>
+      <div className="mt-16">
+        <Footer primaryColor={primaryColor} />
+      </div>
     </div>
   );
 }
