@@ -88,7 +88,7 @@ export default function Visitors() {
   const videoRef = useRef(null);
   const [bgVideoReady, setBgVideoReady] = useState(false);
   const [bgVideoErrorMsg, setBgVideoErrorMsg] = useState("");
-  const isMobile = useIsMobile(900);
+  const isMobile = useIsMobile(1024);
 
   const [primaryColor, setPrimaryColor] = useState("#196e87");
 

@@ -164,7 +164,7 @@ export default function Speakers() {
   const [submissionComplete, setSubmissionComplete] = useState(false);
 
   const videoRef = useRef(null);
-  const isMobile = useIsMobile(900);
+  const isMobile = useIsMobile(1024);
 
   const videoUrl =
   config?.backgroundMedia?.type === "video"

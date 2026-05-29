@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useRef, useCallback, Suspense } from "react";
+import React, {
+  useEffect,
+  useState,
+  useRef,
+  useCallback,
+  Suspense,
+} from "react";
 import { AiOutlineQrcode } from "react-icons/ai"; // ⭐ NEW QR Scanner Icon
 
 // Lazy-load scanner to keep bundle small
@@ -14,7 +20,13 @@ function hexToRgb(hex) {
   const h = safeHex(hex);
   if (!h) return null;
   const cleaned = h.replace("#", "");
-  const normalized = cleaned.length === 3 ? cleaned.split("").map((c) => c + c).join("") : cleaned;
+  const normalized =
+    cleaned.length === 3
+      ? cleaned
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : cleaned;
   const bigint = parseInt(normalized, 16);
   return {
     r: (bigint >> 16) & 255,
@@ -50,7 +62,10 @@ function toAbsolute(url) {
   }
 }
 
-export default function Topbar({ onToggleSidebar = () => {} }) {
+export default function Topbar({
+  onToggleSidebar = () => {},
+  showHamburger = false,
+}) {
   const [scannerOpen, setScannerOpen] = useState(false);
   const [logo, setLogo] = useState("/images/logo.png");
   const [primaryColor, setPrimaryColor] = useState("#196e87");
@@ -74,16 +89,23 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
 
     async function loadConfig() {
       try {
-        const res = await fetch("/api/admin-config", { signal: controller.signal, headers: { Accept: "application/json" } });
+        const res = await fetch("/api/admin-config", {
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
         if (res.ok) {
           const json = await res.json().catch(() => null);
           if (mounted && json && typeof json === "object") {
             if (json.logoUrl) setLogo(toAbsolute(json.logoUrl));
-            if (json.primaryColor) setPrimaryColor(safeHex(json.primaryColor) || "#196e87");
+            if (json.primaryColor)
+              setPrimaryColor(safeHex(json.primaryColor) || "#196e87");
             try {
               window.localStorage.setItem(
                 "admin:topbar",
-                JSON.stringify({ logoUrl: json.logoUrl || "", primaryColor: json.primaryColor || "" })
+                JSON.stringify({
+                  logoUrl: json.logoUrl || "",
+                  primaryColor: json.primaryColor || "",
+                }),
               );
             } catch {}
             return;
@@ -98,7 +120,8 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
         if (raw) {
           const parsed = JSON.parse(raw);
           if (parsed?.logoUrl) setLogo(toAbsolute(parsed.logoUrl));
-          if (parsed?.primaryColor) setPrimaryColor(safeHex(parsed.primaryColor) || "#196e87");
+          if (parsed?.primaryColor)
+            setPrimaryColor(safeHex(parsed.primaryColor) || "#196e87");
         }
       } catch {}
     }
@@ -117,7 +140,8 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
         const d = e && e.detail ? e.detail : null;
         if (!d) return;
         if (d.logoUrl) setLogo(toAbsolute(d.logoUrl));
-        if (d.primaryColor) setPrimaryColor(safeHex(d.primaryColor) || "#196e87");
+        if (d.primaryColor)
+          setPrimaryColor(safeHex(d.primaryColor) || "#196e87");
       } catch {}
     }
     window.addEventListener("admin:topbar-updated", onTopbarUpdate);
@@ -138,18 +162,30 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
         style={{ backgroundColor: primaryColor }}
       >
         <div className="flex items-center w-full">
-
-          {/* Mobile hamburger */}
-          <button
-            onClick={onToggleSidebar}
-            className="md:hidden mr-3 p-2 rounded bg-black/10 text-white hover:bg-black/20"
-            aria-label="Toggle sidebar"
-            title="Open menu"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+          {/* Mobile hamburger - only when menus exist (admin pages) */}
+          {showHamburger && (
+            <button
+              onClick={onToggleSidebar}
+              className="md:hidden mr-3 p-2 rounded bg-black/10 text-white hover:bg-black/20"
+              aria-label="Toggle sidebar"
+              title="Open menu"
+            >
+              <svg
+                className="w-5 h-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path
+                  d="M4 6h16M4 12h16M4 18h16"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
 
           {/* Logo */}
           <img
@@ -168,7 +204,6 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
 
           {/* Right controls */}
           <div className="flex items-center gap-3">
-
             {/* ⭐ UPDATED SCANNER BUTTON WITH REACT ICON */}
             <button
               onClick={openScanner}
@@ -177,32 +212,53 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
               title="Open Gate Scanner"
               aria-label="Open Ticket Scanner"
             >
-              <AiOutlineQrcode size={20} />   {/* 👈 NEW ICON */}
+              <AiOutlineQrcode size={20} /> {/* 👈 NEW ICON */}
               <span className="hidden sm:inline">Scanner</span>
             </button>
-
           </div>
         </div>
       </header>
 
       {scannerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" aria-modal="true" role="dialog">
-          <div className="absolute inset-0 bg-black/50" onClick={closeScanner} aria-hidden="true" />
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          aria-modal="true"
+          role="dialog"
+        >
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={closeScanner}
+            aria-hidden="true"
+          />
 
           <div className="relative w-[96%] sm:w-[80%] md:w-[720px] max-w-full bg-white rounded-lg shadow-2xl overflow-hidden z-10">
-
             <div className="flex items-center justify-between px-4 py-3 border-b">
-              <div className="text-lg font-semibold" style={{ color: primaryColor }}>
+              <div
+                className="text-lg font-semibold"
+                style={{ color: primaryColor }}
+              >
                 Ticket Scanner
               </div>
 
-              <button className="px-3 py-1 rounded bg-gray-100 text-gray-800" onClick={closeScanner}>
+              <button
+                className="px-3 py-1 rounded bg-gray-100 text-gray-800"
+                onClick={closeScanner}
+              >
                 Close
               </button>
             </div>
 
             <div style={{ minHeight: 360 }} className="p-4">
-              <Suspense fallback={<div className="text-center py-20" style={{ color: primaryColor }}>Loading scanner…</div>}>
+              <Suspense
+                fallback={
+                  <div
+                    className="text-center py-20"
+                    style={{ color: primaryColor }}
+                  >
+                    Loading scanner…
+                  </div>
+                }
+              >
                 <TicketScanner
                   apiPath="/api/tickets/scan"
                   onError={(err) => {
@@ -218,7 +274,6 @@ export default function Topbar({ onToggleSidebar = () => {} }) {
                 />
               </Suspense>
             </div>
-
           </div>
         </div>
       )}

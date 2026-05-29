@@ -203,7 +203,7 @@ export default function Awardees() {
   const [awardeeTicketCode, setAwardeeTicketCode] = useState(null);
 
   const videoRef = useRef(null);
-  const isMobile = useIsMobile(900);
+  const isMobile = useIsMobile(1024);
 
   const [primaryColor, setPrimaryColor] = useState("#196e87");
 

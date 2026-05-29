@@ -161,7 +161,7 @@ export default function Partners() {
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
-  const isMobile = useIsMobile(900);
+  const isMobile = useIsMobile(1024);
   const videoRef = useRef(null);
   const videoUrl =
   config?.backgroundMedia?.type === "video"

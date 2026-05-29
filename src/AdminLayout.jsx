@@ -21,7 +21,9 @@ export default function AdminLayout({ children }) {
     if (sidebarOpen) {
       const prev = document.body.style.overflow;
       document.body.style.overflow = "hidden";
-      return () => { document.body.style.overflow = prev || ""; };
+      return () => {
+        document.body.style.overflow = prev || "";
+      };
     }
     return undefined;
   }, [sidebarOpen]);
@@ -33,8 +35,14 @@ export default function AdminLayout({ children }) {
       if (e.matches) setSidebarOpen(false);
     }
     if (m.matches) setSidebarOpen(false);
-    m.addEventListener ? m.addEventListener("change", onChange) : m.addListener(onChange);
-    return () => { m.removeEventListener ? m.removeEventListener("change", onChange) : m.removeListener(onChange); };
+    m.addEventListener
+      ? m.addEventListener("change", onChange)
+      : m.addListener(onChange);
+    return () => {
+      m.removeEventListener
+        ? m.removeEventListener("change", onChange)
+        : m.removeListener(onChange);
+    };
   }, []);
 
   return (
@@ -42,12 +50,18 @@ export default function AdminLayout({ children }) {
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       {/* Topbar fixed */}
-      <div className="fixed inset-x-0 top-0 z-40" style={{ height: TOPBAR_HEIGHT }}>
-        <Topbar onToggleSidebar={() => setSidebarOpen((s) => !s)} />
+      <div
+        className="fixed inset-x-0 top-0 z-40"
+        style={{ height: TOPBAR_HEIGHT }}
+      >
+        <Topbar
+          showHamburger={true}
+          onToggleSidebar={() => setSidebarOpen((s) => !s)}
+        />
       </div>
 
       {/* Main content */}
-          <main className="flex-1 flex flex-col" style={{ minHeight: "100vh" }}>
+      <main className="flex-1 flex flex-col" style={{ minHeight: "100vh" }}>
         <div className="md:ml-64 pt-16 flex-1">
           <div className="max-w-full md:max-w-screen-xl xl:max-w-screen-2xl mx-auto px-4 md:px-6">
             {children}

@@ -302,7 +302,7 @@ export default function Exhibitors() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const isMobile = useIsMobile(900);
+  const isMobile = useIsMobile(1024);
   const apiBase = getApiBaseFromEnvOrWindow();
   const videoRef = useRef(null);
  
