@@ -3,15 +3,8 @@ import React, { useEffect, useState } from "react";
 const DEFAULT_CATEGORIES_BY_ROLE = {
   visitors: [
     { value: "free", label: "Free", price: 0, gst: 0, features: ["Entry to Expo", "Access to General Sessions"], button: "Get Free Ticket" },
-    { value: "premium", label: "Premium", price: 2500, gst: 0.18, features: ["Priority Access", "Premium Lounge", "E-Ticket with QR"], button: "Get Premium Ticket" },
-    { value: "combo", label: "Combo", price: 5000, gst: 0.18, features: ["All Premium Benefits", "Multiple Slot Access"], button: "Get Combo Ticket" },
-    { value: "premium_delegate", label: "Premium Delegate", price: 5085, gst: 0.18, features: ["VIP Entry", "Premium Lounge Access", "Networking Dinner", "E-Ticket with QR & Badge", "Priority Seating"], button: "Get Premium Delegate" }
-  ],
-  partners: [
-    { value: "premium", label: "Premium", price: 15000, gst: 0.18, features: ["Partner Branding", "Premium Booth", "Speaker slot"], button: "Get Premium" }
-  ],
-  awardees: [
-    { value: "premium", label: "Premium", price: 0, gst: 0, features: ["Awardee pass", "Stage Access"], button: "Claim Awardee Pass" }
+    { value: "premium", label: "Premium", price: 5085, gst: 0.18, features: ["Priority Access", "Premium Lounge", "E-Ticket with QR"], button: "Get Premium Ticket" },
+    { value: "combo", label: "Combo", price: 5, gst: 0.18, features: ["All Premium Benefits", "Multiple Slot Access"], button: "Get Combo Ticket" },
   ]
 };
 

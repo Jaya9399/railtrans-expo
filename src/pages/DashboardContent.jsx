@@ -114,52 +114,6 @@ const CLEAN_EXPORT_FIELDS = {
   awardees: ["name","email","mobile","company","designation","award_category","role","ticket_code","status","bio"],
 };
 
-// ✅ Search filter function
-function filterBySearch(data, term) {
-  if (!term || !term.trim()) return data;
-  const t = term.toLowerCase().trim();
-  return data.filter(row => Object.values(row).some(v => String(v || "").toLowerCase().includes(t)));
-}
-
-// ✅ Individual Section with built-in search
-function SectionWithSearch({ label, data, tableKey, configs, onEdit, onResend, resendLoadingId, onDelete, onRefreshRow, setShowExhibitorManager, setShowPartnerManager, prettifyKey }) {
-  const [search, setSearch] = useState("");
-  const filtered = filterBySearch(data, search);
-
-  return (
-    <DashboardSection
-      label={label}
-      data={filtered}
-      tableKey={tableKey}
-      configs={configs}
-      onEdit={onEdit}
-      onResend={onResend}
-      resendLoadingId={resendLoadingId}
-      onAddNew={null}
-      onDelete={onDelete}
-      onRefreshRow={onRefreshRow}
-      setShowExhibitorManager={setShowExhibitorManager}
-      setShowPartnerManager={setShowPartnerManager}
-      PAGE_SIZE={PAGE_SIZE}
-      HIDDEN_FIELDS={HIDDEN_FIELDS}
-      prettifyKey={prettifyKey}
-      searchBar={
-        <div className="relative mb-2">
-          <input
-            type="text"
-            placeholder={`Search ${label}...`}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-3 pr-8 py-1.5 border rounded text-xs outline-none focus:ring-1 focus:ring-blue-300"
-          />
-          {search && (
-            <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">✕</button>
-          )}
-        </div>
-      }
-    />
-  );
-}
 
 export default function DashboardContent() {
   const [report, setReport] = useState({});
@@ -270,7 +224,44 @@ export default function DashboardContent() {
       setActionMsg("Export started (clean Excel)");
     } catch (e) { console.error("Export error:", e); setActionMsg("Export failed"); }
   }
+// ✅ Separate component for individual search per section
+function SearchableSection({ label, data, tableKey, onResend, resendLoadingId, sectionProps }) {
+  const [search, setSearch] = useState("");
+  const filtered = search.trim()
+    ? data.filter(row => Object.values(row).some(v => String(v || "").toLowerCase().includes(search.toLowerCase().trim())))
+    : data;
 
+  return (
+    <div>
+      <div className="relative mb-2">
+        <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        <input
+          type="text"
+          placeholder={`Search ${label}...`}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-8 pr-8 py-1.5 border rounded text-xs outline-none focus:ring-1 focus:ring-blue-300 bg-white"
+        />
+        {search && (
+          <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">✕</button>
+        )}
+      </div>
+      <DashboardSection
+        label={label}
+        data={filtered}
+        tableKey={tableKey}
+        onResend={onResend}
+        resendLoadingId={resendLoadingId}
+        onAddNew={null}
+        PAGE_SIZE={PAGE_SIZE}
+        HIDDEN_FIELDS={HIDDEN_FIELDS}
+        {...sectionProps}
+      />
+    </div>
+  );
+}
   function handleEdit(table, displayRow) {
     setEditTable(table); setIsCreating(false);
     const raws = rawReport[table] || [];
@@ -378,17 +369,17 @@ export default function DashboardContent() {
           <DashboardStats stats={stats} />
         </div>
 
-        {/* ✅ SECTIONS WITH INDIVIDUAL SEARCH */}
+              {/* ✅ SECTIONS WITH INDIVIDUAL SEARCH */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4">
           {TABLE_KEYS.map((key) => (
-            <SectionWithSearch
+            <SearchableSection
               key={key}
               label={key.charAt(0).toUpperCase() + key.slice(1)}
               data={report[key] || []}
               tableKey={key}
               onResend={(row) => handleResend(key, row)}
               resendLoadingId={resendLoadingId}
-              {...sectionProps}
+              sectionProps={sectionProps}
             />
           ))}
         </div>
