@@ -306,41 +306,26 @@ export default function AddRegistrantModal({
     setMsg("");
 
     try {
-      // Re-check before creating to avoid race
       const emailRaw = values.email || values.emailAddress || "";
       const email = normalizeEmail(emailRaw);
       if (email) {
         try {
-          const url = apiUrl(
-            `/api/otp/check-email?email=${encodeURIComponent(email)}&type=${encodeURIComponent(role)}`,
-          );
-          const res = await fetch(url, {
-            headers: { Accept: "application/json" },
-          });
+          const url = apiUrl(`/api/otp/check-email?email=${encodeURIComponent(email)}&type=${encodeURIComponent(role)}`);
+          const res = await fetch(url, { headers: { Accept: "application/json" } });
           const data = await res.json().catch(() => null);
-          if (res.ok && data && data.success && data.found) {
+          if (res.ok && data?.success && data?.found) {
             const info = data.info || null;
-            const ourCollection = ensurePluralRole(role);
-            if (info && String(info.collection) === ourCollection) {
+            if (info && String(info.collection) === ensurePluralRole(role)) {
               setExisting(info);
-              setMsg(
-                "Email already exists in this collection — create aborted. Use Upgrade Ticket.",
-              );
+              setMsg("Email already exists — use Upgrade Ticket.");
               setLoading(false);
               return;
             }
           }
-        } catch (e) {
-          // ignore and proceed to create (best-effort)
-        }
+        } catch (e) {}
       }
 
       const collection = `${role}s`;
-
-      // Determine if this is a paid ticket (delegate) or free ticket (visitor)
-      const isPaidTicket =
-        ticketMeta.total > 0 &&
-        !/free|general|0/i.test(String(ticketCategory || ""));
 
       const payload = {
         ...values,
@@ -351,10 +336,6 @@ export default function AddRegistrantModal({
         ticket_total: ticketMeta.total || 0,
         added_by_admin: true,
         admin_created_at: new Date().toISOString(),
-        skipOtp: true,
-        // Mark if email should be sent
-        send_email: true,
-        email_type: isPaidTicket ? "delegate" : "visitor",
       };
 
       const res = await fetch(apiUrl(`/api/${collection}`), {
@@ -370,43 +351,36 @@ export default function AddRegistrantModal({
         return;
       }
 
-      // Get the created registrant ID
       const registrantId = js.id || js.insertedId || js._id;
 
-      // Prepare registrant data for email
-      const registrantData = {
-        id: registrantId,
-        name: values.name || "",
-        email: email,
-        mobile: values.mobile || "",
-        ticket_category: ticketCategory,
-        ticket_label: ticketMeta.label,
-        ticket_price: ticketMeta.price,
-        ticket_total: ticketMeta.total,
-      };
-
-      // Send appropriate ticket email
-      setSendingEmail(true);
-      const emailSent = await sendTicketEmail(registrantData, isPaidTicket);
-
-      if (emailSent) {
-        setMsg(
-          isPaidTicket
-            ? "Registrant created and Delegate ticket sent!"
-            : "Registrant created and Visitor ticket sent!",
-        );
+      // ✅ ONLY auto-send ticket for VISITORS
+      if (role === "visitor" && registrantId) {
+        setSendingEmail(true);
+        try {
+          const ticketUrl = apiUrl(`/api/visitors/${encodeURIComponent(String(registrantId))}/send-ticket`);
+          const ticketRes = await fetch(ticketUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
+          });
+          if (ticketRes.ok) {
+            setMsg("Visitor created and ticket email sent!");
+          } else {
+            setMsg("Visitor created. Use Resend if needed.");
+          }
+        } catch (e) {
+          setMsg("Visitor created. Use Resend if needed.");
+        } finally {
+          setSendingEmail(false);
+        }
       } else {
-        setMsg(
-          "Registrant created but email sending failed. Please resend manually.",
-        );
+        // Exhibitors, Partners, Speakers, Awardees - use button in dashboard
+        setMsg("Registrant created! Use 'Send Ticket' button to send badge.");
       }
 
       onCreated && onCreated(js, collection);
       setStep("done");
+      setTimeout(() => onClose(), 1500);
 
-      setTimeout(() => {
-        onClose();
-      }, 1500);
     } catch (err) {
       console.error("AddRegistrantModal create error", err);
       setMsg("Error creating record");
