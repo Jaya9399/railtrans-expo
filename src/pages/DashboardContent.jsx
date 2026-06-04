@@ -47,7 +47,6 @@ function sanitizeRow(row) {
       out[k] = "";
       continue;
     }
-    // Handle added_by_admin
     if (k === 'added_by_admin') {
       out[k] = v === true || v === 'true' || v === 1 ? 'Admin' : 'User';
       continue;
@@ -60,7 +59,6 @@ function sanitizeRow(row) {
       out[k] = v;
       continue;
     }
-    // Format dates
     if (v instanceof Date) {
       out[k] = v.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
       continue;
@@ -86,32 +84,20 @@ function sanitizeRow(row) {
   }
   return out;
 }
+
 const LABEL_MAP = {
-  name: "Name",
-  full_name: "Name",
-  company: "Company",
-  org: "Company",
-  organization: "Company",
-  email: "Email",
-  email_address: "Email",
-  ticket_code: "Ticket",
-  ticketCode: "Ticket",
-  code: "Ticket",
-  ticket_category: "Category",
-  category: "Category",
-  mobile: "Phone",
-  phone: "Phone",
-  id: "ID",
-  _id: "ID",
+  name: "Name", full_name: "Name", company: "Company", org: "Company",
+  organization: "Company", email: "Email", email_address: "Email",
+  ticket_code: "Ticket", ticketCode: "Ticket", code: "Ticket",
+  ticket_category: "Category", category: "Category",
+  mobile: "Phone", phone: "Phone", id: "ID", _id: "ID",
 };
+
 function prettifyKey(k) {
   if (!k) return "";
   if (LABEL_MAP[k]) return LABEL_MAP[k];
   const spaced = k.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
-  return spaced
-    .split(" ")
-    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
-    .join(" ");
+  return spaced.split(" ").map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
 }
 
 const HIDE_ON_CREATE_RE = /(ticket|tx|transaction|payment|paid|(^id$)|timestamp)$/i;
@@ -120,106 +106,83 @@ function shouldHideOnCreate(name = "") {
   return HIDE_ON_CREATE_RE.test(String(name));
 }
 
-/**
- * CLEAN_EXPORT_FIELDS
- * Explicit whitelist of human-relevant fields per collection.
- * Only these fields will appear in the Excel export (in this order).
- */
 const CLEAN_EXPORT_FIELDS = {
-  visitors: [
-    "name",
-    "email",
-    "mobile",
-    "company",
-    "designation",
-    "role",
-    "ticket_category",
-    "ticket_code",
-    "status",
-    "purpose",
-    "other_details",
-  ],
-  exhibitors: [
-    "name",
-    "email",
-    "mobile",
-    "company",
-    "designation",
-    "company_type",
-    "role",
-    "ticket_category",
-    "ticket_code",
-    "status",
-    "productDetails",
-    "notes",
-  ],
-  partners: [
-    "name",
-    "email",
-    "mobile",
-    "company",
-    "designation",
-    "role",
-    "ticket_code",
-    "status",
-    "partnership",
-  ],
-  speakers: [
-    "name",
-    "email",
-    "mobile",
-    "company",
-    "designation",
-    "topic",
-    "role",
-    "ticket_code",
-    "status",
-  ],
-  awardees: [
-    "name",
-    "email",
-    "mobile",
-    "company",
-    "designation",
-    "award_category",
-    "role",
-    "ticket_code",
-    "status",
-    "bio",
-  ],
+  visitors: ["name","email","mobile","company","designation","role","ticket_category","ticket_code","status","purpose","other_details"],
+  exhibitors: ["name","email","mobile","company","designation","company_type","role","ticket_category","ticket_code","status","productDetails","notes"],
+  partners: ["name","email","mobile","company","designation","role","ticket_code","status","partnership"],
+  speakers: ["name","email","mobile","company","designation","topic","role","ticket_code","status"],
+  awardees: ["name","email","mobile","company","designation","award_category","role","ticket_code","status","bio"],
 };
+
+// ✅ Search filter function
+function filterBySearch(data, term) {
+  if (!term || !term.trim()) return data;
+  const t = term.toLowerCase().trim();
+  return data.filter(row => Object.values(row).some(v => String(v || "").toLowerCase().includes(t)));
+}
+
+// ✅ Individual Section with built-in search
+function SectionWithSearch({ label, data, tableKey, configs, onEdit, onResend, resendLoadingId, onDelete, onRefreshRow, setShowExhibitorManager, setShowPartnerManager, prettifyKey }) {
+  const [search, setSearch] = useState("");
+  const filtered = filterBySearch(data, search);
+
+  return (
+    <DashboardSection
+      label={label}
+      data={filtered}
+      tableKey={tableKey}
+      configs={configs}
+      onEdit={onEdit}
+      onResend={onResend}
+      resendLoadingId={resendLoadingId}
+      onAddNew={null}
+      onDelete={onDelete}
+      onRefreshRow={onRefreshRow}
+      setShowExhibitorManager={setShowExhibitorManager}
+      setShowPartnerManager={setShowPartnerManager}
+      PAGE_SIZE={PAGE_SIZE}
+      HIDDEN_FIELDS={HIDDEN_FIELDS}
+      prettifyKey={prettifyKey}
+      searchBar={
+        <div className="relative mb-2">
+          <input
+            type="text"
+            placeholder={`Search ${label}...`}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-3 pr-8 py-1.5 border rounded text-xs outline-none focus:ring-1 focus:ring-blue-300"
+          />
+          {search && (
+            <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">✕</button>
+          )}
+        </div>
+      }
+    />
+  );
+}
 
 export default function DashboardContent() {
   const [report, setReport] = useState({});
   const [rawReport, setRawReport] = useState({});
   const [configs, setConfigs] = useState({});
   const [loading, setLoading] = useState(true);
-
   const [editOpen, setEditOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
   const [modalColumns, setModalColumns] = useState([]);
   const [editTable, setEditTable] = useState("");
   const [isCreating, setIsCreating] = useState(false);
-
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTable, setDeleteTable] = useState("");
   const [deleteRow, setDeleteRow] = useState(null);
-
   const [actionMsg, setActionMsg] = useState("");
   const [showExhibitorManager, setShowExhibitorManager] = useState(false);
   const [showPartnerManager, setShowPartnerManager] = useState(false);
-
   const [pendingPremium, setPendingPremium] = useState(false);
   const [newIsPremium, setNewIsPremium] = useState(false);
-
   const [addRegistrantOpen, setAddRegistrantOpen] = useState(false);
-
   const [resendLoadingId, setResendLoadingId] = useState(null);
-
-  const [searchTerm, setSearchTerm] = useState("");
-  const [activeFilter, setActiveFilter] = useState("all");
-  
   const mountedRef = useRef(true);
+
   const apiMap = useRef(
     apiEndpoints.reduce((a, e) => {
       a[e.label.toLowerCase()] = e.url;
@@ -228,9 +191,9 @@ export default function DashboardContent() {
     }, {})
   );
 
-  const RAW_API_BASE =
-    (typeof window !== "undefined" && (window.__API_BASE__ || "")) || (process.env.REACT_APP_API_BASE || "");
+  const RAW_API_BASE = (typeof window !== "undefined" && (window.__API_BASE__ || "")) || (process.env.REACT_APP_API_BASE || "");
   const API_BASE = String(RAW_API_BASE || "").replace(/\/$/, "");
+
   function buildApiUrl(path) {
     if (!path) return API_BASE || path;
     if (/^https?:\/\//i.test(path)) return path;
@@ -239,22 +202,12 @@ export default function DashboardContent() {
 
   const fetchConfigs = useCallback(async () => {
     const out = {};
-    await Promise.all(
-      apiEndpoints.map(async ({ label, configUrl }) => {
-        const k = label.toLowerCase();
-        if (!configUrl) {
-          out[k] = null;
-          return;
-        }
-        try {
-          const res = await fetch(buildApiUrl(configUrl));
-          out[k] = await res.json().catch(() => null);
-        } catch (e) {
-          console.warn("fetch config", k, e);
-          out[k] = null;
-        }
-      })
-    );
+    await Promise.all(apiEndpoints.map(async ({ label, configUrl }) => {
+      const k = label.toLowerCase();
+      if (!configUrl) { out[k] = null; return; }
+      try { const res = await fetch(buildApiUrl(configUrl)); out[k] = await res.json().catch(() => null); }
+      catch (e) { console.warn("fetch config", k, e); out[k] = null; }
+    }));
     if (mountedRef.current) setConfigs(out);
     return out;
   }, [API_BASE]);
@@ -263,649 +216,188 @@ export default function DashboardContent() {
     setLoading(true);
     try {
       await fetchConfigs();
-      const results = {};
-      const raws = {};
-      await Promise.all(
-        apiEndpoints.map(async ({ label, url }) => {
-          try {
-            const res = await fetch(buildApiUrl(url));
-            let j = await res.json().catch(() => null);
-            if (Array.isArray(j) && j.length === 2 && Array.isArray(j[0])) j = j[0];
-            if (j && typeof j === "object" && !Array.isArray(j)) j = j.data || j.rows || j;
-            const raw = normalizeData(j);
-            raws[label.toLowerCase()] = raw;
-            results[label.toLowerCase()] = raw.map(sanitizeRow);
-          } catch (e) {
-            console.warn("fetch data", label, e);
-            raws[label.toLowerCase()] = [];
-            results[label.toLowerCase()] = [];
-          }
-        })
-      );
+      const results = {}, raws = {};
+      await Promise.all(apiEndpoints.map(async ({ label, url }) => {
+        try {
+          const res = await fetch(buildApiUrl(url));
+          let j = await res.json().catch(() => null);
+          if (Array.isArray(j) && j.length === 2 && Array.isArray(j[0])) j = j[0];
+          if (j && typeof j === "object" && !Array.isArray(j)) j = j.data || j.rows || j;
+          const raw = normalizeData(j);
+          raws[label.toLowerCase()] = raw;
+          results[label.toLowerCase()] = raw.map(sanitizeRow);
+        } catch (e) { raws[label.toLowerCase()] = []; results[label.toLowerCase()] = []; }
+      }));
       if (!mountedRef.current) return;
-      setRawReport(raws);
-      setReport(results);
-      setLoading(false);
-    } catch (e) {
-      console.error(e);
-      setRawReport({});
-      setReport({});
-      setLoading(false);
-    }
+      setRawReport(raws); setReport(results); setLoading(false);
+    } catch (e) { setRawReport({}); setReport({}); setLoading(false); }
   }, [fetchConfigs, API_BASE]);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    fetchAll();
-    return () => {
-      mountedRef.current = false;
-    };
-  }, [fetchAll]);
+  useEffect(() => { mountedRef.current = true; fetchAll(); return () => { mountedRef.current = false; }; }, [fetchAll]);
 
-  // ---------- Export to multi-sheet XLSX (clean, whitelist-driven) ----------
-  // This uses SheetJS (xlsx). Install with: npm install xlsx
-
-  // ✅ ADD THIS FUNCTION
-function filterDataBySearch(data, searchTerm, tableKey) {
-  if (!searchTerm || !searchTerm.trim()) return data;
-  
-  const term = searchTerm.toLowerCase().trim();
-  
-  return data.filter(row => {
-    // Search in all fields of the row
-    return Object.values(row).some(value => {
-      if (value === null || value === undefined) return false;
-      return String(value).toLowerCase().includes(term);
-    });
-  });
-}
   function flattenForSheet(doc = {}, tableKey) {
     const allowed = CLEAN_EXPORT_FIELDS[tableKey] || [];
+    const merged = { ...(doc.data || {}), ...(doc.form || {}), ...doc };
     const out = {};
-
-    // Build merged view giving precedence: top-level overrides data/form
-    const merged = {
-      ...(doc.data || {}),
-      ...(doc.form || {}),
-      ...doc,
-    };
-
     for (const field of allowed) {
       let value = merged[field];
-      if (value === undefined || value === null) {
-        out[field] = "";
-      } else if (typeof value === "object") {
-        try {
-          out[field] = JSON.stringify(value);
-        } catch {
-          out[field] = String(value);
-        }
-      } else {
-        out[field] = value;
-      }
+      if (value === undefined || value === null) out[field] = "";
+      else if (typeof value === "object") { try { out[field] = JSON.stringify(value); } catch { out[field] = String(value); } }
+      else out[field] = value;
     }
-
     return out;
   }
 
   function exportAllWorkbook() {
     try {
       const wb = XLSX.utils.book_new();
-
       for (const key of TABLE_KEYS) {
         const arr = rawReport[key] || [];
-
         const allowed = CLEAN_EXPORT_FIELDS[key] || [];
-
-        if (!arr || arr.length === 0) {
-          const ws = XLSX.utils.aoa_to_sheet([["No records"]]);
-          XLSX.utils.book_append_sheet(wb, ws, key.substring(0, 31));
-          continue;
-        }
-
-        // Build sheet rows using whitelist order
-        const headers = allowed.slice(); // copy
-        // Convert to human-friendly header labels
-        const headerLabels = headers.map((h) => prettifyKey(h));
-
+        if (!arr || arr.length === 0) { XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["No records"]]), key.substring(0, 31)); continue; }
+        const headers = allowed.slice();
+        const headerLabels = headers.map(h => prettifyKey(h));
         const sheetData = [headerLabels];
-
         for (const doc of arr) {
           const flat = flattenForSheet(doc, key);
-          const row = headers.map((h) => {
-            const v = flat[h];
-            if (v === null || typeof v === "undefined") return "";
-            return v;
-          });
-          sheetData.push(row);
+          sheetData.push(headers.map(h => flat[h] === null || typeof flat[h] === "undefined" ? "" : flat[h]));
         }
-
         const ws = XLSX.utils.aoa_to_sheet(sheetData);
-
-        // set column widths heuristically
-        const colWidths = headers.map((h) => ({ wch: Math.max(8, Math.min(40, (prettifyKey(h) || "").length + 6)) }));
-        ws["!cols"] = colWidths;
-
+        ws["!cols"] = headers.map(h => ({ wch: Math.max(8, Math.min(40, (prettifyKey(h) || "").length + 6)) }));
         XLSX.utils.book_append_sheet(wb, ws, key.substring(0, 31));
       }
-
-      const now = new Date();
-      const ts = now.toISOString().replace(/[:.]/g, "-");
-      const filename = `railtransexpo_clean_export_${ts}.xlsx`;
-      XLSX.writeFile(wb, filename);
+      XLSX.writeFile(wb, `railtransexpo_clean_export_${new Date().toISOString().replace(/[:.]/g, "-")}.xlsx`);
       setActionMsg("Export started (clean Excel)");
-    } catch (e) {
-      console.error("Export workbook error:", e);
-      setActionMsg("Export failed");
-    }
+    } catch (e) { console.error("Export error:", e); setActionMsg("Export failed"); }
   }
 
-  // === Handlers (unchanged behavior) ===
-
   function handleEdit(table, displayRow) {
-    setEditTable(table);
-    setIsCreating(false);
-
+    setEditTable(table); setIsCreating(false);
     const raws = rawReport[table] || [];
-    const idKeys = ["id", "_id", "ID", "Id"];
-    let raw = null;
-
-    for (const r of raws) {
-      for (const k of idKeys) {
-        if (r && r[k] !== undefined && String(r[k]) === String(displayRow[k])) {
-          raw = r;
-          break;
-        }
-      }
-      if (raw) break;
-    }
-
-    if (!raw && displayRow && displayRow.email) {
-      raw = raws.find(
-        (r) =>
-          r &&
-          String(r.email || r.data?.email || r.form?.email || "").toLowerCase() ===
-            String(displayRow.email).toLowerCase()
-      );
-    }
-
+    let raw = raws.find(r => ["id","_id","ID","Id"].some(k => r?.[k] !== undefined && String(r[k]) === String(displayRow[k])));
+    if (!raw && displayRow?.email) raw = raws.find(r => String(r?.email || "").toLowerCase() === String(displayRow.email).toLowerCase());
     if (!raw) raw = displayRow || null;
 
     function inferFieldFromSample(name, sample, cfgEntry = null) {
       const out = { name, label: prettifyKey(name), type: "text", options: [], required: false, showIf: null };
-
-      if (cfgEntry) {
-        out.label = cfgEntry.label || out.label;
-        out.type = (cfgEntry.type || out.type).toLowerCase();
-        out.options = cfgEntry.options || cfgEntry.choices || cfgEntry.values || cfgEntry.enum || cfgEntry.allowedValues || cfgEntry.items || [];
-        out.required = !!cfgEntry.required;
-        out.showIf = cfgEntry.showIf || null;
-        return out;
-      }
-
+      if (cfgEntry) { out.label = cfgEntry.label || out.label; out.type = (cfgEntry.type || out.type).toLowerCase(); out.options = cfgEntry.options || cfgEntry.choices || []; out.required = !!cfgEntry.required; out.showIf = cfgEntry.showIf || null; return out; }
       if (typeof sample === "boolean") out.type = "checkbox";
       else if (typeof sample === "number") out.type = "number";
-      else if (Array.isArray(sample)) {
-        out.type = "select";
-        out.options = sample.map((v) => (typeof v === "object" ? (v.value ?? v.label ?? String(v)) : v));
-      } else if (typeof sample === "string") out.type = sample.length > 200 ? "textarea" : "text";
-      else if (sample && typeof sample === "object") {
-        const keys = Object.keys(sample || {});
-        const hasPrimitives = keys.some((k) => ["string", "number", "boolean"].includes(typeof sample[k]));
-        out.type = hasPrimitives ? "text" : "textarea";
-      } else out.type = "text";
+      else if (Array.isArray(sample)) { out.type = "select"; out.options = sample.map(v => typeof v === "object" ? (v.value ?? v.label ?? String(v)) : v); }
+      else if (typeof sample === "string") out.type = sample.length > 200 ? "textarea" : "text";
+      else if (sample && typeof sample === "object") out.type = "text";
       return out;
     }
 
     let configCols = null;
     try {
-      const cfg = configs[table] || {};
-      const src = cfg?.config?.fields || cfg?.fields || cfg?.columns || null;
-      if (Array.isArray(src)) {
-        configCols = src.map((c) => ({
-          name: c.name || c.key || c.field || c.id,
-          label: c.label || c.name || c.key || (c.title || c.labelText || c.name || c.key),
-          type: (c.type || (c.options ? "select" : "text")).toLowerCase(),
-          options: c.options || c.choices || c.values || c.enum || c.allowedValues || c.items || [],
-          required: !!c.required,
-          showIf: c.showIf || null,
-        }));
-      }
-    } catch (e) {
-      console.warn("normalize config cols", e);
-      configCols = null;
-    }
-
-    let finalCols = null;
-
-    if (Array.isArray(configCols) && configCols.length > 0) {
-      finalCols = configCols;
-    } else if (raw && typeof raw === "object") {
-      const promoted = raw.data && typeof raw.data === "object" ? raw.data
-        : raw.form && typeof raw.form === "object" ? raw.form
-        : null;
-
-      const cols = [];
-
-      if (promoted) {
-        for (const key of Object.keys(promoted)) {
-          const sample = promoted[key];
-          cols.push(inferFieldFromSample(key, sample, null));
-        }
-      }
-
-      const preferredTop = ["name", "email", "mobile", "company", "ticket_code", "ticket_category", "status", "role"];
-      for (const t of preferredTop) {
-        if ((promoted && Object.prototype.hasOwnProperty.call(promoted, t)) || Object.prototype.hasOwnProperty.call(raw, t)) {
-          if (!cols.find((c) => c.name === t)) {
-            const sample = (promoted && promoted[t] !== undefined) ? promoted[t] : raw[t];
-            cols.push(inferFieldFromSample(t, sample, null));
-          }
-        }
-      }
-
-      if (cols.length === 0) {
-        for (const k of Object.keys(raw)) {
-          if (k === "_id") continue;
-          cols.push(inferFieldFromSample(k, raw[k], null));
-        }
-      }
-
-      const seen = new Set();
-      finalCols = cols.filter((c) => {
-        if (!c || !c.name) return false;
-        if (seen.has(c.name)) return false;
-        seen.add(c.name);
-        return true;
-      });
-    } else {
-      finalCols = [];
-    }
-
-    setModalColumns(finalCols);
-    setEditRow(raw);
-    setEditOpen(true);
+      const src = configs[table]?.config?.fields || configs[table]?.fields || null;
+      if (Array.isArray(src)) configCols = src.map(c => ({ name: c.name || c.key || c.field || c.id, label: c.label || c.name || c.key || "", type: (c.type || "text").toLowerCase(), options: c.options || c.choices || [], required: !!c.required, showIf: c.showIf || null }));
+    } catch {}
+    setModalColumns(configCols || Object.keys(raw || {}).filter(k => k !== "_id").map(k => inferFieldFromSample(k, raw[k])));
+    setEditRow(raw); setEditOpen(true);
   }
 
   async function handleDelete(table, displayRow) {
-    if (!table || !displayRow) return;
     const raws = rawReport[table] || [];
-    const idVal = displayRow?.id || displayRow?._id || displayRow?.ID || "";
-    let raw = raws.find((r) => String(r.id || r._id || r.ID || "") === String(idVal));
-    if (!raw) raw = displayRow;
-    setDeleteTable(table);
-    setDeleteRow(raw);
-    setDeleteOpen(true);
+    const idVal = displayRow?.id || displayRow?._id || "";
+    let raw = raws.find(r => String(r.id || r._id || "") === String(idVal)) || displayRow;
+    setDeleteTable(table); setDeleteRow(raw); setDeleteOpen(true);
   }
 
   async function handleDeleteConfirm() {
     if (!deleteTable || !deleteRow) return;
     try {
-      const idVal = deleteRow.id || deleteRow._id || deleteRow.ID || "";
-      if (!idVal) throw new Error("missing id");
-      const base = apiMap.current[deleteTable];
-      if (!base) throw new Error("unknown base");
-      const url = buildApiUrl(`${base}/${encodeURIComponent(String(idVal))}`);
-      const res = await fetch(url, { method: "DELETE" });
-      if (res.ok) {
-        setActionMsg(`Deleted from ${deleteTable}`);
-        await fetchAll();
-      } else {
-        const body = await res.text().catch(() => null);
-        setActionMsg(`Failed to delete: ${body || res.status}`);
-      }
-    } catch (e) {
-      console.error("delete error", e);
-      setActionMsg(`Error deleting from ${deleteTable}: ${e.message || e}`);
-    } finally {
-      setDeleteOpen(false);
-    }
+      const idVal = deleteRow.id || deleteRow._id || "";
+      const res = await fetch(buildApiUrl(`${apiMap.current[deleteTable]}/${encodeURIComponent(String(idVal))}`), { method: "DELETE" });
+      if (res.ok) { setActionMsg(`Deleted from ${deleteTable}`); await fetchAll(); }
+      else { const body = await res.text().catch(() => null); setActionMsg(`Failed: ${body || res.status}`); }
+    } catch (e) { setActionMsg(`Error: ${e.message}`); }
+    finally { setDeleteOpen(false); }
   }
 
   async function handleEditSave(updatedRowRaw) {
     if (!editTable) return null;
     const base = apiMap.current[editTable];
-    if (!base) {
-      setActionMsg("Unknown table");
-      return null;
-    }
     try {
-      let url = buildApiUrl(base);
-      let method = "POST";
+      let url = buildApiUrl(base), method = "POST";
       if (!isCreating) {
-        const idVal = updatedRowRaw.id || updatedRowRaw._id || updatedRowRaw.ID || "";
-        if (!idVal) {
-          setActionMsg("Missing id for update");
-          return null;
-        }
-        const coercedId = (typeof idVal === "object" && idVal !== null) ? (idVal.$oid || idVal.toString()) : idVal;
-        url = buildApiUrl(`${base}/${encodeURIComponent(String(coercedId))}`);
-        method = "PUT";
-      } else {
-        updatedRowRaw.added_by_admin = true;
-      }
-
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedRowRaw),
-      });
-
-      let json = null;
-      try {
-        json = await res.json().catch(() => null);
-      } catch (e) {
-        json = null;
-      }
-
-      if (res.ok) {
-        let message = isCreating ? `Created new ${editTable}` : `Updated ${editTable}`;
-        if (json) {
-          if (json.ticket_code) message += ` • Ticket: ${json.ticket_code}`;
-          if (json.saved && json.saved.ticket_code) message += ` • Ticket: ${json.saved.ticket_code}`;
-          if (json.mail && (json.mail.ok || json.mail.info || json.mail.error)) {
-            if (json.mail.ok) message += ` • Email sent`;
-            else message += ` • Email result: ${json.mail.error || JSON.stringify(json.mail)}`;
-          } else if (json.mailError) {
-            message += ` • Email error: ${json.mailError}`;
-          }
-        }
-        setActionMsg(message);
-        setEditOpen(false);
-        await fetchAll();
-        return json;
-      } else {
-        const bodyText = json && json.error ? json.error : (typeof json === "string" ? json : null) || (await res.text().catch(() => null));
-        setActionMsg(`Failed to save: ${bodyText || res.status}`);
-        return null;
-      }
-    } catch (e) {
-      console.error("save error", e);
-      setActionMsg(`Error saving ${editTable}: ${e.message || e}`);
-      return null;
-    }
+        const idVal = updatedRowRaw.id || updatedRowRaw._id || "";
+        url = buildApiUrl(`${base}/${encodeURIComponent(String(idVal))}`); method = "PUT";
+      } else { updatedRowRaw.added_by_admin = true; }
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(updatedRowRaw) });
+      const json = await res.json().catch(() => null);
+      if (res.ok) { setActionMsg(isCreating ? `Created` : `Updated`); setEditOpen(false); await fetchAll(); return json; }
+      else { setActionMsg(`Failed: ${json?.error || res.status}`); return null; }
+    } catch (e) { setActionMsg(`Error: ${e.message}`); return null; }
   }
 
   async function handleRefreshRow(table, displayRow) {
-    if (!table || !displayRow) return;
+    const idVal = displayRow.id || displayRow._id || "";
     try {
-      const raws = rawReport[table] || [];
-      const idVal = displayRow.id || displayRow._id || displayRow.ID || "";
-      if (!idVal) {
-        setActionMsg("Cannot refresh: missing id");
-        return;
-      }
-      const base = apiMap.current[table];
-      if (!base) {
-        setActionMsg("Unknown table");
-        return;
-      }
-      const url = buildApiUrl(`${base}/${encodeURIComponent(String(idVal))}`);
-      const res = await fetch(url);
-      if (!res.ok) {
-        const body = await res.text().catch(() => null);
-        setActionMsg(`Failed to refresh: ${body || res.status}`);
-        return;
-      }
-      const fresh = await res.json().catch(() => null);
-      setRawReport((prev) => {
-        const prevList = [...(prev[table] || [])];
-        const idx = prevList.findIndex((r) => String(r.id || r._id || r.ID || "") === String(idVal));
-        if (idx >= 0) prevList[idx] = fresh;
-        else prevList.unshift(fresh);
-        return { ...prev, [table]: prevList };
-      });
-      setReport((prev) => {
-        const prevList = [...(prev[table] || [])];
-        const idx = prevList.findIndex((r) => String(r.id || r._id || r.ID || "") === String(idVal));
-        const sanitized = sanitizeRow(fresh || {});
-        if (idx >= 0) prevList[idx] = sanitized;
-        else prevList.unshift(sanitized);
-        return { ...prev, [table]: prevList };
-      });
-      setActionMsg(`Refreshed ${table} record`);
-    } catch (e) {
-      console.error("refresh error", e);
-      setActionMsg(`Error refreshing ${table} record`);
-    }
+      const res = await fetch(buildApiUrl(`${apiMap.current[table]}/${encodeURIComponent(String(idVal))}`));
+      if (res.ok) { const fresh = await res.json(); setRawReport(p => ({ ...p, [table]: (p[table]||[]).map(r => String(r.id||r._id||"")===String(idVal)?fresh:r) })); setReport(p => ({ ...p, [table]: (p[table]||[]).map(r => String(r.id||r._id||"")===String(idVal)?sanitizeRow(fresh||{}):r) })); setActionMsg("Refreshed"); }
+    } catch (e) { setActionMsg(`Refresh error: ${e.message}`); }
   }
 
-  // UPDATED: try ticket endpoint first (/send-ticket), fall back to /resend-email if not available
   async function handleResend(table, row) {
-    if (!table || !row) return;
-    const idVal = row.id || row._id || row.ID || "";
-    if (!idVal) {
-      setActionMsg("Cannot resend: missing id");
-      return;
-    }
-    const basePath = apiMap.current[table];
-    if (!basePath) {
-      setActionMsg("Cannot resend: unknown table endpoint");
-      return;
-    }
-
-    const sendTicketUrl = buildApiUrl(`${basePath}/${encodeURIComponent(String(idVal))}/send-ticket`);
-    const resendUrl = buildApiUrl(`${basePath}/${encodeURIComponent(String(idVal))}/resend-email`);
-
+    const idVal = row.id || row._id || "";
+    if (!idVal) return;
     setResendLoadingId(idVal);
-    setActionMsg(`Sending email for ${table} ${idVal}...`);
-
     try {
-      // Try the ticket-specific endpoint first
-      let res = await fetch(sendTicketUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
-      });
-
-      // If send-ticket is not found (404), fallback to legacy /resend-email
-      if (res.status === 404 || res.status === 405) {
-        res = await fetch(resendUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" },
-        });
-      }
-
+      let res = await fetch(buildApiUrl(`${apiMap.current[table]}/${encodeURIComponent(String(idVal))}/send-ticket`), { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" } });
+      if (res.status === 404 || res.status === 405) res = await fetch(buildApiUrl(`${apiMap.current[table]}/${encodeURIComponent(String(idVal))}/resend-email`), { method: "POST", headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "69420" } });
       const js = await res.json().catch(() => null);
-      if (res.ok) {
-        setActionMsg(`Email resent to ${row.email || "recipient"} successfully`);
-        // Refresh the row to pick up email flags/timestamps
-        handleRefreshRow(table, row);
-      } else {
-        const body =
-          js && (js.error || js.message)
-            ? js.error || js.message
-            : await res.text().catch(() => null);
-        setActionMsg(`Resend failed: ${body || res.status}`);
-      }
-    } catch (e) {
-      console.error("resend error", e);
-      setActionMsg(`Resend error: ${e && (e.message || e)}`);
-    } finally {
-      setResendLoadingId(null);
-    }
+      if (res.ok) { setActionMsg(`Email sent to ${row.email || "recipient"}`); handleRefreshRow(table, row); }
+      else setActionMsg(`Resend failed: ${js?.error || res.status}`);
+    } catch (e) { setActionMsg(`Resend error: ${e.message}`); }
+    finally { setResendLoadingId(null); }
   }
 
   const stats = useMemo(() => ({
-    visitors: (report.visitors || []).length,
-    exhibitors: (report.exhibitors || []).length,
-    partners: (report.partners || []).length,
-    speakers: (report.speakers || []).length,
+    visitors: (report.visitors || []).length, exhibitors: (report.exhibitors || []).length,
+    partners: (report.partners || []).length, speakers: (report.speakers || []).length,
     awardees: (report.awardees || []).length,
   }), [report]);
+
+  const sectionProps = { configs, onEdit: handleEdit, onDelete: handleDelete, onRefreshRow: handleRefreshRow, setShowExhibitorManager, setShowPartnerManager, prettifyKey };
 
   return (
     <div className="pt-4 pb-6 w-full">
       <div className="w-full mx-auto px-4 md:px-6">
-        <div className=" top-16 z-20 bg-transparent pb-4">
+        <div className="top-16 z-20 bg-transparent pb-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-bold">Admin Dashboard</h1>
-              <div className="text-sm text-gray-600">Live registration report</div>
-            </div>
+            <div><h1 className="text-2xl font-bold">Admin Dashboard</h1><div className="text-sm text-gray-600">Live registration report</div></div>
             <div className="flex items-center gap-3 justify-start md:justify-end">
-              <button onClick={() => fetchAll()} className="px-3 py-2 border rounded text-sm bg-white hover:bg-gray-50">Refresh All</button>
-              <button onClick={() => exportAllWorkbook()} className="px-3 py-2 border rounded text-sm bg-yellow-50 hover:bg-yellow-100">Download Excel (All Sheets)</button>
+              <button onClick={fetchAll} className="px-3 py-2 border rounded text-sm bg-white hover:bg-gray-50">Refresh All</button>
+              <button onClick={exportAllWorkbook} className="px-3 py-2 border rounded text-sm bg-yellow-50 hover:bg-yellow-100">Download Excel</button>
               <button onClick={() => setAddRegistrantOpen(true)} className="px-3 py-2 border rounded text-sm bg-green-50 hover:bg-green-100">Add Registrant</button>
-              <div className="text-sm text-gray-500">Showing {Object.keys(report).reduce((s, k) => s + (report[k] || []).length, 0)} records</div>
+              <div className="text-sm text-gray-500">Showing {Object.values(report).reduce((s, arr) => s + arr.length, 0)} records</div>
             </div>
           </div>
-
           <DashboardStats stats={stats} />
-              <div className="mt-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-          <div className="relative flex-1 max-w-md">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search by name, email, company, ticket code..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-300 focus:border-blue-400 outline-none"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-          
-          {/* Category filter pills */}
-          <div className="flex flex-wrap gap-2">
-            {[
-              { key: "all", label: "All" },
-              { key: "visitors", label: "Visitors" },
-              { key: "exhibitors", label: "Exhibitors" },
-              { key: "partners", label: "Partners" },
-              { key: "speakers", label: "Speakers" },
-              { key: "awardees", label: "Awardees" },
-            ].map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setActiveFilter(key)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition ${
-                  activeFilter === key
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-              >
-                {label}
-                {key !== "all" && ` (${(report[key] || []).length})`}
-              </button>
-            ))}
-          </div>
-          
-          {/* Search results count */}
-          {searchTerm && (
-            <span className="text-xs text-gray-500 whitespace-nowrap">
-              Found: {TABLE_KEYS.filter(k => activeFilter === "all" || activeFilter === k)
-                .reduce((sum, k) => sum + filterDataBySearch(report[k] || [], searchTerm).length, 0)} results
-            </span>
-          )}
         </div>
-        </div>
+
+        {/* ✅ SECTIONS WITH INDIVIDUAL SEARCH */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-4">
-          {TABLE_KEYS.filter(key => activeFilter === "all" || activeFilter === key).map((key) => {
-            const filteredData = filterDataBySearch(report[key] || [], searchTerm);
-            
-            // Skip empty tables when searching
-            if (searchTerm && filteredData.length === 0 && activeFilter === "all") return null;
-            
-            return (
-              <DashboardSection
-                key={key}
-                label={key.charAt(0).toUpperCase() + key.slice(1)}
-                data={filteredData}
-                tableKey={key}
-                configs={configs}
-                onEdit={handleEdit}
-                onResend={(row) => handleResend(key, row)}
-                resendLoadingId={resendLoadingId}
-                onAddNew={null}
-                onDelete={handleDelete}
-                onRefreshRow={handleRefreshRow}
-                setShowExhibitorManager={setShowExhibitorManager}
-                setShowPartnerManager={setShowPartnerManager}
-                PAGE_SIZE={PAGE_SIZE}
-                HIDDEN_FIELDS={HIDDEN_FIELDS}
-                prettifyKey={prettifyKey}
-                searchTerm={searchTerm} // Pass search term to highlight
-              />
-            );
-          })}
+          {TABLE_KEYS.map((key) => (
+            <SectionWithSearch
+              key={key}
+              label={key.charAt(0).toUpperCase() + key.slice(1)}
+              data={report[key] || []}
+              tableKey={key}
+              onResend={(row) => handleResend(key, row)}
+              resendLoadingId={resendLoadingId}
+              {...sectionProps}
+            />
+          ))}
         </div>
 
-        <EditModal
-          open={editOpen}
-          onClose={() => setEditOpen(false)}
-          row={editRow}
-          columns={modalColumns}
-          onSave={handleEditSave}
-          isNew={isCreating}
-          table={editTable || "exhibitors"}
-          pendingPremium={pendingPremium}
-          newIsPremium={newIsPremium}
-          setPendingPremium={setPendingPremium}
-          setNewIsPremium={setNewIsPremium}
-        />
-
-        <AddRegistrantModal
-          open={addRegistrantOpen}
-          onClose={() => setAddRegistrantOpen(false)}
-          apiBase={API_BASE}
-          onCreated={async (createdDoc, collection) => {
-            await fetchAll();
-            let msg = `Created in ${collection}`;
-            if (createdDoc) {
-              if (createdDoc.ticket_code) msg += ` • Ticket: ${createdDoc.ticket_code}`;
-              if (createdDoc.mail && createdDoc.mail.ok) msg += ` • Email sent`;
-              if (createdDoc.mailError) msg += ` • Email error: ${createdDoc.mailError}`;
-            }
-            setActionMsg(msg);
-          }}
-        />
-
-        {deleteOpen && (
-          <DeleteModal
-            open={deleteOpen}
-            onClose={() => setDeleteOpen(false)}
-            onConfirm={handleDeleteConfirm}
-            title="Delete record"
-            message={`Delete "${deleteRow?.name || deleteRow?.id}"?`}
-            confirmLabel="Delete"
-            cancelLabel="Cancel"
-          />
-        )}
-
-        {showExhibitorManager && (
-          <div className="fixed inset-0 z-50 flex items-start justify-center p-6">
-            <div className="absolute inset-0 bg-black opacity-40" onClick={() => setShowExhibitorManager(false)} />
-            <div className="relative z-60 w-full max-w-5xl bg-white rounded shadow-lg overflow-auto" style={{ maxHeight: "90vh" }}>
-              <div className="flex items-center justify-between p-3 border-b">
-                <h3 className="text-lg font-semibold">Manage Exhibitors</h3>
-                <div><button className="px-3 py-1 mr-2 border rounded" onClick={() => setShowExhibitorManager(false)}>Close</button></div>
-              </div>
-              <div className="p-4"><AdminExhibitor /></div>
-            </div>
-          </div>
-        )}
-
-        {showPartnerManager && (
-          <div className="fixed inset-0 z-50 flex items-start justify-center p-6">
-            <div className="absolute inset-0 bg-black opacity-40" onClick={() => setShowPartnerManager(false)} />
-            <div className="relative z-60 w-full max-w-5xl bg-white rounded shadow-lg overflow-auto" style={{ maxHeight: "90vh" }}>
-              <div className="flex items-center justify-between p-3 border-b">
-                <h3 className="text-lg font-semibold">Manage Partners</h3>
-                <div><button className="px-3 py-1 mr-2 border rounded" onClick={() => setShowPartnerManager(false)}>Close</button></div>
-              </div>
-              <div className="p-4"><AdminPartner /></div>
-            </div>
-          </div>
-        )}
-
+        <EditModal open={editOpen} onClose={() => setEditOpen(false)} row={editRow} columns={modalColumns} onSave={handleEditSave} isNew={isCreating} table={editTable || "exhibitors"} pendingPremium={pendingPremium} newIsPremium={newIsPremium} setPendingPremium={setPendingPremium} setNewIsPremium={setNewIsPremium} />
+        <AddRegistrantModal open={addRegistrantOpen} onClose={() => setAddRegistrantOpen(false)} apiBase={API_BASE} onCreated={async (doc, col) => { await fetchAll(); setActionMsg(`Created in ${col}`); }} />
+        {deleteOpen && <DeleteModal open={deleteOpen} onClose={() => setDeleteOpen(false)} onConfirm={handleDeleteConfirm} title="Delete record" message={`Delete "${deleteRow?.name || deleteRow?.id}"?`} confirmLabel="Delete" cancelLabel="Cancel" />}
+        {showExhibitorManager && (<div className="fixed inset-0 z-50 flex items-start justify-center p-6"><div className="absolute inset-0 bg-black opacity-40" onClick={() => setShowExhibitorManager(false)} /><div className="relative z-60 w-full max-w-5xl bg-white rounded shadow-lg overflow-auto" style={{ maxHeight: "90vh" }}><div className="flex items-center justify-between p-3 border-b"><h3 className="text-lg font-semibold">Manage Exhibitors</h3><button className="px-3 py-1 border rounded" onClick={() => setShowExhibitorManager(false)}>Close</button></div><div className="p-4"><AdminExhibitor /></div></div></div>)}
+        {showPartnerManager && (<div className="fixed inset-0 z-50 flex items-start justify-center p-6"><div className="absolute inset-0 bg-black opacity-40" onClick={() => setShowPartnerManager(false)} /><div className="relative z-60 w-full max-w-5xl bg-white rounded shadow-lg overflow-auto" style={{ maxHeight: "90vh" }}><div className="flex items-center justify-between p-3 border-b"><h3 className="text-lg font-semibold">Manage Partners</h3><button className="px-3 py-1 border rounded" onClick={() => setShowPartnerManager(false)}>Close</button></div><div className="p-4"><AdminPartner /></div></div></div>)}
         {actionMsg && <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-50 bg-white px-4 py-2 rounded shadow">{actionMsg}</div>}
       </div>
     </div>
