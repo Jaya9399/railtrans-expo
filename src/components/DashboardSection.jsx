@@ -4,7 +4,8 @@ import DataTable from "./DataTable";
 /**
  * DashboardSection
  * - Removed per-section "Add New" button because Add Registrant is centralized. 
- * - Keeps "Manage" button for exhibitors/partners. 
+ * - Keeps "Manage" button for exhibitors/partners.
+ * - Shows "Send Ticket" button for ALL entities (visitors, exhibitors, partners, speakers, awardees)
  */
 export default function DashboardSection({
   label,
@@ -22,6 +23,7 @@ export default function DashboardSection({
   PAGE_SIZE = 10,
   HIDDEN_FIELDS = new Set(),
   prettifyKey = (k) => String(k || "").replace(/[_-]/g, " ").replace(/\b\w/g, (s) => s.toUpperCase()),
+  showSendTicket = true, // ✅ NEW PROP - default to true for all entities
 }) {
   const columns = useMemo(() => {
     const keysSet = new Set();
@@ -32,10 +34,10 @@ export default function DashboardSection({
     });
 
     // Prefer configured column order if available
-    let configCols = configs?.[tableKey]?.columns?. map((c) => c.key) || configs?.[tableKey]?.fields?.map((c) => c.name);
+    let configCols = configs?.[tableKey]?.columns?.map((c) => c.key) || configs?.[tableKey]?.fields?.map((c) => c.name);
     if (configCols && configCols.length > 0) {
-      const missing = [... keysSet].filter((k) => !configCols.includes(k));
-      configCols = [... configCols, ...missing];
+      const missing = [...keysSet].filter((k) => !configCols.includes(k));
+      configCols = [...configCols, ...missing];
     } else {
       configCols = [...keysSet];
     }
@@ -44,10 +46,16 @@ export default function DashboardSection({
     const ordered = [];
     const seen = new Set();
     for (const p of preferred) {
-      if (configCols.includes(p) && !seen.has(p)) { ordered.push(p); seen.add(p); }
+      if (configCols.includes(p) && !seen.has(p)) { 
+        ordered.push(p); 
+        seen.add(p); 
+      }
     }
     for (const k of configCols) {
-      if (! seen.has(k)) { ordered.push(k); seen.add(k); }
+      if (!seen.has(k)) { 
+        ordered.push(k); 
+        seen.add(k); 
+      }
     }
 
     return ordered.map((k) => ({ key: k, label: prettifyKey(k) }));
@@ -55,7 +63,7 @@ export default function DashboardSection({
 
   const handleRowAction = useCallback(
     (action, row) => {
-      if (! row) return;
+      if (!row) return;
       if (action === "edit") {
         typeof onEdit === "function" && onEdit(tableKey, row);
       } else if (action === "delete") {
@@ -68,12 +76,12 @@ export default function DashboardSection({
   );
 
   function handleManage() {
-    if (tableKey === "exhibitors") setShowExhibitorManager && setShowExhibitorManager(true);
-    else if (tableKey === "partners") setShowPartnerManager && setShowPartnerManager(true);
+    if (tableKey === "exhibitors") {
+      setShowExhibitorManager && setShowExhibitorManager(true);
+    } else if (tableKey === "partners") {
+      setShowPartnerManager && setShowPartnerManager(true);
+    }
   }
-
-  // showSendTicket only for non-visitors
-  const showSendTicket = tableKey !== "visitors";
 
   return (
     <section className="border border-gray-200 rounded bg-white p-4 shadow">
@@ -85,7 +93,10 @@ export default function DashboardSection({
 
         <div className="flex items-center gap-2">
           {(tableKey === "exhibitors" || tableKey === "partners") && (
-            <button onClick={handleManage} className="text-sm px-3 py-1 border rounded bg-gray-100 hover:bg-gray-200">
+            <button 
+              onClick={handleManage} 
+              className="text-sm px-3 py-1 border rounded bg-gray-100 hover:bg-gray-200"
+            >
               Manage
             </button>
           )}
