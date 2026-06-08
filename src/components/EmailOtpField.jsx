@@ -47,6 +47,7 @@ export default function EmailOtpVerifier({
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [existing, setExisting] = useState(null);
+  const [checkingEmail, setCheckingEmail] = useState(false);
 
   const sendingRef = useRef(false);
   const verifyingRef = useRef(false);
@@ -74,15 +75,15 @@ export default function EmailOtpVerifier({
   }
   const role = normalizeToRole(initialRole);
   if (!role) {
-    throw new Error("registrationType is required for OTP flow");
+    console.error("registrationType is required for OTP flow, defaulting to 'visitor'");
+    role = "visitor"; // Fallback
   }
 
   useEffect(() => {
     if (inferredFromUrl) {
       console.warn(`[EmailOtpVerifier] registrationType prop not provided — inferred role="${role}" from URL. Prefer passing registrationType prop to this component for accuracy.`);
     }
-
-  }, []); // run once
+  }, []);
 
   // Resolve backend base (prop -> window -> env -> "")
   const resolvedApiBase = (apiBase && String(apiBase).trim())
@@ -96,39 +97,82 @@ export default function EmailOtpVerifier({
   }
 
   useEffect(() => {
-    // Debounced check-email
+    // Debounced check-email with timeout and better error handling
     if (!emailValid) {
       setExisting(null);
       setMsg("");
       setError("");
       return;
     }
+    
     if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
     checkTimerRef.current = setTimeout(async () => {
+      setCheckingEmail(true);
       try {
+        // Create abort controller for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+        
         const url = buildUrl(`/api/otp/check-email?email=${encodeURIComponent(emailNorm)}&type=${encodeURIComponent(role)}`);
-        const res = await fetch(url, { headers: { "ngrok-skip-browser-warning": "true", Accept: "application/json" } });
+        console.log(`[EmailOtpVerifier] Checking email: ${emailNorm}`);
+        
+        const res = await fetch(url, { 
+          signal: controller.signal,
+          headers: { 
+            "ngrok-skip-browser-warning": "true", 
+            Accept: "application/json" 
+          } 
+        });
+        
+        clearTimeout(timeoutId);
+        
         let data = null;
-        try { data = await res.json(); } catch { data = null; }
-        if (res.ok && data && data.success && data.found) {
-          setExisting(data.info || null);
-          setMsg("Email already registered. You can upgrade the ticket.");
-          setOtpSent(false);
-          setError("");
-          return;
+        try { 
+          data = await res.json(); 
+        } catch (parseErr) {
+          console.error("[EmailOtpVerifier] Failed to parse response:", parseErr);
+          data = null;
         }
+        
+        // Handle successful response
+        if (res.ok && data && data.success) {
+          if (data.found) {
+            setExisting(data.info || null);
+            setMsg("Email already registered. You can upgrade the ticket.");
+            setOtpSent(false);
+            setError("");
+          } else {
+            setExisting(null);
+            setMsg("");
+            setError("");
+          }
+        } else {
+          // Backend returned error but we don't want to block registration
+          console.warn("[EmailOtpVerifier] check-email response not OK:", res.status, data);
+          setExisting(null);
+          setMsg("");
+          setError("");
+        }
+      } catch (err) {
+        // Handle timeout or network errors gracefully - don't block registration
+        if (err.name === 'AbortError') {
+          console.warn("[EmailOtpVerifier] check-email timeout after 8s");
+        } else {
+          console.error("[EmailOtpVerifier] check-email error:", err);
+        }
+        // Don't show error to user - just allow registration to proceed
         setExisting(null);
         setMsg("");
         setError("");
-      } catch (err) {
-        console.error("[EmailOtpVerifier] check-email error:", err);
-        setExisting(null);
-        setMsg("");
-        setError("Unable to check email");
+      } finally {
+        setCheckingEmail(false);
       }
-    }, 350);
-    return () => { if (checkTimerRef.current) clearTimeout(checkTimerRef.current); };
-  }, [emailNorm, resolvedApiBase, role]);
+    }, 500); // Increased debounce to 500ms
+    
+    return () => { 
+      if (checkTimerRef.current) clearTimeout(checkTimerRef.current); 
+    };
+  }, [emailNorm, resolvedApiBase, role, emailValid]);
 
   useEffect(() => {
     // reset OTP UI when email changes
@@ -148,16 +192,21 @@ export default function EmailOtpVerifier({
     setMsg(""); setError(""); setExisting(null);
     const requestId = makeRequestId();
 
-
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for OTP send
+      
       const url = buildUrl("/api/otp/send");
       const res = await fetch(url, {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
         body: JSON.stringify({ type: role, value: emailNorm, requestId, registrationType: role }),
       });
-      let data = null;
       
+      clearTimeout(timeoutId);
+      
+      let data = null;
       try { data = await res.json(); } catch { data = null; }
 
       if (res.status === 409 && data && data.existing) {
@@ -166,16 +215,22 @@ export default function EmailOtpVerifier({
         setOtpSent(false);
         return;
       }
+      
       if (res.ok && data && data.success) {
         setOtpSent(true);
-        setMsg("OTP sent to your email.");
+        setMsg("OTP sent to your email. Please check your inbox (and spam folder).");
         setError("");
         return;
       }
-      setError((data && (data.error || data.message)) || `Send failed (${res.status})`);
+      
+      setError((data && (data.error || data.message)) || `Failed to send OTP (${res.status}). Please try again.`);
     } catch (err) {
       console.error("[EmailOtpVerifier] send-otp error:", err);
-      setError("Network error while sending OTP");
+      if (err.name === 'AbortError') {
+        setError("Request timed out. Please check your internet connection and try again.");
+      } else {
+        setError("Network error while sending OTP. Please try again.");
+      }
     } finally {
       sendingRef.current = false;
       setLoading(false);
@@ -185,15 +240,20 @@ export default function EmailOtpVerifier({
   async function handleVerifyOtp() {
     if (verifyingRef.current) return;
     if (!emailValid) { setError("Invalid email"); return; }
+    if (!otp || otp.length !== 6) { setError("Please enter a valid 6-digit OTP"); return; }
 
     verifyingRef.current = true;
     setLoading(true);
     setMsg(""); setError(""); setExisting(null);
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
       const url = buildUrl("/api/otp/verify");
       const res = await fetch(url, {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
         body: JSON.stringify({
           type: role,
@@ -202,12 +262,14 @@ export default function EmailOtpVerifier({
           registrationType: role
         })
       });
-      let data = null;
       
+      clearTimeout(timeoutId);
+      
+      let data = null;
       try { data = await res.json(); } catch { data = null; }
 
       if (!data || !data.success) {
-        setError((data && (data.error || data.message)) || "Verify failed");
+        setError((data && (data.error || data.message)) || "Invalid OTP. Please try again.");
         return;
       }
 
@@ -219,7 +281,7 @@ export default function EmailOtpVerifier({
       } catch (e) { /* ignore */ }
 
       setVerified && setVerified(true);
-      setMsg("Email verified");
+      setMsg("Email verified successfully!");
 
       if (setForm && fieldName) {
         try {
@@ -228,13 +290,17 @@ export default function EmailOtpVerifier({
         } catch (e) { /* ignore */ }
       }
 
-      // NEW: pass the verificationToken to parent (MANDATORY for backend)
+      // Pass the verificationToken to parent (MANDATORY for backend)
       if (typeof onOtpSuccess === "function" && data.verificationToken) {
         onOtpSuccess({ email: emailNorm, token: data.verificationToken });
       }
     } catch (err) {
       console.error("[EmailOtpVerifier] verify error", err);
-      setError("Network/server error while verifying OTP");
+      if (err.name === 'AbortError') {
+        setError("Verification timeout. Please try again.");
+      } else {
+        setError("Network/server error while verifying OTP. Please try again.");
+      }
     } finally {
       verifyingRef.current = false;
       setLoading(false);
@@ -244,57 +310,38 @@ export default function EmailOtpVerifier({
   function handleUpgradeNavigate() {
     if (!existing) return;
 
-    const collection =
-      existing.collection || ensurePluralRole(existing.registrationType || role);
-
-    const id =
-      existing.id ||
-      existing._id ||
-      existing._id_str ||
-      (existing._id && existing._id.$oid) ||
-      null;
-
+    const collection = existing.collection || ensurePluralRole(existing.registrationType || role);
+    const id = existing.id || existing._id || existing._id_str || (existing._id && existing._id.$oid) || null;
     const ticket = existing.ticket_code || existing.ticketCode || null;
-
     const emailParam = encodeURIComponent(emailNorm);
 
     if (id) {
-      navigate(
-        `/ticket-upgrade?entity=${encodeURIComponent(
-          collection
-        )}&id=${encodeURIComponent(String(id))}&email=${emailParam}`
-      );
+      navigate(`/ticket-upgrade?entity=${encodeURIComponent(collection)}&id=${encodeURIComponent(String(id))}&email=${emailParam}`);
       return;
     }
 
     if (ticket) {
-      navigate(
-        `/ticket-upgrade?entity=${encodeURIComponent(
-          collection
-        )}&ticket_code=${encodeURIComponent(String(ticket))}&email=${emailParam}`
-      );
+      navigate(`/ticket-upgrade?entity=${encodeURIComponent(collection)}&ticket_code=${encodeURIComponent(String(ticket))}&email=${emailParam}`);
       return;
     }
 
-    // last resort (rare)
-    navigate(
-      `/ticket-upgrade?entity=visitors&email=${emailParam}`
-    );
+    navigate(`/ticket-upgrade?entity=visitors&email=${emailParam}`);
   }
-
 
   return (
     <div className="ml-3 flex flex-col gap-2">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         {!otpSent ? (
           <button
             type="button"
             onClick={handleSendOtp}
-            disabled={!emailValid || loading || !!existing}
-            className={`ml-2 px-3 py-1 rounded bg-[#21809b] text-white text-xs ${loading ? "opacity-60 cursor-not-allowed" : ""}`}
-            title={!emailValid ? "Enter a valid email" : "Send OTP"}
+            disabled={!emailValid || loading || !!existing || checkingEmail}
+            className={`ml-2 px-3 py-1 rounded bg-[#21809b] text-white text-xs transition-colors ${
+              loading || checkingEmail ? "opacity-60 cursor-not-allowed" : "hover:bg-[#1a5f73]"
+            }`}
+            title={!emailValid ? "Enter a valid email" : checkingEmail ? "Checking email..." : "Send OTP"}
           >
-            {loading ? "Sending..." : "Send OTP"}
+            {loading ? "Sending..." : checkingEmail ? "Checking..." : "Send OTP"}
           </button>
         ) : (
           <>
@@ -302,18 +349,32 @@ export default function EmailOtpVerifier({
               type="text"
               value={otp}
               onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              placeholder="Enter OTP"
-              className="border px-2 py-1 rounded text-xs"
+              placeholder="Enter 6-digit OTP"
+              className="border px-2 py-1 rounded text-xs w-32"
               maxLength={6}
               disabled={loading}
+              autoFocus
             />
             <button
               type="button"
               onClick={handleVerifyOtp}
               disabled={loading || otp.length !== 6}
-              className="px-3 py-1 rounded bg-[#21809b] text-white text-xs"
+              className={`px-3 py-1 rounded bg-[#21809b] text-white text-xs transition-colors ${
+                loading || otp.length !== 6 ? "opacity-60 cursor-not-allowed" : "hover:bg-[#1a5f73]"
+              }`}
             >
-              Verify
+              {loading ? "Verifying..." : "Verify"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOtpSent(false);
+                setOtp("");
+                setError("");
+              }}
+              className="px-2 py-1 rounded bg-gray-200 text-gray-700 text-xs hover:bg-gray-300"
+            >
+              Back
             </button>
           </>
         )}
@@ -324,18 +385,18 @@ export default function EmailOtpVerifier({
 
       {existing && (
         <div className="ml-0 mt-2 p-2 bg-yellow-50 border border-yellow-100 rounded text-xs">
-          <div className="mb-1 font-medium text-[#b45309]">Email already exists</div>
+          <div className="mb-1 font-medium text-[#b45309]">Email already registered</div>
           <div className="text-xs text-gray-700 mb-2">
             Found in: <strong>{existing.collection || (existing.registrationType ? ensurePluralRole(existing.registrationType) : "visitors")}</strong>
-            {existing.id ? <> — ID: <code>{existing.id}</code></> : null}
+            {existing.id ? <> — ID: <code className="bg-gray-100 px-1 rounded">{existing.id}</code></> : null}
           </div>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={handleUpgradeNavigate}
-              className="px-2 py-1 bg-white border rounded text-[#21809b] text-xs"
+              className="px-2 py-1 bg-white border rounded text-[#21809b] text-xs hover:bg-gray-50"
             >
-              Upgrade Ticket
+              Upgrade Ticket →
             </button>
           </div>
         </div>
