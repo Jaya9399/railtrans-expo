@@ -471,7 +471,10 @@ export default function Visitors() {
               <ManualPaymentStep
                 ticketType={ticketCategory}
                 ticketPrice={ticketMeta.total || 0}
-                onProofUpload={() => completeRegistrationAndEmail()}
+                onProofUpload={(paymentTxId) => {
+                  if (paymentTxId) setTxId(paymentTxId);
+                  completeRegistrationAndEmail();
+                }}
                 onTxIdChange={(val) => setTxId(val)}
                 txId={txId}
                 proofFile={proofFile}
@@ -658,7 +661,10 @@ export default function Visitors() {
               <ManualPaymentStep
                 ticketType={ticketCategory}
                 ticketPrice={ticketMeta.total || 0}
-                onProofUpload={() => completeRegistrationAndEmail()}
+                onProofUpload={(paymentTxId) => {
+                  if (paymentTxId) setTxId(paymentTxId);
+                  completeRegistrationAndEmail();
+                }}
                 onTxIdChange={(val) => setTxId(val)}
                 txId={txId}
                 proofFile={proofFile}
