@@ -9,10 +9,9 @@ import ThankYouMessage from "../components/ThankYouMessage";
  *
  * Responsibilities:
  * - Create record AND send appropriate ticket email (Visitor/Delegate based on ticket category)
- * - Before create: when email is entered, check whether same email already exists
- *   in the same registration collection (uses /api/otp/check-email).
- * - SKIP email duplication check for EXHIBITORS and PARTNERS
- * - For visitors with paid tickets, show manual payment step OR skip payment option
+ * - VISITOR (Free) → Send ticket email immediately
+ * - DELEGATE (Paid) → Wait for payment confirmation, then send ticket email
+ * - SKIP payment option for admin → Send DELEGATE ticket without payment
  */
 
 export default function AddRegistrantModal({
@@ -51,7 +50,7 @@ export default function AddRegistrantModal({
   const [proofFile, setProofFile] = useState(null);
   const [registrantId, setRegistrantId] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
-  const [skipPayment, setSkipPayment] = useState(false); // ✅ NEW: Skip payment flag
+  const [skipPayment, setSkipPayment] = useState(false);
 
   // Email existence check state
   const [existing, setExisting] = useState(null);
@@ -83,7 +82,7 @@ export default function AddRegistrantModal({
     setProofFile(null);
     setRegistrantId(null);
     setShowPayment(false);
-    setSkipPayment(false); // ✅ Reset skip payment
+    setSkipPayment(false);
     if (checkTimerRef.current) {
       clearTimeout(checkTimerRef.current);
       checkTimerRef.current = null;
@@ -292,8 +291,8 @@ export default function AddRegistrantModal({
         ticket_price: ticketMeta.price || 0,
         ticket_gst: ticketMeta.gstAmount || 0,
         ticket_total: ticketMeta.total || 0,
-        payment_skipped: skipPayment, // ✅ Add skip payment flag
-        txId: skipPayment ? null : txId, // ✅ No txId if skipped
+        payment_skipped: skipPayment,
+        txId: skipPayment ? null : txId,
         added_by_admin: true,
         admin_created_at: new Date().toISOString(),
       };
@@ -314,10 +313,17 @@ export default function AddRegistrantModal({
       const newRegistrantId = js.id || js.insertedId || js._id;
       setRegistrantId(newRegistrantId);
 
-      // ✅ If payment skipped, send ticket immediately
-      if (skipPayment && newRegistrantId) {
+      // ✅ Send ticket email ONLY if:
+      // 1. Payment was skipped by admin, OR
+      // 2. It's a free ticket (VISITOR)
+      // 3. NOT for paid DELEGATE tickets (they wait for confirmation)
+      const shouldSendTicket = skipPayment || ticketMeta.total === 0;
+      
+      if (shouldSendTicket && newRegistrantId) {
         await sendTicketEmail(newRegistrantId);
-        setMsg(`${role.charAt(0).toUpperCase() + role.slice(1)} created with DELEGATE ticket! Payment skipped.`);
+        setMsg(`${role.charAt(0).toUpperCase() + role.slice(1)} created with ticket sent!`);
+      } else if (ticketMeta.total > 0 && !skipPayment) {
+        setMsg(`${role.charAt(0).toUpperCase() + role.slice(1)} created! Waiting for payment confirmation to send ticket.`);
       } else {
         setMsg(`${role.charAt(0).toUpperCase() + role.slice(1)} created successfully!`);
       }
@@ -336,6 +342,7 @@ export default function AddRegistrantModal({
 
   /* ---------------- Send Ticket Email ---------------- */
   async function sendTicketEmail(registrantId) {
+    setSendingEmail(true);
     try {
       const ticketUrl = apiUrl(`/api/visitors/${encodeURIComponent(String(registrantId))}/send-ticket`);
       const ticketRes = await fetch(ticketUrl, {
@@ -344,9 +351,16 @@ export default function AddRegistrantModal({
       });
       if (ticketRes.ok) {
         console.log("Ticket email sent successfully!");
+        return true;
+      } else {
+        console.warn("Failed to send ticket email");
+        return false;
       }
     } catch (e) {
       console.warn("Failed to send ticket email:", e);
+      return false;
+    } finally {
+      setSendingEmail(false);
     }
   }
 
@@ -357,7 +371,7 @@ export default function AddRegistrantModal({
     // ✅ If visitor with paid ticket, show payment step with skip option
     if (role === "visitor" && ticketMeta.total > 0) {
       setShowPayment(true);
-      setSkipPayment(false); // Reset skip payment
+      setSkipPayment(false);
       setStep("payment");
       return;
     }
@@ -418,9 +432,12 @@ export default function AddRegistrantModal({
 
       const registrantId = js.id || js.insertedId || js._id;
 
+      // ✅ Send ticket email ONLY for FREE visitors (VISITOR tickets)
       if (role === "visitor" && registrantId && ticketMeta.total === 0) {
         await sendTicketEmail(registrantId);
-        setMsg("Visitor created and ticket email sent!");
+        setMsg("Visitor created and VISITOR ticket sent!");
+      } else if (role === "visitor" && ticketMeta.total > 0) {
+        setMsg("DELEGATE ticket created! Send ticket manually after payment confirmation.");
       } else {
         setMsg(`${role.charAt(0).toUpperCase() + role.slice(1)} created successfully!`);
       }
@@ -500,8 +517,8 @@ export default function AddRegistrantModal({
           <h3 className="text-lg font-semibold">Add Registrant (Admin)</h3>
           <p className="text-sm text-gray-500 mt-1">
             {ticketMeta.total > 0
-              ? "Will require payment or skip payment for DELEGATE ticket"
-              : "Will send VISITOR ticket"}
+              ? "DELEGATE: Will create record. Send ticket after payment confirmation."
+              : "VISITOR: Will create record and send ticket immediately."}
           </p>
         </div>
 
@@ -573,7 +590,7 @@ export default function AddRegistrantModal({
                       </p>
                       <p className="text-sm mt-1">
                         {ticketMeta.total > 0
-                          ? `Amount: ${formatCurrency(ticketMeta.total)} - You can process payment or skip payment.`
+                          ? `Amount: ${formatCurrency(ticketMeta.total)} - Create record now, send ticket after payment.`
                           : "The registrant will receive a VISITOR ticket email immediately."}
                       </p>
                     </div>
@@ -781,6 +798,11 @@ export default function AddRegistrantModal({
                     <span className="text-green-600 font-semibold">VISITOR (Free)</span>
                   )}
                 </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {ticketMeta.total > 0 
+                    ? "📧 Ticket will be sent after payment confirmation" 
+                    : "📧 Ticket will be sent immediately"}
+                </p>
               </div>
 
               <div className="flex gap-3 items-center mt-4">
@@ -789,7 +811,7 @@ export default function AddRegistrantModal({
                   disabled={loading || createDisabled || sendingEmail}
                   className={`px-4 py-2 bg-green-600 text-white rounded ${createDisabled || sendingEmail ? "opacity-60 cursor-not-allowed" : ""}`}
                 >
-                  {loading ? "Creating..." : sendingEmail ? "Sending Email..." : "Create"}
+                  {loading ? "Creating..." : sendingEmail ? "Sending Ticket..." : "Create"}
                 </button>
                 <button
                   type="button"
@@ -808,7 +830,7 @@ export default function AddRegistrantModal({
           )}
 
           {step === "done" && (
-            <ThankYouMessage messageOverride="Registrant created successfully! Ticket email has been sent." />
+            <ThankYouMessage messageOverride="Registrant created successfully!" />
           )}
         </div>
       </div>
