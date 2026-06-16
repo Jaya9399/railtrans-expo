@@ -2,9 +2,31 @@ import React, { useEffect, useState } from "react";
 
 const DEFAULT_CATEGORIES_BY_ROLE = {
   visitors: [
-    { value: "free", label: "Free", price: 0, gst: 0, features: ["Entry to Expo", "Access to General Sessions"], button: "Get Free Ticket" },
-    { value: "premium", label: "Premium", price: 5085, gst: 915, features: ["Priority Access", "Premium Lounge", "E-Ticket with QR"], button: "Get Premium Ticket" },
-    { value: "combo", label: "Combo", price: 5000, gst: 100, features: ["All Premium Benefits", "Multiple Slot Access"], button: "Get Combo Ticket" },
+    { 
+      value: "free", 
+      label: "Free", 
+      price: 0, 
+      gst: 0, 
+      features: ["Entry to Expo", "Access to General Sessions"], 
+      button: "Get Free Ticket" 
+    },
+    { 
+      value: "premium", 
+      label: "Premium", 
+      price: 8475, // Base price after discount (10,000 / 1.18)
+      gst: 1525, // 18% GST of 8,475 = 1,525.5 ≈ 1,525
+      features: [
+        "Priority Access", 
+        "Premium Lounge", 
+        "E-Ticket with QR",
+        "Networking Opportunities",
+        "Event Kit"
+      ], 
+      button: "Book Now",
+      originalPrice: 16667, // Original price before 40% discount
+      discount: 40, // 40% OFF
+      finalPrice: 10000 // Final total after discount including GST
+    },
   ]
 };
 
@@ -40,7 +62,10 @@ function normalizeCategoriesArray(arr, fallback = []) {
     price: safeNumber(c && (c.price ?? c.amount) ? (c.price ?? c.amount) : 0),
     gst: safeNumber(c && (c.gst ?? c.tax) ? (c.gst ?? c.tax) : 0),
     features: Array.isArray(c && c.features) ? c.features : (c && c.features ? [String(c.features)] : []),
-    button: (c && c.button) ? String(c.button) : "Select"
+    button: (c && c.button) ? String(c.button) : "Select",
+    originalPrice: safeNumber(c && c.originalPrice ? c.originalPrice : 0),
+    discount: safeNumber(c && c.discount ? c.discount : 0),
+    finalPrice: safeNumber(c && c.finalPrice ? c.finalPrice : 0),
   }));
 }
 
@@ -100,13 +125,14 @@ export default function TicketCategorySelector({ role = "visitors", value, onCha
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {opts.map(opt => {
           const price = Number(opt.price || 0);
           const gstAmount = Number(opt.gst || 0);
-          const total = price + gstAmount;
+          const total = Number(opt.finalPrice || (price + gstAmount));
           const selected = String(value) === String(opt.value);
           const isFree = price === 0;
+          const hasDiscount = opt.originalPrice > 0 && opt.discount > 0;
           
           return (
             <div
@@ -145,12 +171,28 @@ export default function TicketCategorySelector({ role = "visitors", value, onCha
                     </div>
                   ) : (
                     <>
+                      {/* Original Price with strike-through */}
+                      {hasDiscount && (
+                        <div className="text-sm text-gray-400 line-through">
+                          {formatCurrency(opt.originalPrice)}
+                        </div>
+                      )}
                       <div className="text-3xl font-bold text-gray-900">
-                        {formatCurrency(price)}
+                        {formatCurrency(total)}
                       </div>
+                      {hasDiscount && (
+                        <div className="inline-block px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-semibold mt-1">
+                          {opt.discount}% OFF
+                        </div>
+                      )}
                       {gstAmount > 0 && (
-                        <div className="text-sm text-gray-500 mt-1">
-                          + {formatCurrency(gstAmount)} GST
+                        <div className="text-xs text-gray-500 mt-1">
+                          GST @ 18% included in total
+                        </div>
+                      )}
+                      {hasDiscount && (
+                        <div className="text-xs text-gray-400 mt-2">
+                          Standard price ₹{formatCurrency(opt.originalPrice)} per head with 40% OFF
                         </div>
                       )}
                     </>
@@ -187,7 +229,7 @@ export default function TicketCategorySelector({ role = "visitors", value, onCha
                         ? 'bg-blue-600 text-white cursor-default' 
                         : isFree
                           ? 'bg-green-600 hover:bg-green-700 text-white'
-                          : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
+                          : 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white'
                       }
                     `}
                     disabled={selected}
