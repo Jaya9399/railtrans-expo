@@ -194,6 +194,9 @@ export default function ManualPaymentStep({
 
       if (!amountToPay || amountToPay <= 0) {
         setPaymentStatus("paid");
+        if (couponResult && couponResult.coupon && couponResult.coupon.id) {
+          await markCouponAsUsed(couponResult.coupon.id);
+        }
 
         try {
           onTxIdChange && onTxIdChange(`free-${Date.now()}`);
