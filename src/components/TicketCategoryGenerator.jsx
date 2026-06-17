@@ -13,8 +13,8 @@ const DEFAULT_CATEGORIES_BY_ROLE = {
     { 
       value: "premium", 
       label: "Premium", 
-      price: 8475, // Base price after discount (10,000 / 1.18)
-      gst: 1525, // 18% GST of 8,475 = 1,525.5 ≈ 1,525
+      price: 6000, // Base price after 40% discount
+      gst: 1080, // 18% GST of 6000 = 1080
       features: [
         "Priority Access", 
         "Premium Lounge", 
@@ -23,9 +23,9 @@ const DEFAULT_CATEGORIES_BY_ROLE = {
         "Event Kit"
       ], 
       button: "Book Now",
-      originalPrice: 16667, // Original price before 40% discount
+      originalPrice: 10000, // Original price before 40% discount
       discount: 40, // 40% OFF
-      finalPrice: 10000 // Final total after discount including GST
+      finalPrice: 7080 // Total = 6000 + 1080 GST
     },
   ]
 };
@@ -178,7 +178,7 @@ export default function TicketCategorySelector({ role = "visitors", value, onCha
                         </div>
                       )}
                       <div className="text-3xl font-bold text-gray-900">
-                        {formatCurrency(total)}
+                        {formatCurrency(price)}
                       </div>
                       {hasDiscount && (
                         <div className="inline-block px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-semibold mt-1">
@@ -186,8 +186,8 @@ export default function TicketCategorySelector({ role = "visitors", value, onCha
                         </div>
                       )}
                       {gstAmount > 0 && (
-                        <div className="text-xs text-gray-500 mt-1">
-                          GST @ 18% included in total
+                        <div className="text-sm text-gray-500 mt-1">
+                          + {formatCurrency(gstAmount)} GST (18%)
                         </div>
                       )}
                       {hasDiscount && (
