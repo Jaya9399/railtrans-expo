@@ -202,10 +202,18 @@ export default function ManualPaymentStep({
           onTxIdChange && onTxIdChange(`free-${Date.now()}`);
         } catch (_) {}
 
-        // ✅ Pass a flag that this is a free coupon
         try {
-          onProofUpload && onProofUpload(`free-${Date.now()}`, true); // ← true = isFreeCoupon
+          onProofUpload && onProofUpload(`free-${Date.now()}`, true);
         } catch (_) {}
+
+        // ✅ CLEAR coupon from UI immediately
+        setCouponCode("");
+        setCouponResult(null);
+        setCouponError("");
+        try {
+          sessionStorage.removeItem("couponCode");
+          sessionStorage.removeItem("couponResult");
+        } catch {}
 
         setPayLoading(false);
         return;
@@ -376,6 +384,13 @@ export default function ManualPaymentStep({
             if (couponResult && couponResult.coupon && couponResult.coupon.id) {
               await markCouponAsUsed(couponResult.coupon.id);
             }
+            setCouponCode("");
+            setCouponResult(null);
+            setCouponError("");
+            try {
+              sessionStorage.removeItem("couponCode");
+              sessionStorage.removeItem("couponResult");
+            } catch {}
 
             const rec = js.record || js.data || js.payment || js;
 
