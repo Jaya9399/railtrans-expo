@@ -93,8 +93,7 @@ export default function CouponsAdmin() {
   const [loading, setLoading] = useState(true);
   const [coupons, setCoupons] = useState([]);
   const [filter, setFilter] = useState("all");
-  const [logs, setLogs] = useState([]); // all | unused | used  const [logs, setLogs] = useState([]);
-
+  const [logs, setLogs] = useState([]);
   // create form
   const [code, setCode] = useState("");
   const [discount, setDiscount] = useState(10);

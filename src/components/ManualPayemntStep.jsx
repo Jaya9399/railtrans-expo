@@ -51,7 +51,7 @@ export default function ManualPaymentStep({
   }, [couponCode, couponResult]);
 
   // totals
-  const gst = Math.round(ticketPrice * 0.18);
+  const gst = 0;
   const originalTotal = Number((ticketPrice + gst).toFixed(2));
   const effectiveTotal =
     couponResult &&
