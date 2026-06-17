@@ -2,16 +2,17 @@ import React, { useEffect, useState } from 'react';
 
 /**
  * Admin UI for Coupons
+ * - Coupon generation protected with password
  */
 
 const API_BASE = (window && (window.__API_BASE__ || '')) || process.env.REACT_APP_API_BASE || '';
 
 function apiUrl(path) {
-  if (! path) return API_BASE;
+  if (!path) return API_BASE;
   if (/^https?:\/\//i.test(path)) return path;
-  const base = API_BASE ?  String(API_BASE).replace(/\/$/, '') : '';
+  const base = API_BASE ? String(API_BASE).replace(/\/$/, '') : '';
   const p = path.startsWith('/') ? path : `/${path}`;
-  return base ?  `${base}${p}` : p;
+  return base ? `${base}${p}` : p;
 }
 
 function shortDate(d) {
@@ -21,11 +22,69 @@ function shortDate(d) {
   } catch { return String(d); }
 }
 
+// ✅ Password Modal Component for Coupon Generation
+const PasswordModal = ({ onConfirm, onCancel }) => {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const handleConfirm = () => {
+    const validPassword = process.env.REACT_APP_COUPON_PASSWORD || "Coupon@2026";
+    if (password === validPassword) {
+      onConfirm(password);
+    } else {
+      setError("❌ Invalid password! Only authorized admins can generate coupons.");
+      setTimeout(() => setError(""), 3000);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="bg-white p-6 rounded-xl shadow-2xl max-w-md w-full mx-4">
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-2xl">🔒</span>
+          <h3 className="text-lg font-semibold text-gray-800">Authorize Coupon Generation</h3>
+        </div>
+        <p className="text-sm text-gray-500 mb-3">
+          Enter admin password to generate new coupons.
+        </p>
+        <input
+          type="password"
+          placeholder="Enter admin password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          onKeyDown={(e) => e.key === "Enter" && handleConfirm()}
+          autoFocus
+        />
+        {error && (
+          <p className="text-red-500 text-sm mt-2">{error}</p>
+        )}
+        <div className="flex gap-3 mt-4">
+          <button
+            onClick={handleConfirm}
+            className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+          >
+            Confirm
+          </button>
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-medium transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+        <p className="text-xs text-gray-400 mt-3 text-center">
+          Default password: Coupon@2026 (Change in .env file)
+        </p>
+      </div>
+    </div>
+  );
+};
+
 export default function CouponsAdmin() {
   const [loading, setLoading] = useState(true);
   const [coupons, setCoupons] = useState([]);
-  const [filter, setFilter] = useState('all'); // all | unused | used
-  const [logs, setLogs] = useState([]);
+  const [filter, setFilter] = useState('all'); // all | unused | used  const [logs, setLogs] = useState([]);
 
   // create form
   const [code, setCode] = useState('');
@@ -40,13 +99,17 @@ export default function CouponsAdmin() {
   const [validatePrice, setValidatePrice] = useState('');
   const [validateResult, setValidateResult] = useState(null);
 
+  // ✅ Password modal states
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   async function loadCoupons() {
     setLoading(true);
     try {
-      const url = apiUrl(`/api/coupons? status=${encodeURIComponent(filter)}`);
+      const url = apiUrl(`/api/coupons?status=${encodeURIComponent(filter)}`);
       console.log('[CouponsAdmin] Loading coupons from:', url);
       
       const res = await fetch(url, {
@@ -58,11 +121,11 @@ export default function CouponsAdmin() {
         throw new Error(txt || `status ${res.status}`);
       }
       const js = await res.json().catch(()=>null);
-      setCoupons(js && js.coupons ?  js.coupons : []);
-      console.log('[CouponsAdmin] Loaded', js?. coupons?.length || 0, 'coupons');
+      setCoupons(js && js.coupons ? js.coupons : []);
+      console.log('[CouponsAdmin] Loaded', js?.coupons?.length || 0, 'coupons');
     } catch (e) {
       console.error('[CouponsAdmin] loadCoupons error', e);
-      setError('Failed to load coupons:  ' + e.message);
+      setError('Failed to load coupons: ' + e.message);
     } finally {
       setLoading(false);
     }
@@ -76,7 +139,7 @@ export default function CouponsAdmin() {
       });
       if (!res.ok) return;
       const js = await res.json().catch(()=>null);
-      setLogs(js && js.logs ? js.logs :  []);
+      setLogs(js && js.logs ? js.logs : []);
     } catch (e) {
       console.warn('[CouponsAdmin] loadLogs failed', e);
     }
@@ -88,12 +151,39 @@ export default function CouponsAdmin() {
     // eslint-disable-next-line
   }, [filter]);
 
-  async function createCoupon(e) {
-    e && e.preventDefault();
+  // ✅ Wrapped with password check
+  const handleCreateCoupon = (e) => {
+    e.preventDefault();
+    setShowPasswordModal(true);
+    setPendingAction('create');
+  };
+
+  const handleBulkGenerate = (e) => {
+    e.preventDefault();
+    setShowPasswordModal(true);
+    setPendingAction('generate');
+  };
+
+  const confirmPassword = async () => {
+    setShowPasswordModal(false);
+    if (pendingAction === 'create') {
+      await createCoupon();
+    } else if (pendingAction === 'generate') {
+      await generateBulk();
+    }
+    setPendingAction(null);
+  };
+
+  const cancelPassword = () => {
+    setShowPasswordModal(false);
+    setPendingAction(null);
+  };
+
+  async function createCoupon() {
     setError('');
     setBusy(true);
     try {
-      const payload = { code:  code ?  String(code).trim() : undefined, discount:  Number(discount || 0) };
+      const payload = { code: code ? String(code).trim() : undefined, discount: Number(discount || 0) };
       const res = await fetch(apiUrl('/api/coupons'), {
         method: 'POST',
         headers: { 
@@ -112,14 +202,13 @@ export default function CouponsAdmin() {
       await loadLogs();
     } catch (e) {
       console.error('[CouponsAdmin] createCoupon', e);
-      setError(e && e.message ?  e.message : String(e));
+      setError(e && e.message ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   }
 
-  async function generateBulk(e) {
-    e && e.preventDefault();
+  async function generateBulk() {
     setError('');
     setBusy(true);
     try {
@@ -224,7 +313,7 @@ export default function CouponsAdmin() {
         method: 'POST', 
         headers: { 
           'Content-Type': 'application/json',
-          "ngrok-skip-browser-warning":  "69420"
+          "ngrok-skip-browser-warning": "69420"
         }, 
         body: JSON.stringify(payload) 
       });
@@ -236,7 +325,6 @@ export default function CouponsAdmin() {
         throw new Error((js && js.error) || `status ${res.status}`);
       }
       setValidateResult(js);
-      // refresh lists if marked used
       if (markUsedFlag) {
         await loadCoupons();
         await loadLogs();
@@ -249,12 +337,12 @@ export default function CouponsAdmin() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Coupons Admin</h1>
+      <h1 className="text-2xl font-bold mb-4">🔒 Coupons Admin</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <section className="p-4 border rounded bg-white shadow">
           <h2 className="font-semibold mb-2">Add Coupon</h2>
-          <form onSubmit={createCoupon} className="space-y-2">
+          <form onSubmit={handleCreateCoupon} className="space-y-2">
             <div>
               <label className="block text-sm">Coupon Code (optional)</label>
               <input value={code} onChange={e => setCode(e.target.value)} className="border rounded px-2 py-1 w-full" placeholder="AUTO if left blank" />
@@ -264,7 +352,9 @@ export default function CouponsAdmin() {
               <input type="number" value={discount} onChange={e => setDiscount(e.target.value)} className="border rounded px-2 py-1 w-full" min="0" max="100" />
             </div>
             <div className="flex gap-2">
-              <button className="px-3 py-1 bg-[#196e87] text-white rounded" disabled={busy}>Create</button>
+              <button className="px-3 py-1 bg-[#196e87] text-white rounded flex items-center gap-1" disabled={busy}>
+                🔒 {busy ? 'Creating...' : 'Create'}
+              </button>
               <button type="button" onClick={() => { setCode(''); setDiscount(10); }} className="px-3 py-1 border rounded">Reset</button>
             </div>
           </form>
@@ -272,22 +362,29 @@ export default function CouponsAdmin() {
 
         <section className="p-4 border rounded bg-white shadow">
           <h2 className="font-semibold mb-2">Bulk Generate</h2>
-          <form onSubmit={generateBulk} className="space-y-2">
+          <form onSubmit={handleBulkGenerate} className="space-y-2">
             <div>
               <label className="block text-sm">Count</label>
               <input type="number" value={bulkCount} onChange={e => setBulkCount(e.target.value)} className="border rounded px-2 py-1 w-full" min="1" max="500" />
             </div>
             <div>
               <label className="block text-sm">Discount %</label>
-              <input type="number" value={bulkDiscount} onChange={e => setBulkDiscount(e. target.value)} className="border rounded px-2 py-1 w-full" min="0" max="100" />
+              <input type="number" value={bulkDiscount} onChange={e => setBulkDiscount(e.target.value)} className="border rounded px-2 py-1 w-full" min="0" max="100" />
             </div>
             <div className="flex gap-2">
-              <button className="px-3 py-1 bg-[#196e87] text-white rounded" disabled={busy}>Generate</button>
+              <button className="px-3 py-1 bg-[#196e87] text-white rounded flex items-center gap-1" disabled={busy}>
+                🔒 {busy ? 'Generating...' : 'Generate'}
+              </button>
               <button type="button" onClick={() => { setBulkCount(10); setBulkDiscount(10); }} className="px-3 py-1 border rounded">Reset</button>
             </div>
           </form>
         </section>
       </div>
+
+      {/* ✅ Password Modal */}
+      {showPasswordModal && (
+        <PasswordModal onConfirm={confirmPassword} onCancel={cancelPassword} />
+      )}
 
       <div className="mb-6 p-4 border rounded bg-white shadow">
         <h2 className="text-lg font-semibold mb-2">Validate Coupon</h2>
@@ -321,17 +418,17 @@ export default function CouponsAdmin() {
 
       <div className="grid gap-2">
         {error && <div className="text-red-600 p-2 bg-red-50 rounded">{error}</div>}
-        {! loading && coupons.length === 0 && <div className="text-gray-600 p-4 text-center">No coupons</div>}
+        {!loading && coupons.length === 0 && <div className="text-gray-600 p-4 text-center">No coupons</div>}
 
         {coupons.map(c => (
-          <div key={c.id || c.code} className={`p-3 rounded border flex items-center justify-between ${c.used ?  'bg-gray-100 opacity-80' : 'bg-white'}`}>
+          <div key={c.id || c.code} className={`p-3 rounded border flex items-center justify-between ${c.used ? 'bg-gray-100 opacity-80' : 'bg-white'}`}>
             <div>
               <div className="font-mono text-lg font-bold">{c.code}</div>
               <div className="text-sm text-gray-600">Discount: {c.discount}% — Created: {shortDate(c.created_at)}</div>
               {c.used && <div className="text-sm text-red-600">✅ Used by: {c.used_by || 'unknown'} at {shortDate(c.used_at)}</div>}
             </div>
             <div className="flex flex-col items-end gap-2">
-              {! c.used ?  (
+              {!c.used ? (
                 <button className="px-3 py-1 bg-green-600 text-white rounded text-sm" onClick={() => markUsed(c.id)}>Mark Used</button>
               ) : (
                 <button className="px-3 py-1 bg-yellow-500 text-white rounded text-sm" onClick={() => unmarkUsed(c.id)}>Unmark</button>
@@ -346,9 +443,9 @@ export default function CouponsAdmin() {
         <h3 className="font-semibold mb-2">Recent Logs</h3>
         <div className="space-y-2 max-h-96 overflow-auto">
           {logs.length === 0 && <div className="text-gray-600 text-sm">No logs</div>}
-          {logs. slice(0, 100).map((l, i) => (
+          {logs.slice(0, 100).map((l, i) => (
             <div key={i} className="text-sm text-gray-700 p-2 bg-gray-50 rounded">
-              <strong className="text-[#196e87]">{l.type}</strong> — {l.code || l.couponId || ''} — {shortDate(l. created_at)} {l.used_by ?  ` by ${l.used_by}` : ''}
+              <strong className="text-[#196e87]">{l.type}</strong> — {l.code || l.couponId || ''} — {shortDate(l.created_at)} {l.used_by ? ` by ${l.used_by}` : ''}
             </div>
           ))}
         </div>

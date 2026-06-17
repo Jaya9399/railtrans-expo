@@ -6,6 +6,7 @@ import DataTable from "./DataTable";
  * - Removed per-section "Add New" button because Add Registrant is centralized. 
  * - Keeps "Manage" button for exhibitors/partners.
  * - Shows "Send Ticket" button for ALL entities (visitors, exhibitors, partners, speakers, awardees)
+ * - Enhanced with premium/delegate ticket status display
  */
 export default function DashboardSection({
   label,
@@ -13,17 +14,17 @@ export default function DashboardSection({
   tableKey,
   configs = {},
   onEdit,
-  onAddNew, // intentionally may be null now
+  onAddNew,
   onDelete,
   onRefreshRow,
-  onResend, // callback to send/resend ticket - ALREADY BOUND TO TABLE KEY
+  onResend,
   resendLoadingId,
   setShowExhibitorManager,
   setShowPartnerManager,
   PAGE_SIZE = 10,
   HIDDEN_FIELDS = new Set(),
   prettifyKey = (k) => String(k || "").replace(/[_-]/g, " ").replace(/\b\w/g, (s) => s.toUpperCase()),
-  showSendTicket = true, // ✅ NEW PROP - default to true for all entities
+  showSendTicket = true,
 }) {
   const columns = useMemo(() => {
     const keysSet = new Set();
@@ -33,7 +34,6 @@ export default function DashboardSection({
       });
     });
 
-    // Prefer configured column order if available
     let configCols = configs?.[tableKey]?.columns?.map((c) => c.key) || configs?.[tableKey]?.fields?.map((c) => c.name);
     if (configCols && configCols.length > 0) {
       const missing = [...keysSet].filter((k) => !configCols.includes(k));
@@ -58,7 +58,86 @@ export default function DashboardSection({
       }
     }
 
-    return ordered.map((k) => ({ key: k, label: prettifyKey(k) }));
+    // ✅ Enhanced columns with premium status display
+    return ordered.map((k) => {
+      // Ticket Category - Show premium/delegate status
+      if (k === "ticket_category") {
+        return {
+          key: k,
+          label: "Ticket Type",
+          render: (value, row) => {
+            const isPremium = value === "premium" || row.ticket_total > 0;
+            
+            if (isPremium) {
+              let statusText = "🎫 DELEGATE";
+              let statusColor = "bg-blue-100 text-blue-800";
+              
+              if (row.txId) {
+                statusText = "🎫 DELEGATE ✅ Paid";
+                statusColor = "bg-green-100 text-green-800";
+              } else if (row.added_by_admin === true || row.added_by_admin === "Admin") {
+                statusText = "⭐ DELEGATE (Free)";
+                statusColor = "bg-yellow-100 text-yellow-800";
+              } else {
+                statusText = "⏳ DELEGATE (Pending)";
+                statusColor = "bg-red-100 text-red-800";
+              }
+              
+              return (
+                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${statusColor}`}>
+                  {statusText}
+                </span>
+              );
+            }
+            return <span className="text-gray-600">👤 Visitor</span>;
+          }
+        };
+      }
+      
+      // Total Amount - Show with ₹ symbol
+      if (k === "ticket_total") {
+        return {
+          key: k,
+          label: "Amount",
+          render: (value) => {
+            if (value > 0) {
+              return <span className="font-semibold text-blue-600">₹{value}</span>;
+            }
+            return <span className="text-gray-400">Free</span>;
+          }
+        };
+      }
+      
+      // Payment ID - Show status
+      if (k === "txId") {
+        return {
+          key: k,
+          label: "Payment",
+          render: (value) => {
+            if (value) {
+              return <span className="text-green-600 font-medium">✅ Paid</span>;
+            }
+            return <span className="text-gray-400">—</span>;
+          }
+        };
+      }
+      
+      // Created By - Show Admin/User
+      if (k === "added_by_admin") {
+        return {
+          key: k,
+          label: "Created By",
+          render: (value) => {
+            if (value === true || value === "Admin") {
+              return <span className="text-blue-600 font-medium">Admin</span>;
+            }
+            return <span className="text-gray-600">User</span>;
+          }
+        };
+      }
+      
+      return { key: k, label: prettifyKey(k) };
+    });
   }, [data, configs, tableKey, HIDDEN_FIELDS, prettifyKey]);
 
   const handleRowAction = useCallback(

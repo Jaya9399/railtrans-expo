@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import jsQR from "jsqr";
 
-console.log("🎯 [TicketScanner] FILE LOADED v2");
+console.log("🎯 [TicketScanner] FILE LOADED v3");
 
 // ====== API HELPERS ======
 const API_BASE = (typeof window !== "undefined" && (window.__API_BASE__ || window.__BACKEND_ORIGIN__ || window.location?.origin)) || "";
@@ -28,13 +28,70 @@ function extractTicketId(input) {
   return m ? m[0] : (s.match(/[A-Za-z0-9]{6,12}/) || [null])[0];
 }
 
-// ====== BADGE MODAL (FIXED) ======
-function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
+// ====== STICKER SIZE CONTROLS COMPONENT ======
+function StickerControls({ stickerSize, onStickerChange }) {
+  const controls = {
+    moveUp: () => onStickerChange(prev => ({ ...prev, y: (prev.y || 0) - 5 })),
+    moveDown: () => onStickerChange(prev => ({ ...prev, y: (prev.y || 0) + 5 })),
+    moveLeft: () => onStickerChange(prev => ({ ...prev, x: (prev.x || 0) - 5 })),
+    moveRight: () => onStickerChange(prev => ({ ...prev, x: (prev.x || 0) + 5 })),
+    zoomIn: () => onStickerChange(prev => ({ ...prev, scale: Math.min((prev.scale || 100) + 5, 200) })),
+    zoomOut: () => onStickerChange(prev => ({ ...prev, scale: Math.max((prev.scale || 100) - 5, 50) })),
+    reset: () => onStickerChange({ x: 0, y: 0, scale: 100 }),
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow p-3 mb-3 border border-gray-200">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-gray-700 mr-1">📐 Sticker:</span>
+        
+        {/* Move Controls */}
+        <button onClick={controls.moveUp} className="px-2.5 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm font-medium transition-colors" title="Move Up">⬆</button>
+        <button onClick={controls.moveDown} className="px-2.5 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm font-medium transition-colors" title="Move Down">⬇</button>
+        <button onClick={controls.moveLeft} className="px-2.5 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm font-medium transition-colors" title="Move Left">⬅</button>
+        <button onClick={controls.moveRight} className="px-2.5 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm font-medium transition-colors" title="Move Right">➡</button>
+        
+        <span className="text-xs text-gray-400">|</span>
+        
+        {/* Zoom Controls */}
+        <button onClick={controls.zoomOut} className="px-2.5 py-1 bg-blue-100 hover:bg-blue-200 rounded text-sm font-medium transition-colors" title="Zoom Out">🔍−</button>
+        <span className="text-xs text-gray-600 font-mono min-w-[35px] text-center">{stickerSize?.scale || 100}%</span>
+        <button onClick={controls.zoomIn} className="px-2.5 py-1 bg-blue-100 hover:bg-blue-200 rounded text-sm font-medium transition-colors" title="Zoom In">🔍+</button>
+        
+        <span className="text-xs text-gray-400">|</span>
+        
+        {/* Reset */}
+        <button onClick={controls.reset} className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-700 rounded text-sm font-medium transition-colors" title="Reset">↺ Reset</button>
+        
+        {/* Position Display */}
+        <span className="text-xs text-gray-400 ml-auto">
+          X: {stickerSize?.x || 0}px | Y: {stickerSize?.y || 0}px
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ====== BADGE MODAL ======
+function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain, stickerSize }) {
   const [pdfUrl, setPdfUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const mountedRef = useRef(true);
   const pdfUrlRef = useRef(null);
+
+  // Build print URL with sticker size params
+  const printUrlWithSize = useMemo(() => {
+    const base = printUrl;
+    const params = new URLSearchParams();
+    if (stickerSize) {
+      if (stickerSize.x) params.append('x', stickerSize.x);
+      if (stickerSize.y) params.append('y', stickerSize.y);
+      if (stickerSize.scale) params.append('scale', stickerSize.scale);
+    }
+    const query = params.toString();
+    return query ? `${base}?${query}` : base;
+  }, [printUrl, stickerSize]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -50,7 +107,7 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
     setLoading(true);
     setError(null);
 
-    fetch(printUrl, {
+    fetch(printUrlWithSize, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ticketId: String(ticketId) }),
@@ -74,12 +131,10 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
       });
 
     return () => { cancelled = true; };
-  }, [ticketId, printUrl]);
+  }, [ticketId, printUrlWithSize]);
 
   const handlePrint = () => {
     if (!pdfUrl) return;
-    
-    // Try opening in new window with print
     const printWindow = window.open(pdfUrl, "_blank", "width=800,height=600");
     if (printWindow) {
       printWindow.onload = () => {
@@ -93,7 +148,6 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
         }, 800);
       };
     } else {
-      // Fallback - open in same window
       alert("Pop-up blocked! The PDF will open in a new tab. Please use Ctrl+P to print.");
       window.open(pdfUrl, "_blank");
     }
@@ -122,7 +176,6 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
         overflow: "hidden"
       }}>
         
-        {/* HEADER */}
         <div style={{ 
           padding: "14px 20px", 
           borderBottom: "1px solid #e5e7eb", 
@@ -146,7 +199,6 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
           >✕</button>
         </div>
 
-        {/* BODY - PDF Preview */}
         <div style={{ 
           flex: 1, 
           overflow: "auto",
@@ -172,8 +224,7 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
                 onClick={() => {
                   setError(null);
                   setLoading(true);
-                  // Retry fetch
-                  fetch(printUrl, {
+                  fetch(printUrlWithSize, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ ticketId: String(ticketId) }),
@@ -224,7 +275,6 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain }) {
           )}
         </div>
 
-        {/* FOOTER - BUTTONS ALWAYS VISIBLE */}
         <div style={{ 
           padding: "14px 20px", 
           borderTop: "1px solid #e5e7eb", 
@@ -309,12 +359,15 @@ export default function TicketScanner(props) {
   const validationRef = useRef(null);
   const cameraStartedRef = useRef(false);
 
-  const [status, setStatus] = useState("idle"); // idle | requesting | active | success | error
+  const [status, setStatus] = useState("idle");
   const [statusMsg, setStatusMsg] = useState("Click Start Camera");
   const [errorMsg, setErrorMsg] = useState(null);
   const [ticketId, setTicketId] = useState(null);
   const [validation, setValidation] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
+  
+  // ✅ Sticker size state
+  const [stickerSize, setStickerSize] = useState({ x: 0, y: 0, scale: 100 });
 
   const validateUrl = useMemo(() => apiUrl("/api/tickets/validate"), []);
   const printUrl = useMemo(() => apiUrl("/api/tickets/scan"), []);
@@ -331,7 +384,6 @@ export default function TicketScanner(props) {
   const startCamera = async () => {
     console.log("🎯 startCamera - stream active:", streamRef.current?.active);
     
-    // Don't start if already running
     if (streamRef.current?.active) {
       console.log("🎯 Camera already active");
       return;
@@ -358,7 +410,6 @@ export default function TicketScanner(props) {
 
       streamRef.current = stream;
 
-      // Wait for video element
       if (!videoRef.current) {
         console.log("🎯 Waiting for video element...");
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -465,7 +516,6 @@ export default function TicketScanner(props) {
     startCamera();
   };
 
-  // Mount - DON'T auto-start camera, let user click button
   useEffect(() => {
     console.log("🎯 useEffect MOUNT");
     mountedRef.current = true;
@@ -480,6 +530,9 @@ export default function TicketScanner(props) {
     <div style={{ maxWidth: 500, margin: "0 auto", fontFamily: "system-ui, sans-serif", padding: 10 }}>
       <div style={{ background: "white", borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.1)", padding: 16 }}>
         
+        {/* ✅ STICKER CONTROLS */}
+        <StickerControls stickerSize={stickerSize} onStickerChange={setStickerSize} />
+
         {/* STATUS */}
         <div style={{ marginBottom: 12, padding: "8px 12px", background: "#f0f9ff", borderRadius: 6, fontSize: 13 }}>
           {statusMsg}
@@ -547,6 +600,7 @@ export default function TicketScanner(props) {
           ticketId={ticketIdRef.current}
           validation={validationRef.current}
           printUrl={printUrl}
+          stickerSize={stickerSize}
           onClose={() => setModalOpen(false)}
           onScanAgain={handleScanAgain}
         />

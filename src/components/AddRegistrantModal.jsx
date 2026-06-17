@@ -11,7 +11,7 @@ import ThankYouMessage from "../components/ThankYouMessage";
  * - Create record AND send appropriate ticket email (Visitor/Delegate based on ticket category)
  * - VISITOR (Free) → Send ticket email immediately
  * - DELEGATE (Paid) → Wait for payment confirmation, then send ticket email
- * - SKIP payment option for admin → Send DELEGATE ticket without payment
+ * - SKIP payment option for admin → Send DELEGATE ticket without payment (with password protection)
  */
 
 export default function AddRegistrantModal({
@@ -52,6 +52,11 @@ export default function AddRegistrantModal({
   const [showPayment, setShowPayment] = useState(false);
   const [skipPayment, setSkipPayment] = useState(false);
 
+  // ✅ Password modal states for skip payment
+  const [showSkipPasswordModal, setShowSkipPasswordModal] = useState(false);
+  const [skipPassword, setSkipPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+
   // Email existence check state
   const [existing, setExisting] = useState(null);
   const [checkingEmail, setCheckingEmail] = useState(false);
@@ -83,6 +88,9 @@ export default function AddRegistrantModal({
     setRegistrantId(null);
     setShowPayment(false);
     setSkipPayment(false);
+    setShowSkipPasswordModal(false);
+    setSkipPassword("");
+    setPasswordError("");
     if (checkTimerRef.current) {
       clearTimeout(checkTimerRef.current);
       checkTimerRef.current = null;
@@ -455,11 +463,26 @@ export default function AddRegistrantModal({
     }
   }
 
-  // ✅ Handle skip payment from payment step
-  const handleSkipPayment = () => {
-    setSkipPayment(true);
-    setShowPayment(false);
-    createVisitorAfterPayment();
+  // ✅ Handle skip payment with password protection
+  const handleSkipPaymentClick = () => {
+    setShowSkipPasswordModal(true);
+    setSkipPassword("");
+    setPasswordError("");
+  };
+
+  const confirmSkipPayment = () => {
+    const validPassword = process.env.REACT_APP_SKIP_PAYMENT_PASSWORD || "Admin@2026";
+    if (skipPassword === validPassword) {
+      setShowSkipPasswordModal(false);
+      setSkipPassword("");
+      setPasswordError("");
+      setSkipPayment(true);
+      setShowPayment(false);
+      createVisitorAfterPayment();
+    } else {
+      setPasswordError("❌ Invalid password! Only authorized admins can skip payment.");
+      setTimeout(() => setPasswordError(""), 3000);
+    }
   };
 
   function handleUpgradeNavigate() {
@@ -643,20 +666,68 @@ export default function AddRegistrantModal({
                 apiBase={apiBase}
               />
               
-              {/* ✅ Skip Payment Button */}
+              {/* ✅ Skip Payment Button with Password */}
               <div className="mt-4 pt-4 border-t border-gray-200">
                 <p className="text-sm text-gray-600 mb-3">Don't want to process payment?</p>
                 <button
-                  onClick={handleSkipPayment}
+                  onClick={handleSkipPaymentClick}
                   className="w-full px-4 py-3 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
                   </svg>
-                  Skip Payment & Issue Ticket
+                  🔒 Skip Payment & Issue Ticket
                 </button>
                 <p className="text-xs text-gray-400 mt-2">
-                  This will issue a DELEGATE ticket without payment confirmation.
+                  This will issue a DELEGATE ticket without payment confirmation. (Password required)
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ✅ Password Modal for Skip Payment */}
+          {showSkipPasswordModal && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+              <div className="bg-white p-6 rounded-xl shadow-2xl max-w-md w-full mx-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-2xl">🔒</span>
+                  <h3 className="text-lg font-semibold text-gray-800">Authorize Skip Payment</h3>
+                </div>
+                <p className="text-sm text-gray-500 mb-3">
+                  Enter admin password to issue a free DELEGATE ticket without payment.
+                </p>
+                <input
+                  type="password"
+                  placeholder="Enter admin password"
+                  value={skipPassword}
+                  onChange={(e) => setSkipPassword(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500"
+                  onKeyDown={(e) => e.key === "Enter" && confirmSkipPayment()}
+                  autoFocus
+                />
+                {passwordError && (
+                  <p className="text-red-500 text-sm mt-2">{passwordError}</p>
+                )}
+                <div className="flex gap-3 mt-4">
+                  <button
+                    onClick={confirmSkipPayment}
+                    className="flex-1 px-4 py-2.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg font-medium transition-colors"
+                  >
+                    Confirm & Issue
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowSkipPasswordModal(false);
+                      setSkipPassword("");
+                      setPasswordError("");
+                    }}
+                    className="flex-1 px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mt-3 text-center">
+                  Default password: Admin@2026 (Change in .env file)
                 </p>
               </div>
             </div>
