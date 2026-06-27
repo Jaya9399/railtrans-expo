@@ -72,7 +72,6 @@ function StickerControls({ stickerSize, onStickerChange }) {
   );
 }
 
-// ====== BADGE MODAL ======
 function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain, stickerSize }) {
   const [pdfUrl, setPdfUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -168,8 +167,8 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain, stic
         background: "white", 
         borderRadius: "12px", 
         width: "100%", 
-        maxWidth: "850px", 
-        height: "90vh",
+        maxWidth: "650px", // Reduced from 850px
+        maxHeight: "90vh",
         display: "flex", 
         flexDirection: "column",
         boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
@@ -205,7 +204,8 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain, stic
           background: "#f9fafb",
           display: "flex",
           alignItems: "center",
-          justifyContent: "center"
+          justifyContent: "center",
+          padding: "20px" // Added padding
         }}>
           {loading && (
             <div style={{ textAlign: "center", color: "#6b7280", padding: "40px" }}>
@@ -262,16 +262,31 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain, stic
           )}
           
           {!loading && !error && pdfUrl && (
-            <iframe 
-              src={pdfUrl} 
-              style={{ 
-                width: "100%", 
-                height: "100%", 
-                border: "none",
-                background: "white"
-              }} 
-              title="Badge Preview"
-            />
+            <div style={{
+              width: "100%",
+              maxWidth: "400px", // Fixed width for badge
+              aspectRatio: "1 / 1.4", // Standard badge ratio
+              background: "white",
+              borderRadius: "8px",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+              overflow: "hidden",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center"
+            }}>
+              <iframe 
+                src={pdfUrl} 
+                style={{ 
+                  width: "100%", 
+                  height: "100%", 
+                  border: "none",
+                  background: "white",
+                  transform: "scale(0.85)", // Scale down to fit nicely
+                  transformOrigin: "center"
+                }} 
+                title="Badge Preview"
+              />
+            </div>
           )}
         </div>
 
@@ -282,7 +297,9 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain, stic
           display: "flex", 
           justifyContent: "space-between",
           alignItems: "center",
-          flexShrink: 0
+          flexShrink: 0,
+          flexWrap: "wrap",
+          gap: "8px"
         }}>
           <div style={{ fontSize: "13px", color: "#6b7280" }}>
             {validation?.ticket?.name && (
@@ -335,7 +352,7 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain, stic
                 fontWeight: 600
               }}
             >
-              🖨️ Print Badge
+               Print Badge
             </button>
           </div>
         </div>
@@ -344,7 +361,6 @@ function BadgeModal({ ticketId, validation, printUrl, onClose, onScanAgain, stic
     document.body
   );
 }
-
 // ====== MAIN SCANNER ======
 export default function TicketScanner(props) {
   console.log("🎯 [TicketScanner] RENDER - props:", Object.keys(props));
