@@ -23,6 +23,7 @@ export default function ManualPaymentStep({
   const [checkoutOpened, setCheckoutOpened] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState("created");
   const pollRef = useRef(null);
+  const paymentCompletedRef = useRef(false);
 
   // coupon states
   const [couponCode, setCouponCode] = useState("");
@@ -117,7 +118,6 @@ export default function ManualPaymentStep({
         return;
       }
 
-      // ONLY VALIDATE — DO NOT CONSUME, DO NOT FINALIZE!
       const payload = {
         code,
         price: originalTotal,
@@ -153,7 +153,6 @@ export default function ManualPaymentStep({
         return;
       }
 
-      // Success!
       setCouponResult(js);
       setCouponError("");
     } catch (e) {
@@ -162,7 +161,7 @@ export default function ManualPaymentStep({
       setCouponBusy(false);
     }
   }
-  // Add this function after applyCoupon
+
   async function markCouponAsUsed(couponId) {
     if (!couponId) return;
     try {
@@ -176,7 +175,6 @@ export default function ManualPaymentStep({
       });
       if (res.ok) {
         console.log("[ManualPaymentStep] Coupon marked as used");
-        // Clear coupon from session storage
         sessionStorage.removeItem("couponCode");
         sessionStorage.removeItem("couponResult");
       }
@@ -188,25 +186,27 @@ export default function ManualPaymentStep({
   async function createOrder() {
     setError("");
     setPayLoading(true);
+    paymentCompletedRef.current = false;
 
     try {
       const amountToPay = Number(effectiveTotal || 0);
 
+      // FREE ticket flow (no payment needed)
       if (!amountToPay || amountToPay <= 0) {
         setPaymentStatus("paid");
         if (couponResult && couponResult.coupon && couponResult.coupon.id) {
           await markCouponAsUsed(couponResult.coupon.id);
         }
 
+        const freeTxId = `free-${Date.now()}`;
         try {
-          onTxIdChange && onTxIdChange(`free-${Date.now()}`);
+          onTxIdChange && onTxIdChange(freeTxId);
         } catch (_) {}
 
         try {
-          onProofUpload && onProofUpload(`free-${Date.now()}`, true);
+          onProofUpload && onProofUpload(freeTxId, true);
         } catch (_) {}
 
-        // ✅ CLEAR coupon from UI immediately
         setCouponCode("");
         setCouponResult(null);
         setCouponError("");
@@ -216,8 +216,11 @@ export default function ManualPaymentStep({
         } catch {}
 
         setPayLoading(false);
+        paymentCompletedRef.current = true;
         return;
       }
+
+      // PAID ticket flow
       const verifiedEmail =
         (typeof window !== "undefined" &&
           (localStorage.getItem("verifiedEmail") ||
@@ -232,21 +235,17 @@ export default function ManualPaymentStep({
         currency: "INR",
         description: `Ticket - ${ticketType || "General"}`,
         reference_id: referenceId,
-
         metadata: {
           ticketType,
           referenceId,
-
           couponCode:
             couponResult && couponResult.coupon
               ? couponResult.coupon.code
               : couponCode.trim().toUpperCase(),
-
           buyer_name:
             (typeof window !== "undefined" &&
               localStorage.getItem("visitorName")) ||
             "",
-
           email: verifiedEmail || "",
         },
       };
@@ -255,14 +254,11 @@ export default function ManualPaymentStep({
 
       const res = await fetch(endpoint, {
         method: "POST",
-
         headers: {
           "Content-Type": "application/json",
           "ngrok-skip-browser-warning": "69420",
         },
-
         body: JSON.stringify(payload),
-
         credentials: "include",
       });
 
@@ -276,7 +272,6 @@ export default function ManualPaymentStep({
               data.details ||
               JSON.stringify(data))) ||
           `Failed to create payment order (${res.status})`;
-
         setError(errMsg);
         setPayLoading(false);
         return;
@@ -284,106 +279,101 @@ export default function ManualPaymentStep({
 
       if (!window.Razorpay) {
         setError("Razorpay SDK not loaded. Check index.html script.");
-
         setPayLoading(false);
         return;
       }
 
       const options = {
         key: data.key,
-
         amount: data.amount,
-
         currency: data.currency,
-
         order_id: data.orderId,
-
         name: "RailTrans Expo",
-
         description: `Ticket - ${ticketType || "General"}`,
-
         prefill: {
           name:
             (typeof window !== "undefined" &&
               localStorage.getItem("visitorName")) ||
             "",
-
           email: verifiedEmail || "",
         },
-
         theme: {
           color: "#1B3A8A",
         },
-
         method: {
           upi: true,
           card: true,
           netbanking: true,
           wallet: true,
         },
-
-        handler(response) {
-          console.log("Payment success:", response);
-
+        handler: function(response) {
+          console.log("=========== PAYMENT SUCCESS ===========");
+          console.log("Razorpay response:", response);
           setCheckoutOpened(true);
-
           setPaymentStatus("pending");
         },
-
         modal: {
-          ondismiss: function () {
+          ondismiss: function() {
             setPayLoading(false);
           },
         },
       };
 
       const razor = new window.Razorpay(options);
-
+      console.log("Opening Razorpay");
       razor.open();
+      console.log("Razorpay opened");
 
-      /* =====================================================
-       POLLING
-    ===================================================== */
-
+      // Start polling for payment status
       let attempts = 0;
-
+      console.log("Starting polling...");
+      
       pollRef.current = setInterval(async () => {
-        attempts += 1;
+        console.log("Polling payment status...");
+        attempts++;
 
         try {
           const statusUrl = makeUrl(
-            `/api/payment/status?reference_id=${encodeURIComponent(
-              referenceId,
-            )}`,
+            `/api/payment/status?reference_id=${encodeURIComponent(referenceId)}`
           );
+          console.log("Calling:", statusUrl);
 
           const st = await fetch(statusUrl, {
             method: "GET",
-
             credentials: "include",
-
             headers: {
               "ngrok-skip-browser-warning": "69420",
             },
           });
 
+          console.log("Status response:", st.status);
+
           if (!st.ok) return;
 
           const js = await st.json().catch(() => null);
+          console.log("Payment Status:", js);
 
           if (!js) return;
 
           const status = (js.status || "").toString().toLowerCase();
 
           if (["paid", "captured", "completed", "success"].includes(status)) {
+            // Payment successful!
+            console.log("✅ Payment confirmed!");
             clearInterval(pollRef.current);
-
             pollRef.current = null;
 
+            if (paymentCompletedRef.current) return;
+            paymentCompletedRef.current = true;
+
             setPaymentStatus("paid");
+            
+            // Mark coupon as used if applicable
             if (couponResult && couponResult.coupon && couponResult.coupon.id) {
               await markCouponAsUsed(couponResult.coupon.id);
             }
+            
+            // Clear coupon from UI
             setCouponCode("");
             setCouponResult(null);
             setCouponError("");
@@ -392,46 +382,51 @@ export default function ManualPaymentStep({
               sessionStorage.removeItem("couponResult");
             } catch {}
 
+            // Get payment ID
             const rec = js.record || js.data || js.payment || js;
-
             const providerPaymentId =
               rec?.provider_payment_id || rec?.payment_id || rec?.id || null;
-
             const finalTx = providerPaymentId || `provider-${Date.now()}`;
 
+            // ✅ CRITICAL: Call onProofUpload with the transaction ID
             try {
               onTxIdChange && onTxIdChange(finalTx);
             } catch (_) {}
 
             try {
-              onProofUpload && onProofUpload();
+              onProofUpload && onProofUpload(finalTx, false);
             } catch (_) {}
+
+            setPayLoading(false);
+            return;
           } else if (["failed", "cancelled", "void"].includes(status)) {
+            // Payment failed
+            console.log("❌ Payment failed:", status);
             clearInterval(pollRef.current);
-
             pollRef.current = null;
-
             setPaymentStatus("failed");
-
             setError("Payment failed or cancelled. You may retry.");
+            setPayLoading(false);
           } else {
+            // Still pending
             if (attempts > 40) {
+              // Timeout after ~2 minutes
+              console.log("⏰ Payment polling timeout");
               clearInterval(pollRef.current);
-
               pollRef.current = null;
-
               setPaymentStatus("pending");
-
               setError(
-                "Payment not confirmed yet. If you completed payment, wait a bit and refresh.",
+                "Payment not confirmed yet. If you completed payment, wait a bit and refresh."
               );
+              setPayLoading(false);
             }
           }
         } catch (e) {
-          // silent
+          console.error("Polling error:", e);
         }
       }, 3000);
     } catch (err) {
+      console.error("createOrder error:", err);
       setError(err.message || "Payment initiation failed");
     } finally {
       setPayLoading(false);
