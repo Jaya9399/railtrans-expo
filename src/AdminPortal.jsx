@@ -162,6 +162,26 @@ function AwardIcon(props) {
     </svg>
   );
 }
+function AgendaIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path
+        d="M4 4h16v16H4z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8 2v4M16 2v4M4 10h16M4 14h10M4 18h6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 function ShieldIcon(props) {
   return (
@@ -214,6 +234,13 @@ const registrationButtons = [
     Icon: AwardIcon,
     url: "/awardees",
     color: "from-amber-400 to-amber-500",
+  },
+  {
+    title: "Agenda",
+    description: "View and download the complete program agenda",
+    Icon: AgendaIcon,
+    url: "/agenda",
+    color: "from-emerald-500 to-teal-600",
   },
 ];
 

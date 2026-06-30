@@ -32,6 +32,7 @@ export default function Sidebar({ open = false, onClose = () => {} }) {
     { label: "Partners", icon: HiOutlineHand, path: "/PartnersAdmin" },
     { label: "Speakers", icon: HiOutlineSpeakerphone, path: "/SpeakersAdmin" },
     { label: "Awardees", icon: HiOutlineUserCircle, path: "/AwardeesAdmin" },
+    { label: "Agenda", icon: HiOutlineTable, path: "/admin/agenda" },
     { label: "Topbar-setting", icon: HiOutlineUserCircle, path: "/admin/topbar-settings" },
     { label: "Event details", icon: HiOutlineTable, path: "/event-details-admin" },
     { label: "Ticket Categories", icon: HiOutlineTable, path: "/payments-summary" },
