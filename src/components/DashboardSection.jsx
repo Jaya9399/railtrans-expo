@@ -3,7 +3,7 @@ import DataTable from "./DataTable";
 
 /**
  * DashboardSection
- * - Removed per-section "Add New" button because Add Registrant is centralized. 
+ * - Removed per-section "Add New" button because Add Registrant is centralized.
  * - Keeps "Manage" button for exhibitors/partners.
  * - Shows "Send Ticket" button for ALL entities (visitors, exhibitors, partners, speakers, awardees)
  * - Enhanced with premium/delegate ticket status display
@@ -23,19 +23,22 @@ export default function DashboardSection({
   setShowPartnerManager,
   PAGE_SIZE = 10,
   HIDDEN_FIELDS = new Set(),
-  prettifyKey = (k) => String(k || "").replace(/[_-]/g, " ").replace(/\b\w/g, (s) => s.toUpperCase()),
+  prettifyKey = (k) =>
+    String(k || "")
+      .replace(/[_-]/g, " ")
+      .replace(/\b\w/g, (s) => s.toUpperCase()),
   showSendTicket = true,
 }) {
   // ✅ Stable data reference to prevent unnecessary re-renders that reset pagination
   const prevDataRef = useRef(data);
   const prevDataIdsRef = useRef("");
-  
+
   const stableData = useMemo(() => {
-    const currentIds = data.map(r => r.id || r._id || "").join(",");
+    const currentIds = data.map((r) => r.id || r._id || "").join(",");
     const currentLength = data.length;
     const prevLength = prevDataRef.current.length;
     const prevIds = prevDataIdsRef.current;
-    
+
     // If same length and same IDs (row order unchanged), use previous reference
     if (currentLength === prevLength && currentIds === prevIds) {
       // Update the previous ref's data in place (rows might have updated values)
@@ -45,7 +48,7 @@ export default function DashboardSection({
       }
       return prevDataRef.current;
     }
-    
+
     // New data - update refs
     prevDataRef.current = [...data];
     prevDataIdsRef.current = currentIds;
@@ -60,7 +63,9 @@ export default function DashboardSection({
       });
     });
 
-    let configCols = configs?.[tableKey]?.columns?.map((c) => c.key) || configs?.[tableKey]?.fields?.map((c) => c.name);
+    let configCols =
+      configs?.[tableKey]?.columns?.map((c) => c.key) ||
+      configs?.[tableKey]?.fields?.map((c) => c.name);
     if (configCols && configCols.length > 0) {
       const missing = [...keysSet].filter((k) => !configCols.includes(k));
       configCols = [...configCols, ...missing];
@@ -68,19 +73,30 @@ export default function DashboardSection({
       configCols = [...keysSet];
     }
 
-    const preferred = ["name", "full_name", "company", "email", "ticket_code", "ticket_category", "mobile", "phone", "id", "_id"];
+    const preferred = [
+      "name",
+      "full_name",
+      "company",
+      "email",
+      "ticket_code",
+      "ticket_category",
+      "mobile",
+      "phone",
+      "id",
+      "_id",
+    ];
     const ordered = [];
     const seen = new Set();
     for (const p of preferred) {
-      if (configCols.includes(p) && !seen.has(p)) { 
-        ordered.push(p); 
-        seen.add(p); 
+      if (configCols.includes(p) && !seen.has(p)) {
+        ordered.push(p);
+        seen.add(p);
       }
     }
     for (const k of configCols) {
-      if (!seen.has(k)) { 
-        ordered.push(k); 
-        seen.add(k); 
+      if (!seen.has(k)) {
+        ordered.push(k);
+        seen.add(k);
       }
     }
 
@@ -93,33 +109,41 @@ export default function DashboardSection({
           label: "Ticket Type",
           render: (value, row) => {
             const isPremium = value === "premium" || row.ticket_total > 0;
-            
+
             if (isPremium) {
               let statusText = "🎫 DELEGATE";
               let statusColor = "bg-blue-100 text-blue-800";
-              
-              if (row.txId) {
+
+              if (row.payment_skipped) {
+                statusText = "⭐ DELEGATE (Admin Skip)";
+                statusColor = "bg-purple-100 text-purple-800";
+              } else if (row.txId) {
                 statusText = "🎫 DELEGATE ✅ Paid";
                 statusColor = "bg-green-100 text-green-800";
-              } else if (row.added_by_admin === true || row.added_by_admin === "Admin") {
-                statusText = "⭐ DELEGATE (Free)";
+              } else if (
+                row.added_by_admin === true ||
+                row.added_by_admin === "Admin"
+              ) {
+                statusText = "⏳ DELEGATE (Pending)";
                 statusColor = "bg-yellow-100 text-yellow-800";
               } else {
                 statusText = "⏳ DELEGATE (Pending)";
                 statusColor = "bg-red-100 text-red-800";
               }
-              
+
               return (
-                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${statusColor}`}>
+                <span
+                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold ${statusColor}`}
+                >
                   {statusText}
                 </span>
               );
             }
             return <span className="text-gray-600">👤 Visitor</span>;
-          }
+          },
         };
       }
-      
+
       // Total Amount - Show with ₹ symbol
       if (k === "ticket_total") {
         return {
@@ -127,13 +151,15 @@ export default function DashboardSection({
           label: "Amount",
           render: (value) => {
             if (value > 0) {
-              return <span className="font-semibold text-blue-600">₹{value}</span>;
+              return (
+                <span className="font-semibold text-blue-600">₹{value}</span>
+              );
             }
             return <span className="text-gray-400">Free</span>;
-          }
+          },
         };
       }
-      
+
       // Payment ID - Show status
       if (k === "txId") {
         return {
@@ -141,13 +167,15 @@ export default function DashboardSection({
           label: "Payment",
           render: (value) => {
             if (value) {
-              return <span className="text-green-600 font-medium">✅ Paid</span>;
+              return (
+                <span className="text-green-600 font-medium">✅ Paid</span>
+              );
             }
             return <span className="text-gray-400">—</span>;
-          }
+          },
         };
       }
-      
+
       // Created By - Show Admin/User
       if (k === "added_by_admin") {
         return {
@@ -158,10 +186,10 @@ export default function DashboardSection({
               return <span className="text-blue-600 font-medium">Admin</span>;
             }
             return <span className="text-gray-600">User</span>;
-          }
+          },
         };
       }
-      
+
       return { key: k, label: prettifyKey(k) };
     });
   }, [stableData, configs, tableKey, HIDDEN_FIELDS, prettifyKey]);
@@ -177,7 +205,7 @@ export default function DashboardSection({
         typeof onRefreshRow === "function" && onRefreshRow(tableKey, row);
       }
     },
-    [onEdit, onDelete, onRefreshRow, tableKey]
+    [onEdit, onDelete, onRefreshRow, tableKey],
   );
 
   function handleManage() {
@@ -193,13 +221,15 @@ export default function DashboardSection({
       <header className="flex items-center justify-between mb-3">
         <div>
           <h2 className="text-lg font-semibold">{label}</h2>
-          <div className="text-xs text-gray-500">{(stableData || []).length} total</div>
+          <div className="text-xs text-gray-500">
+            {(stableData || []).length} total
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
           {(tableKey === "exhibitors" || tableKey === "partners") && (
-            <button 
-              onClick={handleManage} 
+            <button
+              onClick={handleManage}
               className="text-sm px-3 py-1 border rounded bg-gray-100 hover:bg-gray-200"
             >
               Manage

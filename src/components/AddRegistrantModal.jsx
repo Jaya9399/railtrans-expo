@@ -292,18 +292,28 @@ export default function AddRegistrantModal({
     try {
       const collection = `${role}s`;
 
-      const payload = {
-        ...values,
-        ticket_category: ticketCategory || null,
-        ticket_label: ticketMeta.label || null,
-        ticket_price: ticketMeta.price || 0,
-        ticket_gst: ticketMeta.gstAmount || 0,
-        ticket_total: ticketMeta.total || 0,
-        payment_skipped: skipPayment,
-        txId: skipPayment ? null : txId,
-        added_by_admin: true,
-        admin_created_at: new Date().toISOString(),
-      };
+    const payload = {
+  ...values,
+
+  ticket_category: ticketCategory || null,
+  ticket_label: ticketMeta.label || null,
+  ticket_price: ticketMeta.price || 0,
+  ticket_gst: ticketMeta.gstAmount || 0,
+  ticket_total: ticketMeta.total || 0,
+
+  payment_skipped: skipPayment,
+
+  txId: skipPayment ? "ADMIN_SKIP" : txId,
+
+  payment_status: skipPayment ? "paid" : "pending",
+
+  paymentMethod: skipPayment ? "Admin Skip" : "Manual",
+
+  amount_paid: skipPayment ? ticketMeta.total : 0,
+
+  added_by_admin: true,
+  admin_created_at: new Date().toISOString(),
+};
 
       const res = await fetch(apiUrl(`/api/${collection}`), {
         method: "POST",
