@@ -25,7 +25,7 @@ import TicketUpgrade from "./TicketUpgrade";
 import EventDetailsAdmin from "./EventDetailsAdmin";
 import CouponsAdmin from "./CouponsAdmin";
 import PublicAgenda from "../components/PublicAgenda";
-
+import AgendaManager from "../components/AgendaManager";
 // Simple placeholders (if you need them)
 function Registrations() {
   return <div className="p-8">Registrations</div>;
@@ -53,6 +53,14 @@ export default function AppRoutes() {
         <Route path="/ticket-upgrade" element={<TicketUpgrade />} />
         <Route path="/agenda" element={<PublicAgenda />} />
         <Route path="/admin-portal" element={<AdminPortal />} />
+        <Route
+          path="/admin/agenda"
+          element={
+            <AdminRoute>
+              <AgendaManager />
+            </AdminRoute>
+          }
+        />
         <Route
           path="/admin"
           element={
