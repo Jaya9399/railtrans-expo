@@ -12,7 +12,20 @@ function isVisible(field, form) {
 }
 
 function isEmail(str) {
-  return typeof str === "string" && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((str || "").trim());
+  if (typeof str !== "string") return false;
+  const email = str.trim();
+  if (!email) return false;
+
+  // More permissive - allows dots, plus signs, subdomains
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
+  if (email.length > 254) return false;
+  const parts = email.split('@');
+  if (parts.length !== 2) return false;
+  if (!parts[0] || parts[0].length > 64) return false;
+  if (!parts[1] || !parts[1].includes('.')) return false;
+
+  return emailRegex.test(email);
 }
 
 const KNOWN_TYPES = ["visitor", "exhibitor", "speaker", "partner", "awardee"];
@@ -107,7 +120,7 @@ export default function DynamicRegistrationForm({
     const countryStored = dial ? `+${dial}` : "";
     setForm((f) => ({ ...f, [fieldName]: fullValue, [`${fieldName}_country`]: countryStored, [`${fieldName}_national`]: national }));
   }
-  
+
   useEffect(() => {
     const phoneFields = (effectiveConfig.fields || []).filter(f => f && f.name && (f.type === "phone" || f.type === "tel" || isPhoneFieldName(f.name) || f.meta?.isPhone || f.usePhoneInput));
     if (!phoneFields.length) return;
@@ -165,6 +178,17 @@ export default function DynamicRegistrationForm({
     e.preventDefault();
     setSubmitMessage(null);
 
+    const emailField = safeFields.find(f => f.type === "email");
+    if (emailField && form[emailField.name]) {
+      const email = form[emailField.name].trim();
+      if (!isEmail(email)) {
+        setSubmitMessage({
+          type: "error",
+          text: "Please enter a valid email address (e.g., name@domain.com)"
+        });
+        return;
+      }
+    }
     if (alreadyRegistered) {
       setSubmitMessage({ type: "error", text: "Email already registered. Use upgrade." });
       return;
@@ -201,33 +225,33 @@ export default function DynamicRegistrationForm({
     setEmailVerified(true);
     setVerifiedEmailValue(email.toLowerCase());
     setVerificationToken(token);
-    setForm(prev => ({ 
-      ...prev, 
+    setForm(prev => ({
+      ...prev,
       verificationToken: token,
-      emailVerified: true 
+      emailVerified: true
     }));
-    
+
     if (pendingSubmitAfterOtp) {
       setPendingSubmitAfterOtp(false);
-      handleSubmit({ preventDefault: () => {} });
+      handleSubmit({ preventDefault: () => { } });
     }
   }
 
   // Helper to render field with reduced padding and spacing
   const renderField = (field) => {
     const shouldUsePhoneInput = field.type === "phone" || field.type === "tel" || field.meta?.isPhone || field.usePhoneInput || isPhoneFieldName(field.name);
-    
+
     return (
       <div key={field.name} className="mb-4"> {/* Reduced from mb-6 to mb-4 */}
         {field.type === "checkbox" ? (
           <div className="flex items-center gap-2">
-            <input 
-              type="checkbox" 
-              name={field.name} 
-              checked={!!form[field.name]} 
-              onChange={handleChange} 
-              disabled={!editable} 
-              required={field.required} 
+            <input
+              type="checkbox"
+              name={field.name}
+              checked={!!form[field.name]}
+              onChange={handleChange}
+              disabled={!editable}
+              required={field.required}
               className="w-4 h-4"
             />
             <span className="text-gray-700">{field.label}</span>
@@ -254,7 +278,7 @@ export default function DynamicRegistrationForm({
                       enableSearch
                       disableSearchIcon={false}
                       containerClass="phone-input-container"
-                      inputClass="p-2 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-base w-full" 
+                      inputClass="p-2 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-base w-full"
                       buttonClass="phone-flag-button"
                       specialLabel=""
                     />
@@ -269,7 +293,7 @@ export default function DynamicRegistrationForm({
                       name={field.name}
                       value={form[field.name] || ""}
                       onChange={handleChange}
-                      className="w-full p-2 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-base" 
+                      className="w-full p-2 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-base"
                       disabled={!editable}
                       required={field.required}
                       placeholder={`Enter ${field.label.toLowerCase()}`}
@@ -295,46 +319,46 @@ export default function DynamicRegistrationForm({
                 )}
               </>
             )}
-            
+
             {field.type === "textarea" && (
-              <textarea 
-                name={field.name} 
-                value={form[field.name] || ""} 
-                onChange={handleChange} 
-                className="w-full p-2 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-base" 
+              <textarea
+                name={field.name}
+                value={form[field.name] || ""}
+                onChange={handleChange}
+                className="w-full p-2 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-base"
                 rows={2} // Reduced from 3 to 2
-                disabled={!editable} 
+                disabled={!editable}
                 required={field.required}
                 placeholder={`Enter ${field.label.toLowerCase()}`}
               />
             )}
-            
+
             {field.type === "select" && (
-              <select 
-                name={field.name} 
-                value={form[field.name] || ""} 
-                onChange={handleChange} 
-                className="w-full p-2 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-base" 
-                disabled={!editable} 
+              <select
+                name={field.name}
+                value={form[field.name] || ""}
+                onChange={handleChange}
+                className="w-full p-2 rounded-lg bg-[#eaf6fb] border border-[#bde0fe] text-base"
+                disabled={!editable}
                 required={field.required}
               >
                 <option value="">Select {field.label}</option>
                 {(field.options || []).map((opt) => <option key={opt} value={opt}>{opt}</option>)}
               </select>
             )}
-            
+
             {field.type === "radio" && (
               <div className="flex flex-wrap gap-3 mt-1"> {/* Changed from flex-col to flex-wrap, reduced mt-2 to mt-1 */}
                 {(field.options || []).map((opt) => (
                   <label key={opt} className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg cursor-pointer bg-white shadow-sm text-sm ${form[field.name] === opt ? "border-[#21809b] bg-[#e8f6ff]" : "border-gray-300"}`}>
-                    <input 
-                      type="radio" 
-                      name={field.name} 
-                      value={opt} 
-                      checked={form[field.name] === opt} 
-                      onChange={handleChange} 
-                      disabled={!editable} 
-                      required={field.required} 
+                    <input
+                      type="radio"
+                      name={field.name}
+                      value={opt}
+                      checked={form[field.name] === opt}
+                      onChange={handleChange}
+                      disabled={!editable}
+                      required={field.required}
                       className="w-3.5 h-3.5 text-[#21809b]"
                     />
                     <span className="font-medium text-gray-700">{opt}</span>
@@ -348,27 +372,27 @@ export default function DynamicRegistrationForm({
     );
   };
 
-const renderFieldsInGrid = () => {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {safeFields.map((field) => {
-        const isFullWidth =
-          field.type === "textarea" ||
-          field.type === "checkbox" ||
-          field.type === "radio";
+  const renderFieldsInGrid = () => {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {safeFields.map((field) => {
+          const isFullWidth =
+            field.type === "textarea" ||
+            field.type === "checkbox" ||
+            field.type === "radio";
 
-        return (
-          <div
-            key={field.name}
-            className={isFullWidth ? "md:col-span-2" : ""}
-          >
-            {renderField(field)}
-          </div>
-        );
-      })}
-    </div>
-  );
-};
+          return (
+            <div
+              key={field.name}
+              className={isFullWidth ? "md:col-span-2" : ""}
+            >
+              {renderField(field)}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   // --- Form UI with reduced padding and better layout ---
   return (
@@ -377,7 +401,7 @@ const renderFieldsInGrid = () => {
     >
       <div className="flex flex-col gap-4"> {/* Reduced gap from gap-7 to gap-4 */}
         {loadingConfig && <div className="text-sm text-gray-500">Loading form...</div>}
-        
+
         {safeFields.length === 0 && !loadingConfig && (
           <div className="text-red-500 text-center">No fields configured for this form.</div>
         )}
@@ -401,11 +425,11 @@ const renderFieldsInGrid = () => {
         {terms && (
           <div className="mt-2 pt-2 border-t border-gray-200">
             <label className="flex items-start gap-2">
-              <input 
-                type="checkbox" 
-                name="termsAccepted" 
-                checked={!!form.termsAccepted} 
-                onChange={handleTermsChange} 
+              <input
+                type="checkbox"
+                name="termsAccepted"
+                checked={!!form.termsAccepted}
+                onChange={handleTermsChange}
                 className="mt-0.5 w-4 h-4"
               />
               <div className="text-sm">
