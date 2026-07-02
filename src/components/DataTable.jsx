@@ -10,7 +10,8 @@ export default function DataTable({
   onResend, // callback(row) -> may be async; used for "Send Ticket"
   prettifyKey,
   resendLoadingId, // id currently being resent / sent
-  showSendTicket = false, // if true, show "Send Ticket" button (otherwise show refresh)
+  showSendTicket = false,
+  tableKey, // if true, show "Send Ticket" button (otherwise show refresh)
 }) {
   const [page, setPage] = useState(0);
   const [sortKey, setSortKey] = useState(null);
@@ -184,6 +185,16 @@ export default function DataTable({
                     title="Delete"
                   >
                     Delete
+                  </button>
+                  <button
+                    className="mr-2 text-green-600 hover:underline text-xs"
+                    onClick={() => {
+                      const url = `/api/${tableKey}/${row.id || row._id}/download-badge`;
+                      window.open(url, "_blank");
+                    }}
+                    title="Download Badge"
+                  >
+                    📄 Badge
                   </button>
 
                   {showSendTicket && typeof onResend === "function" ? (

@@ -226,6 +226,15 @@ export default function DashboardSection({
           </div>
         </div>
 
+        <button
+          onClick={() => {
+            const url = `/api/${tableKey}/download-all`;
+            window.open(url, "_blank");
+          }}
+          className="text-sm px-3 py-1 border rounded bg-green-50 hover:bg-green-100 text-green-700 flex items-center gap-1"
+        >
+          📥 Download All
+        </button>
         <div className="flex items-center gap-2">
           {(tableKey === "exhibitors" || tableKey === "partners") && (
             <button
@@ -243,6 +252,7 @@ export default function DashboardSection({
           columns={columns}
           data={stableData}
           defaultPageSize={PAGE_SIZE}
+          tableKey={tableKey}
           onEdit={(row) => handleRowAction("edit", row)}
           onDelete={(row) => handleRowAction("delete", row)}
           onRefreshRow={(row) => handleRowAction("refresh", row)}
