@@ -228,17 +228,7 @@ export default function DashboardSection({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            if (typeof onDownloadAll === "function") {
-              onDownloadAll(tableKey);
-            }
-          }}
-          className="text-sm px-3 py-1 border rounded bg-green-50 hover:bg-green-100 text-green-700 flex items-center gap-1"
-        >
-          Download All
-        </button>
+       
         <div className="flex items-center gap-2">
           {(tableKey === "exhibitors" || tableKey === "partners") && (
             <button
