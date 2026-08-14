@@ -593,6 +593,42 @@ export default function DashboardContent() {
       </div>
     );
   };
+  function handleDownloadBadge(table, row) {
+  const idVal = row?.id || row?._id || "";
+
+  if (!idVal) {
+    console.error("Download badge: missing ID", row);
+    setActionMsg("Unable to download badge: ID not found");
+    return;
+  }
+
+  const url = buildApiUrl(
+    `${apiMap.current[table]}/${encodeURIComponent(
+      String(idVal)
+    )}/download-badge`
+  );
+
+  console.log("Downloading badge:", {
+    table,
+    id: idVal,
+    url,
+  });
+
+  window.open(url, "_blank");
+}
+
+function handleDownloadAll(table) {
+  const url = buildApiUrl(
+    `${apiMap.current[table]}/download-all`
+  );
+
+  console.log("Downloading all badges:", {
+    table,
+    url,
+  });
+
+  window.open(url, "_blank");
+}
 
   function handleEdit(table, displayRow) {
     setEditTable(table);
@@ -834,7 +870,7 @@ export default function DashboardContent() {
       setResendLoadingId(null);
     }
   }
-  // ✅ DEFINE stats HERE
+
   const stats = useMemo(
     () => ({
       visitors: (report.visitors || []).length,
@@ -846,16 +882,20 @@ export default function DashboardContent() {
     [report],
   );
 
-  // ✅ DEFINE sectionProps HERE
-  const sectionProps = {
-    configs,
-    onEdit: handleEdit,
-    onDelete: handleDelete,
-    onRefreshRow: handleRefreshRow,
-    setShowExhibitorManager,
-    setShowPartnerManager,
-    prettifyKey,
-  };
+const sectionProps = {
+  configs,
+  onEdit: handleEdit,
+  onDelete: handleDelete,
+  onRefreshRow: handleRefreshRow,
+
+  // Badge downloads
+  onDownloadBadge: handleDownloadBadge,
+  onDownloadAll: handleDownloadAll,
+
+  setShowExhibitorManager,
+  setShowPartnerManager,
+  prettifyKey,
+};
 
   return (
     <div className="pt-4 pb-6 w-full">

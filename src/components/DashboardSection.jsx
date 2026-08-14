@@ -19,6 +19,8 @@ export default function DashboardSection({
   onRefreshRow,
   onResend,
   resendLoadingId,
+  onDownloadBadge,
+  onDownloadAll,
   setShowExhibitorManager,
   setShowPartnerManager,
   PAGE_SIZE = 10,
@@ -227,13 +229,15 @@ export default function DashboardSection({
         </div>
 
         <button
+          type="button"
           onClick={() => {
-            const url = `/api/${tableKey}/download-all`;
-            window.open(url, "_blank");
+            if (typeof onDownloadAll === "function") {
+              onDownloadAll(tableKey);
+            }
           }}
           className="text-sm px-3 py-1 border rounded bg-green-50 hover:bg-green-100 text-green-700 flex items-center gap-1"
         >
-          📥 Download All
+          Download All
         </button>
         <div className="flex items-center gap-2">
           {(tableKey === "exhibitors" || tableKey === "partners") && (
@@ -257,6 +261,11 @@ export default function DashboardSection({
           onDelete={(row) => handleRowAction("delete", row)}
           onRefreshRow={(row) => handleRowAction("refresh", row)}
           onResend={(row) => typeof onResend === "function" && onResend(row)}
+          onDownloadBadge={(row) => {
+            if (typeof onDownloadBadge === "function") {
+              onDownloadBadge(tableKey, row);
+            }
+          }}
           resendLoadingId={resendLoadingId}
           showSendTicket={showSendTicket}
           prettifyKey={prettifyKey}
