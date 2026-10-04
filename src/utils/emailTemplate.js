@@ -293,7 +293,7 @@ export async function buildTicketEmail({
   const text = [
     `Dear ${name || "Participant"},`,
     "",
-    "Thank you for registering for RailTrans Expo 2026.",
+    "Thank you for registering for RailTrans Expo 2027.",
     ticketLabelForTemplate ? `Ticket category: ${ticketLabelForTemplate}` : "",
     entity ? `Entity: ${entity}` : "",
     company ? `Company: ${company}` : "",
@@ -309,7 +309,7 @@ export async function buildTicketEmail({
     "",
     "Important Information & Guidelines:",
     "- Entry permitted only through Gate No. 4 and Gate No. 10.",
-    "- Please carry and present your E‑badge (received via email/WhatsApp) for scanning at the entry point. The badge is valid exclusively for RailTrans Expo 2026 and concurrent events on event days.",
+    "- Please carry and present your E‑badge (received via email/WhatsApp) for scanning at the entry point. The badge is valid exclusively for RailTrans Expo 2027 and concurrent events on event days.",
     "- A physical badge can be collected from the on‑site registration counter.",
     "- The badge is strictly non‑transferable and must be worn visibly at all times within the venue.",
     "- Entry is permitted to individuals aged 18 years and above; infants are not permitted.",
@@ -320,7 +320,7 @@ export async function buildTicketEmail({
     "- For any registration‑related assistance, please approach the on‑site registration counter.",
     "",
     "Warm regards,",
-    "Team RailTrans Expo 2026",
+    "Team RailTrans Expo 2027",
   ].filter(Boolean).join("\n");
 
   const showUpgradeButton = entity === "visitors" && Boolean(resolvedUpgrade);
@@ -407,7 +407,7 @@ export async function buildTicketEmail({
         <h4>Important Information & Guidelines</h4>
         <ul>
           <li>Entry permitted only through Gate No. 4 and Gate No. 10.</li>
-          <li>Please carry and present your E‑badge (received via email/WhatsApp) for scanning at the entry point. The badge is valid exclusively for RailTrans Expo 2026 and concurrent events on event days.</li>
+          <li>Please carry and present your E‑badge (received via email/WhatsApp) for scanning at the entry point. The badge is valid exclusively for RailTrans Expo 2027 and concurrent events on event days.</li>
           <li>A physical badge can be collected from the on‑site registration counter.</li>
           <li>The badge is strictly non‑transferable and must be worn visibly at all times within the venue.</li>
           <li>Entry is permitted to individuals aged 18 years and above; infants are not permitted.</li>
@@ -420,8 +420,8 @@ export async function buildTicketEmail({
       </div>
 
       <div class="footer">
-        <p>We look forward to welcoming you at RailTrans Expo 2026.</p>
-        <p>Warm regards,<br/>Team RailTrans Expo 2026</p>
+        <p>We look forward to welcoming you at RailTrans Expo 2027.</p>
+        <p>Warm regards,<br/>Team RailTrans Expo 2027</p>
       </div>
     </div>
   </body>

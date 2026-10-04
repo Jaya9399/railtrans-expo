@@ -85,7 +85,7 @@ export default function Footer({ primaryColor = "#196e87" }) {
           className="text-sm text-center md:text-right"
           style={{ opacity: 0.9 }}
         >
-          Copyright © Urban Infra Group 2026
+          Copyright © Urban Infra Group 2027
         </div>
       </div>
     </footer>

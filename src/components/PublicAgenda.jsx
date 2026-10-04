@@ -65,7 +65,7 @@ export default function PublicAgenda() {
         {agendaData.title || "Program Agenda"}
       </h2>
       <p className="text-gray-600 mb-4">
-        {agendaData.description || "Download the program agenda for 6th RailTrans Expo 2026"}
+        {agendaData.description || "Download the program agenda for 6th RailTrans Expo 2027"}
       </p>
       <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
         <div>

@@ -68,7 +68,7 @@ export async function generateVisitorBadgePDF(visitor = {}) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(22);
   doc.setTextColor(15, 23, 42);
-  doc.text("RailTrans Expo 2026", pageW / 2, 60, { align: "center" });
+  doc.text("RailTrans Expo 2027", pageW / 2, 60, { align: "center" });
 
   /* Card */
   const cardW = 520;

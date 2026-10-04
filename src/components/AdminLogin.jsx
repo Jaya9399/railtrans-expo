@@ -74,7 +74,7 @@ export default function AdminLogin({ open = false, onClose = () => {}, onSuccess
 
         <div className="text-center mb-4">
           <h2 className="text-lg font-semibold text-gray-800">Admin Login</h2>
-          <p className="text-sm text-gray-500">RailTrans Expo 2026</p>
+          <p className="text-sm text-gray-500">RailTrans Expo 2027</p>
         </div>
 
         <div className="space-y-4">

@@ -6,7 +6,7 @@ export default function AgendaManager() {
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState("Program Agenda");
-  const [description, setDescription] = useState("Download the program agenda for 6th RailTrans Expo 2026");
+  const [description, setDescription] = useState("Download the program agenda for 6th RailTrans Expo 2027");
   const [message, setMessage] = useState(null);
   const [messageType, setMessageType] = useState("success");
 
@@ -29,7 +29,7 @@ export default function AgendaManager() {
       if (data.success) {
         setAgendaData(data.data);
         setTitle(data.data.title || "Program Agenda");
-        setDescription(data.data.description || "Download the program agenda for 6th RailTrans Expo 2026");
+        setDescription(data.data.description || "Download the program agenda for 6th RailTrans Expo 2027");
       }
     } catch (error) {
       console.error("Error fetching agenda:", error);
